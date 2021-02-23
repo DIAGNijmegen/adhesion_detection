@@ -1,2 +1,4 @@
 
-# Testing docker and jobs submission at the moment
+# Abdominal cavity segmentation
+
+The repository contains the source code for abdominal cavity segmentation of cine-MRI scans.
