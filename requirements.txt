@@ -1,5 +1,5 @@
-torch==1.5.0
+torch
 albumentations==0.5.2
 numpy==1.19.4
 monai==0.4.0
-SimpleITK==1.2.4
+SimpleITK
