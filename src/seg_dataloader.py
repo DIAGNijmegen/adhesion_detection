@@ -1,4 +1,4 @@
-import os
+from pathlib import Path
 import numpy as np
 from torch.utils.data import Dataset
 from utils import CineMRISlice
@@ -12,8 +12,8 @@ class SegmentationDatasetFull(Dataset):
                  images_folder="images",
                  segmentations_folder="cavity_segmentations"):
         # Paths
-        self.images_path = os.path.join(archive_path, images_folder)
-        self.segmentations_path = os.path.join(archive_path, segmentations_folder)
+        self.images_path = Path(archive_path) / images_folder
+        self.segmentations_path = Path(archive_path) / segmentations_folder
 
         # Caches
         self.images = {}
@@ -31,32 +31,31 @@ class SegmentationDatasetFull(Dataset):
             image = self.images[slice.file_name]
         else:
             image_path = slice.build_path(self.images_path)
-            image = sitk.GetArrayFromImage(sitk.ReadImage(image_path))[0]
+            image = sitk.GetArrayFromImage(sitk.ReadImage(str(image_path)))[0]
             self.images[slice.file_name] = image
 
         if slice.file_name in self.masks:
             mask = self.masks[slice.file_name]
         else:
             segmentation_path = slice.build_path(self.segmentations_path)
-            mask = sitk.GetArrayFromImage(sitk.ReadImage(segmentation_path))[0]
+            mask = sitk.GetArrayFromImage(sitk.ReadImage(str(segmentation_path)))[0]
             self.masks[slice.file_name] = mask
 
         return image, mask
 
     def __extract_segmented_slices__(self):
         # Patient ids
-        self.patient_ids = [f.name for f in os.scandir(self.segmentations_path) if f.is_dir()]
+        self.patient_ids = [f.name for f in self.segmentations_path.iterdir() if f.is_dir()]
 
         # Now get all examinations for each patient and create an array of Patients
         self.slices = []
         for patient_id in self.patient_ids:
-            patient_segmentations_path = os.path.join(self.segmentations_path, patient_id)
-            examinations = [f.name for f in os.scandir(patient_segmentations_path) if f.is_dir()]
+            patient_segmentations_path = self.segmentations_path / patient_id
+            examinations = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
 
             for examination_id in examinations:
-                examination_path = os.path.join(patient_segmentations_path, examination_id)
-                slices = [f for f in os.listdir(examination_path) if
-                             os.path.isfile(os.path.join(examination_path, f))]
+                examination_path = patient_segmentations_path / examination_id
+                slices = [f.name for f in examination_path.iterdir() if f.is_file()]
 
                 for slice in slices:
                     self.slices.append(CineMRISlice(slice, patient_id, examination_id))
@@ -68,8 +67,8 @@ class SegmentationDataset(Dataset):
                  images_folder="images",
                  segmentations_folder="masks"):
         # Paths
-        self.images_path = os.path.join(archive_path, images_folder)
-        self.segmentations_path = os.path.join(archive_path, segmentations_folder)
+        self.images_path = Path(archive_path) / images_folder
+        self.segmentations_path = Path(archive_path) / segmentations_folder
 
         # Caches
         self.images = {}
@@ -101,26 +100,27 @@ class SegmentationDataset(Dataset):
 
     def __extract_segmented_slices__(self):
         # Patient ids
-        self.patient_ids = [f.name for f in os.scandir(self.segmentations_path) if f.is_dir()]
+        self.patient_ids = [f.name for f in self.segmentations_path.iterdir() if f.is_dir()]
 
         # Now get all examinations for each patient and create an array of Patients
         self.slices = []
         for patient_id in self.patient_ids:
-            patient_segmentations_path = os.path.join(self.segmentations_path, patient_id)
-            examinations = [f.name for f in os.scandir(patient_segmentations_path) if f.is_dir()]
+            patient_segmentations_path = self.segmentations_path / patient_id
+            examinations = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
 
             for examination_id in examinations:
-                examination_path = os.path.join(patient_segmentations_path, examination_id)
-                slices = [f for f in os.listdir(examination_path) if f.endswith(".npy")]
+                examination_path = patient_segmentations_path / examination_id
+                slices = [f.name for f in examination_path.iterdir() if f.suffix == ".npy"]
 
                 for slice in slices:
                     self.slices.append(CineMRISlice(slice, patient_id, examination_id))
 
 
 def main():
-    archive_path = "../../data/cinemri_mha/rijnstate"
-    subset_path = "../../data/cinemri_mha/segmentation_subset"
+    archive_path = Path("../../data/cinemri_mha/rijnstate")
+    subset_path = Path("../../data/cinemri_mha/segmentation_subset")
     dataset = SegmentationDataset(subset_path)
+    #dataset = SegmentationDatasetFull(archive_path)
 
     for i in range(10):
         image, mask = dataset[i]
