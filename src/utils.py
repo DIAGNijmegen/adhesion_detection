@@ -4,7 +4,6 @@ import cv2
 import SimpleITK as sitk
 from cinemri.utils import get_patients, fill_contourous_masks
 
-
 class CineMRISlice:
     def __init__(self, file_name, patient_id, examination_id):
         self.file_name = file_name
@@ -21,7 +20,7 @@ class CineMRISlice:
 def get_patients_without_slices(archive_path,
                                 images_folder="images"):
 
-    patients = get_patients(archive_path, images_folder=images_folder)
+    patients = get_patients(archive_path, images_folder=images_folder, with_scans_only=False)
     patients_without_slices = []
     for patient in patients:
         if len(patient.slices()) == 0:
@@ -104,6 +103,7 @@ def extract_segmentation_data(archive_path,
 
 if __name__ == '__main__':
     archive_path = "../../data/cinemri_mha/rijnstate"
+    subset_path = "../../data/cinemri_mha/segmentation_subset"
 
     fill_contourous_masks(archive_path)
 
@@ -115,4 +115,4 @@ if __name__ == '__main__':
     print("Patients without segmented slices")
     print(patients_without_segmented_slices)
 
-    #extract_segmentation_data(archive_path, destination_path)
+    #extract_segmentation_data(archive_path, subset_path)
