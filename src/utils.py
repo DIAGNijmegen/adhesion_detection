@@ -2,7 +2,8 @@ from pathlib import Path
 import numpy as np
 import cv2
 import SimpleITK as sitk
-from cinemri.utils import get_patients, fill_contourous_masks
+from cinemri.utils import get_patients
+
 
 class CineMRISlice:
     def __init__(self, file_name, patient_id, examination_id):
@@ -88,10 +89,164 @@ def extract_segmentation_data(archive_path,
                 save_frame(segmentation_path, examination_segmentations_path)
 
 
+def convert_2d_image_to_pseudo_3d(input_filename: str, output_filename_stem: str, file_format = ".nii.gz",
+                                  spacing=[999, 1, 1], is_seg: bool = False) -> None:
+    """
+    Taken from https://github.com/MIC-DKFZ/nnUNet/blob/master/nnunet/utilities/file_conversions.py
+    and slightly modified
+    Reads an image (must be a .npy format) and converts it into a series of niftis.
+    The image can have an arbitrary number of input channels which will be exported separately (_0000.nii.gz,
+    _0001.nii.gz, etc for images and only .nii.gz for seg).
+    Spacing can be ignored most of the time.
+    !!!2D images are often natural images which do not have a voxel spacing that could be used for resampling. These images
+    must be resampled by you prior to converting them to nifti!!!
+    Datasets converted with this utility can only be used with the 2d U-Net configuration of nnU-Net
+    If Transform is not None it will be applied to the image after loading.
+    Segmentations will be converted to np.uint32!
+    :param is_seg:
+    :param input_filename:
+    :param output_filename_stem: do not use a file ending for this one! Example: output_name='./converted/image1'. This
+    function will add the suffix (_0000) and file ending (.nii.gz) for you.
+    :param spacing:
+    :return:
+    """
+    img = np.load(input_filename)
+
+    assert len(img.shape) == 2, 'images should grayscalse'
+    img = img[None]  # add dimension
+
+    if is_seg:
+        img = img.astype(np.uint32)
+
+    itk_img = sitk.GetImageFromArray(img)
+    itk_img.SetSpacing(spacing[::-1])
+    sitk.WriteImage(itk_img, str(output_filename_stem) + file_format)
+
+
+def convert_to_pre_nnUnet(segmentation_path,
+                          target_path,
+                          images_folder="images",
+                          masks_folder="masks"):
+    """
+    Converts the segmentation data subset to a format a dockerized version of nnU-Net from DIAG
+    can convert to nnU-Net input fromat
+
+    Parameters
+    ----------
+        segmentation_path : path to a segmentation subset of cine-MRI data
+        target_path: a destination path to save converted files
+        images_folder : a folder inside the archive, which contains scans
+        masks_folder : a folder inside the archive, which contains masks
+    """
+
+    # Make directories to save converted images
+    target_path.mkdir(exist_ok=True)
+
+    target_path_imags = target_path / images_folder
+    target_path_imags.mkdir(exist_ok=True)
+
+    target_path_masks = target_path / masks_folder
+    target_path_masks.mkdir(exist_ok=True)
+
+    patients = get_patients(subset_path)
+
+    for patient in patients:
+        for examination_id, slices in patient.examinations.items():
+            for slice in slices:
+                # Filter out .png images
+                if slice.endswith(".npy"):
+                    separator = "_"
+                    file_id = separator.join([patient.id, examination_id, slice[:-4]])
+                    image_stem = target_path_imags / file_id
+                    slice_image_path = segmentation_path / images_folder / patient.id / examination_id / slice
+                    convert_2d_image_to_pseudo_3d(slice_image_path, image_stem, file_format=".mha")
+
+                    mask_stem = target_path_masks / file_id
+                    slice_mask_path = segmentation_path / masks_folder / patient.id / examination_id / slice
+                    convert_2d_image_to_pseudo_3d(slice_mask_path, mask_stem, file_format=".mha", is_seg=False)
+
+
+# TODO: probably save conversion between ids if we use this
+def convert_to_pre_nnUnet_custom_ids(segmentation_path,
+                                     target_path,
+                                     images_folder="images",
+                                     masks_folder="masks"):
+    """
+    Converts the segmentation data subset to a format a dockerized version of nnU-Net from DIAG
+    can convert to nnU-Net input fromat
+
+    Parameters
+    ----------
+        segmentation_path : path to a segmentation subset of cine-MRI data
+        target_path: a destination path to save converted files
+        images_folder : a folder inside the archive, which contains scans
+        masks_folder : a folder inside the archive, which contains masks
+    """
+
+    # Make directories to save converted images
+    target_path.mkdir(exist_ok=True)
+
+    target_path_imags = target_path / images_folder
+    target_path_imags.mkdir(exist_ok=True)
+
+    target_path_masks = target_path / masks_folder
+    target_path_masks.mkdir(exist_ok=True)
+
+    patients = get_patients(subset_path)
+
+    for patient in patients:
+        for examination_ind, (examination_id, slices) in enumerate(patient.examinations.items()):
+            slice_ind = 1
+            for slice in slices:
+                # Filter out .png images
+                if slice.endswith(".npy"):
+                    separator = "_"
+                    file_id = separator.join([patient.id, "scan"+str(examination_ind+1), "slice"+str(slice_ind)])
+                    image_stem = target_path_imags / file_id
+                    slice_image_path = segmentation_path / images_folder / patient.id / examination_id / slice
+                    convert_2d_image_to_pseudo_3d(slice_image_path, image_stem, file_format=".mha")
+
+                    mask_stem = target_path_masks / file_id
+                    slice_mask_path = segmentation_path / masks_folder / patient.id / examination_id / slice
+                    convert_2d_image_to_pseudo_3d(slice_mask_path, mask_stem, file_format=".mha", is_seg=False)
+
+                    slice_ind += 1
+
+
+# from the main archive
+def find_unique_shapes(archive_path, images_folder="images"):
+    shapes = []
+
+    patients = get_patients(archive_path, images_folder)
+    for patient in patients:
+        for examination_id, slices in patient.examinations.items():
+            for slice in slices:
+                slice_image_path = archive_path / images_folder / patient.id / examination_id / slice
+                image = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_image_path)))[0]
+
+                if image.shape == (192, 256):
+                    print(slice_image_path)
+
+                if not (image.shape in shapes):
+                    shapes.append(image.shape)
+
+    return shapes
+
+
 if __name__ == '__main__':
     archive_path = Path("../../data/cinemri_mha/rijnstate")
     subset_path = Path("../../data/cinemri_mha/segmentation_subset")
+    pre_nnUNet_path = Path("../../data/cinemri_mha/pre_nnUNet_custom")
 
+    #convert_to_pre_nnUnet_custom_ids(subset_path, pre_nnUNet_path)
+
+    """
+    unique_shapes = find_unique_shapes(archive_path, "cavity_segmentations")
+    print("Unique scan dimensions in the dataset")
+    print(unique_shapes)
+    """
+
+    """
     fill_contourous_masks(archive_path)
 
     patients_without_slices = get_patients_without_slices(archive_path)
@@ -103,3 +258,4 @@ if __name__ == '__main__':
     print(patients_without_segmented_slices)
 
     #extract_segmentation_data(archive_path, subset_path)
+    """
