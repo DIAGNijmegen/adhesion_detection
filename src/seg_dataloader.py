@@ -116,7 +116,7 @@ class SegmentationDataset(Dataset):
                     self.slices.append(CineMRISlice(slice, patient_id, examination_id))
 
 
-def main():
+def test():
     archive_path = Path("../../data/cinemri_mha/rijnstate")
     subset_path = Path("../../data/cinemri_mha/segmentation_subset")
     dataset = SegmentationDataset(subset_path)
