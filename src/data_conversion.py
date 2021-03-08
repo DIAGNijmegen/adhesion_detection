@@ -1,5 +1,6 @@
 #!/usr/local/bin/python3
-
+import sys
+import argparse
 from pathlib import Path
 import numpy as np
 import json
@@ -10,6 +11,7 @@ import SimpleITK as sitk
 from cinemri.utils import get_patients
 import utils
 from sklearn.model_selection import KFold
+
 
 # TODO: see if there is loss in quality when converting to .png
 def save_frame(source_path, target_path, index=0):
@@ -37,6 +39,7 @@ def extract_segmentation_data(archive_path,
                               target_segmentations_folder="masks"):
     """
     Extracts a subset of the archive only related to segmentation
+
     :param archive_path: a path to the full cine-MRI data archive
     :param destination_path: a path to save the extracted segmentation subset
     :param images_folder: a name of the images folder in the archive
@@ -90,6 +93,39 @@ def extract_segmentation_data(archive_path,
                 # read a segmentation mask and extract the first frame
                 segmentation_path = Path(archive_path) / segmentations_folder / patient.id / examination_id / slice
                 save_frame(segmentation_path, examination_segmentations_path)
+
+
+def extract_segmentation(argv):
+    """
+        A command line wrapper of extract_segmentation_data
+
+        Command line arguments
+        :param argv: command line arguments
+        :return:
+        """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('archive_path', type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument('destination_path', type=str, help="a path to save the extracted segmentation subset")
+    parser.add_argument('--images', type=str, default="images", help="a name of the images folder in the archive")
+    parser.add_argument('--masks', type=str, default="cavity_segmentations", help="a name of the folder with cavity segmentations in the archive")
+    parser.add_argument('--target_images', type=str, default="images", help="a name of the images folder in the segmentation subset")
+    parser.add_argument('--target_masks', type=str, default="masks", help="a name of the folder with cavity segmentations in the segmentation subset")
+    args = parser.parse_args(argv)
+
+    archive_path = Path(args.archive_path)
+    destination_path = Path(args.destination_path)
+    images_folder = args.images
+    segmentations_folder = args.masks
+    target_images_folder = args.target_images
+    target_segmentations_folder = args.target_masks
+
+    extract_segmentation_data(archive_path,
+                              destination_path,
+                              images_folder,
+                              segmentations_folder,
+                              target_images_folder,
+                              target_segmentations_folder)
 
 
 def convert_2d_image_to_pseudo_3d(input_filename, output_filename_stem, file_format = ".nii.gz",
@@ -219,20 +255,19 @@ def convert_to_diag_nnunet(segmentation_path,
                            masks_folder="masks",
                            train_folder="train",
                            test_folder="test",
-                           train_proportion=0.8):
+                           train_split=0.8):
     """
     Converts the segmentation data subset to a format a dockerized version of nnU-Net from DIAG
     can convert to nnU-Net input format
 
-    Parameters
-    ----------
-        segmentation_path : path to a segmentation subset of cine-MRI data
-        target_path: a destination path to save converted files
-        images_folder : a folder inside the archive, which contains scans
-        masks_folder : a folder inside the archive, which contains masks
-        train_folder : a name of a folder with training data
-        test_folder : a name of a folder with test data
-        train_proportion : a share of the data to use for training
+    :param  segmentation_path : path to a segmentation subset of cine-MRI data
+    :param  target_path: a destination path to save converted files
+    :param  images_folder : a folder inside the archive, which contains scans
+    :param  masks_folder : a folder inside the archive, which contains masks
+    :param  train_folder : a name of a folder with training data
+    :param  test_folder : a name of a folder with test data
+    :param  train_proportion : a share of the data to use for training
+    :return:
     """
 
     # Make directories to save converted images
@@ -241,7 +276,7 @@ def convert_to_diag_nnunet(segmentation_path,
     train_patients, test_patients = utils.train_test_split(segmentation_path,
                                                            target_path,
                                                            images_folder=masks_folder,
-                                                           train_proportion=train_proportion)
+                                                           train_proportion=train_split)
 
     # Convert training data
     subset_to_diag_nnunet(train_patients,
@@ -266,10 +301,42 @@ def convert_to_diag_nnunet(segmentation_path,
                  images_folder=images_folder)
 
 
-if __name__ == '__main__':
-    np.random.seed(99)
-    random.seed(99)
+def to_diag_nnunet(argv):
+    """
+    A command line wrapper of convert_to_diag_nnunet
 
+    :param argv: command line arguments
+    :return:
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('segmentation_path', type=str, help="path to a segmentation subset of cine-MRI data")
+    parser.add_argument('target_path', type=str, help="a destination path to save converted files")
+    parser.add_argument('--images', type=str, default="images", help="a folder inside the archive, which contains scans")
+    parser.add_argument('--masks', type=str, default="masks", help="a folder inside the archive, which contains masks")
+    parser.add_argument('--train', type=str, default="train", help="a name of a folder with training data")
+    parser.add_argument('--test', type=str, default="test", help="a name of a folder with test data")
+    parser.add_argument('--train_split', type=str, default=0.8, help="a share of the data to use for training")
+    args = parser.parse_args(argv)
+
+    segmentation_path = Path(args.segmentation_path)
+    target_path = Path(args.target_path)
+    images_folder = args.images
+    masks_folder = args.masks
+    train_folder = args.train
+    test_folder = args.test
+    train_split = args.train_split
+
+    convert_to_diag_nnunet(segmentation_path,
+                           target_path,
+                           images_folder,
+                           masks_folder,
+                           train_folder,
+                           test_folder,
+                           train_split)
+
+
+def test():
     archive_path = Path("../../data/cinemri_mha/rijnstate")
     subset_path = Path("../../data/cinemri_mha/segmentation_subset")
     diag_nnUNet_path = Path("../../data/cinemri_mha/diag_nnunet")
@@ -282,4 +349,22 @@ if __name__ == '__main__':
     print(unique_shapes)
     """
 
-    #extract_segmentation_data(archive_path, subset_path)
+    # extract_segmentation_data(archive_path, subset_path)
+
+
+if __name__ == '__main__':
+    np.random.seed(99)
+    random.seed(99)
+
+    # Very first argument determines action
+    actions = {
+        'extract_segmentation': extract_segmentation,
+        'to_diag_nnunet': to_diag_nnunet
+    }
+
+    try:
+        action = actions[sys.argv[1]]
+    except (IndexError, KeyError):
+        print('Usage: nnunet ' + '/'.join(actions.keys()) + ' ...')
+    else:
+        action(sys.argv[2:])
