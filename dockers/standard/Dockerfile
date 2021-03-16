@@ -4,8 +4,13 @@ COPY requirements.txt requirements.txt
 
 RUN pip3 install -r requirements.txt
 
-COPY . /home/user
+COPY src /home/user/
 
-# WORKDIR /mnt/netcache/pelvis/projects/evgenia/abdomenmrus-cavity-segmentation
+# Add cinemri library to python path
+RUN mkdir -p /home/user/.local/lib/python3.8/site-packages/ && \
+    printf "/mnt/netcache/pelvis/projects/evgenia/repos/abdomenmrus-cinemri/\n" > /home/user/.local/lib/python3.8/site-packages/abdomenmrus-cinemri.pth && \
+    chown -R user:user /home/user
 
-# CMD [ "python3", "src/hello.py"]
+# Configure data conversion
+RUN chmod +x /home/user/data_conversion.py && \
+    ln -s /home/user/data_conversion.py /usr/local/bin/data_conversion

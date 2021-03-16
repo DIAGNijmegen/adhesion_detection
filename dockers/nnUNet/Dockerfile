@@ -1,0 +1,20 @@
+FROM doduo1.umcn.nl/nnunet/sol:latest
+
+COPY requirements.txt requirements.txt
+
+RUN pip3 install -r requirements.txt
+
+COPY src /home/user/
+
+# Add cinemri library to python path
+RUN mkdir -p /home/user/.local/lib/python3.8/site-packages/ && \
+    printf "/mnt/netcache/pelvis/projects/evgenia/repos/abdomenmrus-cinemri/\n/mnt/netcache/pelvis/projects/evgenia/repos/abdomenmrus-cinemri-registration/\n" > /home/user/.local/lib/python3.8/site-packages/abdomenmrus-cinemri.pth && \
+    chown -R user:user /home/user
+
+# Configure data conversion
+RUN chmod +x /home/user/data_conversion.py && \
+    ln -s /home/user/data_conversion.py /usr/local/bin/data_conversion
+
+# Configure visceral slide functions
+RUN chmod +x /home/user/visceral_slide.py && \
+    ln -s /home/user/visceral_slide.py /usr/local/bin/visceral_slide
