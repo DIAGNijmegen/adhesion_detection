@@ -47,18 +47,18 @@ class SegmentationDatasetFull(Dataset):
         # Patient ids
         self.patient_ids = [f.name for f in self.segmentations_path.iterdir() if f.is_dir()]
 
-        # Now get all examinations for each patient and create an array of Patients
+        # Now get all scans for each patient and create an array of Patients
         self.slices = []
         for patient_id in self.patient_ids:
             patient_segmentations_path = self.segmentations_path / patient_id
-            examinations = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
+            scans = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
 
-            for examination_id in examinations:
-                examination_path = patient_segmentations_path / examination_id
-                slices = [f.name for f in examination_path.iterdir() if f.is_file()]
+            for scan_id in scans:
+                scan_path = patient_segmentations_path / scan_id
+                slices = [f.name for f in scan_path.iterdir() if f.is_file()]
 
                 for slice in slices:
-                    self.slices.append(CineMRISlice(slice, patient_id, examination_id))
+                    self.slices.append(CineMRISlice(slice, patient_id, scan_id))
 
 
 class SegmentationDataset(Dataset):
@@ -102,18 +102,18 @@ class SegmentationDataset(Dataset):
         # Patient ids
         self.patient_ids = [f.name for f in self.segmentations_path.iterdir() if f.is_dir()]
 
-        # Now get all examinations for each patient and create an array of Patients
+        # Now get all scans for each patient and create an array of Patients
         self.slices = []
         for patient_id in self.patient_ids:
             patient_segmentations_path = self.segmentations_path / patient_id
-            examinations = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
+            scans = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
 
-            for examination_id in examinations:
-                examination_path = patient_segmentations_path / examination_id
-                slices = [f.name for f in examination_path.iterdir() if f.suffix == ".npy"]
+            for scan_id in scans:
+                scan_path = patient_segmentations_path / scan_id
+                slices = [f.name for f in scan_path.iterdir() if f.suffix == ".npy"]
 
                 for slice in slices:
-                    self.slices.append(CineMRISlice(slice, patient_id, examination_id))
+                    self.slices.append(CineMRISlice(slice, patient_id, scan_id))
 
 
 def test():
@@ -134,4 +134,4 @@ def test():
 
 
 if __name__ == '__main__':
-    main()
+    test()

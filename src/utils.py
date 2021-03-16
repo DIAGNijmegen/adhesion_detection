@@ -8,13 +8,13 @@ from cinemri.utils import get_patients
 
 class CineMRISlice:
 
-    def __init__(self, file_name, patient_id, examination_id):
+    def __init__(self, file_name, patient_id, scan_id):
         self.file_name = file_name
         self.patient_id = patient_id
-        self.examination_id = examination_id
+        self.scan_id = scan_id
 
     def build_path(self, relative_path):
-        return Path(relative_path) / self.patient_id / self.examination_id / self.file_name
+        return Path(relative_path) / self.patient_id / self.scan_id / self.file_name
 
 
 def get_patients_without_slices(archive_path,
@@ -26,7 +26,7 @@ def get_patients_without_slices(archive_path,
     :return: a list of patients without slices
     """
 
-    patients = get_patients(archive_path, images_folder=images_folder, with_scans_only=False)
+    patients = get_patients(archive_path / images_folder, with_scans_only=False)
     patients_without_slices = []
     for patient in patients:
         if len(patient.slices()) == 0:
@@ -48,7 +48,7 @@ def train_test_split(archive_path,
     :return: a tuple with a list of patients to use for training and  a list of patients to use for testing
     """
 
-    patients = get_patients(archive_path, images_folder=images_folder)
+    patients = get_patients(archive_path / images_folder)
     random.shuffle(patients)
     train_size = round(len(patients) * train_proportion)
 
@@ -77,11 +77,11 @@ def find_unique_shapes(archive_path, images_folder="images"):
     """
     shapes = []
 
-    patients = get_patients(archive_path, images_folder)
+    patients = get_patients(archive_path / images_folder)
     for patient in patients:
-        for examination_id, slices in patient.examinations.items():
+        for scan_id, slices in patient.scans.items():
             for slice in slices:
-                slice_image_path = archive_path / images_folder / patient.id / examination_id / slice
+                slice_image_path = archive_path / images_folder / patient.id / scan_id / slice
                 image = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_image_path)))[0]
 
                 if not (image.shape in shapes):
