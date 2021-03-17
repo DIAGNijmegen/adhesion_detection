@@ -10,7 +10,7 @@ import numpy as np
 import SimpleITK as sitk
 from cinemri.utils import get_patients, Patient
 from data_conversion import convert_2d_image_to_pseudo_3d
-from dualregistration import DualRegistrator
+from visceral_slide import VisceralSlideDetector
 import matplotlib.pyplot as plt
 
 # TODO:
@@ -159,7 +159,7 @@ def compute_visceral_slide(images_path,
     target_path.mkdir(exist_ok=True)
     print("Computing visceral slide for each slice")
     print("The results will be stored in {}".format(str(target_path)))
-    registrator = DualRegistrator()
+    registrator = VisceralSlideDetector()
 
     slices_glob = masks_path.glob("*insp.nii.gz")
     slices_id_chunks = [f.name[:-12].split("_") for f in slices_glob]
