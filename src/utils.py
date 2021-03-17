@@ -61,7 +61,7 @@ def train_test_split(archive_path,
 
     dest_path = Path(split_destination)
     dest_path.mkdir(exist_ok=True)
-    split_file_path = dest_path / "train_test_split.json"
+    split_file_path = dest_path / "segm_train_test_split.json"
     with open(split_file_path, "w") as f:
         json.dump(split_json, f)
 

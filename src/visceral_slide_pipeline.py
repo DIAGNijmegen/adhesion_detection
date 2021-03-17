@@ -27,18 +27,22 @@ import matplotlib.pyplot as plt
 #                      drawn over it, png with visceral slide only and pickle. Organize into folders by patients, scans and slices?
 
 images_folder = "images"
+metadata_folder = "metadata"
 inspexp_file_name = "inspexp.json"
+train_test_split_file_name = "segm_train_test_split.json"
 nnUNet_input_folder = "nnUNet_input"
 predicted_masks_folder = "nnUNet_masks"
 results_folder = "visceral_slide"
 
 
 def extract_insp_exp_frames(images_path,
+                            patients_ids,
                             inspexp_file_path,
                             destination_path):
     """
     Extracts inspiration and expiration frames and saves them to diag pre-nnUnet format
     :param images_path:
+    :param patients_ids:
     :param inspexp_file_path:
     :param destination_path:
     :return:
@@ -46,12 +50,16 @@ def extract_insp_exp_frames(images_path,
 
     destination_path.mkdir(exist_ok=True)
     print("Starting extraction of inspiration and expiration frames")
+    print("The following subset of patients is considered:")
+    print(patients_ids)
     print("The frames will be stored in {}".format(str(destination_path)))
 
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
     patients = get_patients(images_path)
+    patients = [patient for patient in patients if patient.id in patients_ids]
+
     for patient in patients:
         print("Extracting frames for slices of a patient {}".format(patient.id))
         if patient.id in inspexp_data:
@@ -95,17 +103,35 @@ def extract_insp_exp_frames(images_path,
 def extract_insp_exp(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument("data", type=str)
+    parser.add_argument("--output", type=str, required=True)
     parser.add_argument("--images_folder", type=str, default=images_folder)
     parser.add_argument("--inspexp_file_name", type=str, default=inspexp_file_name)
-    parser.add_argument("--output_folder", type=str, default=nnUNet_input_folder)
+    parser.add_argument('--mode', type=str, default="train")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
     images_path = data_path / args.images_folder
-    inspexp_file_path = data_path / args.inspexp_file_name
-    output_path = data_path / args.output_folder
+    inspexp_file_path = data_path / metadata_folder / args.inspexp_file_name
+    output_path = Path(args.output)
+    destination_path = output_path / nnUNet_input_folder
+    mode = args.mode
 
-    extract_insp_exp_frames(images_path, inspexp_file_path, output_path)
+    if mode == "train":
+        patients_key = "train_patients"
+    elif mode == "test":
+        patients_key = "test_patients_ids"
+    else:
+        raise ValueError("Usuppotred mode: should be train or test")
+
+    train_test_split_file_path = data_path / metadata_folder / train_test_split_file_name
+    with open(train_test_split_file_path) as train_test_split_file:
+        train_test_split = json.load(train_test_split_file)
+    patients_ids = train_test_split[patients_key]
+
+    # Create output folder
+    output_path.mkdir(parents=True)
+
+    extract_insp_exp_frames(images_path, patients_ids, inspexp_file_path, destination_path)
 
 
 def segment_abdominal_cavity(nnUNet_model_path,
@@ -201,7 +227,7 @@ def compute_visceral_slide(images_path,
                 exp_mask_path = masks_path / (slice_name + "_exp.nii.gz")
                 exp_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(exp_mask_path)))[0]
 
-                x, y, visceral_slide = registrator.get_visceral_slide(insp_frame, exp_frame, exp_mask, insp_mask)
+                x, y, visceral_slide = registrator.get_visceral_slide(exp_frame, exp_mask, insp_frame, insp_mask)
 
                 # Save pickle and figure
                 pickle_path = slice_path / "visceral_slide.pkl"
@@ -249,20 +275,30 @@ def compute(argv):
 
 def run_pileline(data_path,
                  nnUNet_model_path,
+                 output_path,
+                 patients_set_key,
                  task_id="Task101_AbdomenSegmentation"):
+
+    # Create output folder
+    output_path.mkdir(parents=True)
 
     # Extract inspiration and expiration frames and save in nnU-Net input format
     images_path = data_path / images_folder
-    inspexp_file_path = data_path / inspexp_file_name
-    nnUNet_input_path = data_path / nnUNet_input_folder
-    extract_insp_exp_frames(images_path, inspexp_file_path, nnUNet_input_path)
+    # Extract a subset of patients
+    train_test_split_file_path = data_path / metadata_folder / train_test_split_file_name
+    with open(train_test_split_file_path) as train_test_split_file:
+        train_test_split = json.load(train_test_split_file)
+    patients_ids = train_test_split[patients_set_key]
+    inspexp_file_path = data_path / metadata_folder / inspexp_file_name
+    nnUNet_input_path = output_path / nnUNet_input_folder
+    extract_insp_exp_frames(images_path, patients_ids, inspexp_file_path, nnUNet_input_path)
 
     # Run inference with nnU-Net
-    nnUNet_output_path = data_path / predicted_masks_folder
+    nnUNet_output_path = output_path / predicted_masks_folder
     segment_abdominal_cavity(str(nnUNet_model_path), str(nnUNet_input_path), str(nnUNet_output_path), task_id)
 
     # Compute visceral slide with nnU-Net segmentation masks
-    visceral_slide_path = data_path / results_folder
+    visceral_slide_path = output_path / results_folder
     compute_visceral_slide(nnUNet_input_path, nnUNet_output_path, visceral_slide_path)
 
     print("Done")
@@ -272,14 +308,23 @@ def pipeline(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('data', type=str)
     parser.add_argument('model', type=str)
+    parser.add_argument('--output', type=str, required=True)
     parser.add_argument('--task', type=str, default="Task101_AbdomenSegmentation")
+    parser.add_argument('--mode', type=str, default="train")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
     nnUNet_results_path = Path(args.model)
+    output_path = Path(args.output)
     task = args.task
+    mode = args.mode
 
-    run_pileline(data_path, nnUNet_results_path, task)
+    if mode == "train":
+        run_pileline(data_path, nnUNet_results_path, output_path, "train_patients", task)
+    elif mode == "test":
+        run_pileline(data_path, nnUNet_results_path, output_path, "test_patients_ids", task)
+    else:
+        raise ValueError("Usuppotred mode: should be train or test")
 
 
 def test():
