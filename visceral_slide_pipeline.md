@@ -107,3 +107,19 @@ Finally, `visceral_slide` stores visceral slide for each slice in 3 formats:
 - Only scatter plot on the white background
 - Raw coordinates of the abdominal cavity contour x, y and the computed visceral_slide values in pickle format
 
+Some typical results:   
+![visceral_slide_overlayed](https://user-images.githubusercontent.com/1251607/111767295-d5550680-88a6-11eb-9771-a02cc795fd40.png)
+![visceral_slide](https://user-images.githubusercontent.com/1251607/111767329-e1d95f00-88a6-11eb-8972-f1af5b61d361.png)    
+
+![visceral_slide_overlayed](https://user-images.githubusercontent.com/1251607/111767597-354bad00-88a7-11eb-8419-0fe2107d0ddc.png)
+![visceral_slide](https://user-images.githubusercontent.com/1251607/111767608-38df3400-88a7-11eb-806f-80d1aec11fc1.png)
+
+There are quite a few cases with rather bad results becasue of problems with segmentation:      
+![visceral_slide_overlayed](https://user-images.githubusercontent.com/1251607/111767765-675d0f00-88a7-11eb-8eb4-ddf5a487cf0e.png)
+![visceral_slide](https://user-images.githubusercontent.com/1251607/111767801-6fb54a00-88a7-11eb-9bc8-1a4a20ba0df8.png)    
+
+![visceral_slide_overlayed](https://user-images.githubusercontent.com/1251607/111767978-a12e1580-88a7-11eb-8314-83896c886aad.png)
+![visceral_slide](https://user-images.githubusercontent.com/1251607/111767994-a4c19c80-88a7-11eb-9a96-3a9f4d3c1f9e.png)
+
+
+
