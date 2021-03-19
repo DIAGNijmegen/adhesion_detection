@@ -3,10 +3,10 @@
 import sys
 import pickle
 import argparse
-from pathlib import Path
 import json
 import subprocess
 import numpy as np
+from pathlib import Path
 import SimpleITK as sitk
 from cinemri.utils import get_patients, Patient
 from data_conversion import convert_2d_image_to_pseudo_3d
@@ -15,15 +15,6 @@ import matplotlib.pyplot as plt
 
 # TODO:
 # How do we evaluate registration?
-
-# Folder structure:
-# - Task folder
-#   - images - folder containing a subset of cinemri archive images (structure: patientfolders -> scans -> slices)
-#   - inspexp_data.json - metadata file with information anout inspiration and expiration frames
-#   - nnU-Net_input - folder containing inspiration and expiration frames for each slice, naming: patientId_scan_id_slice_id_(insp/exp)_0000.nii.gz
-#   - nnUNet_masks - folder containing masks predicted for input images by nnU-Net
-#   - visceral_slide - contains visceral slide obtained with image registration as png with input image and visceral slide
-#                      drawn over it, png with visceral slide only and pickle. Organize into folders by patients, scans and slices?
 
 images_folder = "images"
 metadata_folder = "metadata"
@@ -43,7 +34,7 @@ def extract_insp_exp_frames(images_path,
     The file names of the extracted frames have the following structure:
     patientId_scanId_sliceId_[insp/exp]_0000.nii.gz
     This helps to recover folders hierarchy when the calculated visceral slide for each slice is being saved.
-    :param images_path: a path to a folder in an archive that contains cine-MRI scans
+    :param images_path: a path to a folder in the archive that contains cine-MRI scans
     :param patients_ids: a list of the patients ids for which frames will be extracted
     :param inspexp_file_path: a path to a json file that contains information about inspiration and expiration frames
                               for each slice
@@ -179,21 +170,19 @@ def segment(argv):
     :return:
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("data", type=str, help="a path to the full cine-MRI data archive")
-    parser.add_argument("--results", type=str, required=True,
+    parser.add_argument("work_dir", type=str,
+                        help="a path to the folder which contains a folder with nnU-Net input and "
+                             "where a folder for saving the predicted segmentation will be created")
+    parser.add_argument("--nnUNet_results", type=str, required=True,
                         help="a path to the \"results\" folder generated during nnU-Net training")
     parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
-    parser.add_argument("--input_folder", type=str, default=nnUNet_input_folder,
-                        help="a path to a folder that contain the images to run inference for")
-    parser.add_argument("--output_folder", type=str, default=predicted_masks_folder,
-                        help="a path to a folder where to save the predicted segmentation")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
-    nnUNet_model_path = args.results
+    nnUNet_model_path = args.nnUNet_results
     task_id = args.task
-    input_path = data_path / args.input_folder
-    output_path = data_path / args.output_folder
+    input_path = data_path / nnUNet_input_folder
+    output_path = data_path / predicted_masks_folder
     segment_abdominal_cavity(nnUNet_model_path, str(input_path), str(output_path), task_id)
 
 
@@ -286,19 +275,15 @@ def compute_visceral_slide(images_path,
 
 def compute(argv):
     parser = argparse.ArgumentParser()
-    parser.add_argument("data", type=str, help="a path to the full cine-MRI data archive")
-    parser.add_argument("--images_folder", type=str, default=nnUNet_input_folder,
-                        help="a path to a folder containing inspiration and expiration frames of slices in .nii.gz")
-    parser.add_argument("--masks_folder", type=str, default=predicted_masks_folder,
-                        help="a path to a folder containing predicted masks for inspiration and expiration frames in .nii.gz")
-    parser.add_argument("--output_folder", type=str, default=results_folder,
-                        help="a path to a folder to save visceral slide")
+    parser.add_argument("work_dir", type=str,
+                        help="a path to the folder which contains folders with images and masks for visceral slide "
+                             "computation and in which the computed visceral slide will be saved")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
-    images_path = data_path / args.images_folder
-    masks_path = data_path / args.masks_folder
-    output_path = data_path / args.output_folder
+    images_path = data_path / nnUNet_input_folder
+    masks_path = data_path / predicted_masks_folder
+    output_path = data_path / results_folder
 
     compute_visceral_slide(images_path, masks_path, output_path)
 
