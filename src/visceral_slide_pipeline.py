@@ -14,7 +14,6 @@ from visceral_slide import VisceralSlideDetector
 import matplotlib.pyplot as plt
 
 # TODO:
-# Do we need any traning/testing split?
 # How do we evaluate registration?
 
 # Folder structure:
@@ -40,11 +39,15 @@ def extract_insp_exp_frames(images_path,
                             inspexp_file_path,
                             destination_path):
     """
-    Extracts inspiration and expiration frames and saves them to diag pre-nnUnet format
-    :param images_path:
-    :param patients_ids:
-    :param inspexp_file_path:
-    :param destination_path:
+    Extracts inspiration and expiration frames and saves them to nn-UNet input format.
+    The file names of the extracted frames have the following structure:
+    patientId_scanId_sliceId_[insp/exp]_0000.nii.gz
+    This helps to recover folders hierarchy when the calculated visceral slide for each slice is being saved.
+    :param images_path: a path to a folder in an archive that contains cine-MRI scans
+    :param patients_ids: a list of the patients ids for which frames will be extracted
+    :param inspexp_file_path: a path to a json file that contains information about inspiration and expiration frames
+                              for each slice
+    :param destination_path: a path where to save the extracted inspiration and expiration frames in nn-UNet input format
     :return:
     """
 
@@ -57,6 +60,7 @@ def extract_insp_exp_frames(images_path,
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
+    # Extract the subset of patients
     patients = get_patients(images_path)
     patients = [patient for patient in patients if patient.id in patients_ids]
 
@@ -89,11 +93,13 @@ def extract_insp_exp_frames(images_path,
                 slice_path = images_path / patient.id / scan_id / slice
                 slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
 
+                # Extract and save inspiration frame
                 insp_frame = slice_array[inspexp_frames[0]]
                 insp_pseudo_3d_image = convert_2d_image_to_pseudo_3d(insp_frame)
                 insp_file_path = destination_path / (slice_id + "_insp_0000.nii.gz")
                 sitk.WriteImage(insp_pseudo_3d_image, str(insp_file_path))
 
+                # Extract and save expiration frame
                 exp_frame = slice_array[inspexp_frames[1]]
                 exp_pseudo_3d_image = convert_2d_image_to_pseudo_3d(exp_frame)
                 exp_file_path = destination_path / (slice_id + "_exp_0000.nii.gz")
@@ -101,17 +107,23 @@ def extract_insp_exp_frames(images_path,
 
 
 def extract_insp_exp(argv):
+    """
+    A command line wrapper of extract_segmentation_data
+
+    :param argv: command line arguments
+    :return:
+    """
     parser = argparse.ArgumentParser()
-    parser.add_argument("data", type=str)
-    parser.add_argument("--output", type=str, required=True)
-    parser.add_argument("--images_folder", type=str, default=images_folder)
-    parser.add_argument("--inspexp_file_name", type=str, default=inspexp_file_name)
-    parser.add_argument('--mode', type=str, default="train")
+    parser.add_argument("data", type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument("--output", type=str, required=True,
+                        help="a path to save the extracted inspiration and expiration frames")
+    parser.add_argument("--mode", type=str, default="train",
+                        help="indicates which subset of patients to select, can be \"train\" or \"test\"")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
-    images_path = data_path / args.images_folder
-    inspexp_file_path = data_path / metadata_folder / args.inspexp_file_name
+    images_path = data_path / images_folder
+    inspexp_file_path = data_path / metadata_folder / inspexp_file_name
     output_path = Path(args.output)
     destination_path = output_path / nnUNet_input_folder
     mode = args.mode
@@ -130,7 +142,6 @@ def extract_insp_exp(argv):
 
     # Create output folder
     output_path.mkdir(parents=True)
-
     extract_insp_exp_frames(images_path, patients_ids, inspexp_file_path, destination_path)
 
 
@@ -139,6 +150,14 @@ def segment_abdominal_cavity(nnUNet_model_path,
                              output_path,
                              task_id="Task101_AbdomenSegmentation",
                              network="2d"):
+    """
+    :param nnUNet_model_path: a path to the "results" folder generated during nnU-Net training
+    :param input_path: a path to a folder that contain the images to run inference for
+    :param output_path: a path to a folder where to save the predicted segmentation
+    :param task_id: an id of a task for nnU-Net
+    :param network: a type of nnU-Net network
+    :return:
+    """
 
     cmd = [
         "nnunet", "predict", task_id,
@@ -149,17 +168,25 @@ def segment_abdominal_cavity(nnUNet_model_path,
     ]
 
     print("Segmenting inspiration and expiration frames with nnU-Net")
-    print(cmd)
     subprocess.check_call(cmd)
 
 
 def segment(argv):
+    """
+    A command line wrapper of segment_abdominal_cavity
+
+    :param argv: command line arguments
+    :return:
+    """
     parser = argparse.ArgumentParser()
-    parser.add_argument("data", type=str)
-    parser.add_argument("--results", type=str, required=True)
-    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation")
-    parser.add_argument("--input_folder", type=str, default=nnUNet_input_folder)
-    parser.add_argument("--output_folder", type=str, default=predicted_masks_folder)
+    parser.add_argument("data", type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument("--results", type=str, required=True,
+                        help="a path to the \"results\" folder generated during nnU-Net training")
+    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
+    parser.add_argument("--input_folder", type=str, default=nnUNet_input_folder,
+                        help="a path to a folder that contain the images to run inference for")
+    parser.add_argument("--output_folder", type=str, default=predicted_masks_folder,
+                        help="a path to a folder where to save the predicted segmentation")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
@@ -175,17 +202,17 @@ def compute_visceral_slide(images_path,
                            target_path):
 
     """
-    Computes visceral slide for each slice with DualRegistrator
+    Computes visceral slide for each slice with VisceralSlideDetector
     :param images_path: a path to a folder containing inspiration and expiration frames of slices in .nii.gz
     :param masks_path: a path to a folder containing predicted masks for inspiration and expiration
                        frames of slices in .nii.gz
-    :param target_path: a path to a folder to save registration results
+    :param target_path: a path to a folder to save visceral slide
     :return:
     """
     target_path.mkdir(exist_ok=True)
     print("Computing visceral slide for each slice")
     print("The results will be stored in {}".format(str(target_path)))
-    registrator = VisceralSlideDetector()
+    visceral_slide_detector = VisceralSlideDetector()
 
     slices_glob = masks_path.glob("*insp.nii.gz")
     slices_id_chunks = [f.name[:-12].split("_") for f in slices_glob]
@@ -227,7 +254,7 @@ def compute_visceral_slide(images_path,
                 exp_mask_path = masks_path / (slice_name + "_exp.nii.gz")
                 exp_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(exp_mask_path)))[0]
 
-                x, y, visceral_slide = registrator.get_visceral_slide(exp_frame, exp_mask, insp_frame, insp_mask)
+                x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(exp_frame, exp_mask, insp_frame, insp_mask)
 
                 # Save pickle and figure
                 pickle_path = slice_path / "visceral_slide.pkl"
@@ -259,10 +286,13 @@ def compute_visceral_slide(images_path,
 
 def compute(argv):
     parser = argparse.ArgumentParser()
-    parser.add_argument("data", type=str)
-    parser.add_argument("--images_folder", type=str, default=nnUNet_input_folder)
-    parser.add_argument("--masks_folder", type=str, default=predicted_masks_folder)
-    parser.add_argument("--output_folder", type=str, default=results_folder)
+    parser.add_argument("data", type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument("--images_folder", type=str, default=nnUNet_input_folder,
+                        help="a path to a folder containing inspiration and expiration frames of slices in .nii.gz")
+    parser.add_argument("--masks_folder", type=str, default=predicted_masks_folder,
+                        help="a path to a folder containing predicted masks for inspiration and expiration frames in .nii.gz")
+    parser.add_argument("--output_folder", type=str, default=results_folder,
+                        help="a path to a folder to save visceral slide")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
@@ -279,6 +309,19 @@ def run_pileline(data_path,
                  patients_set_key,
                  task_id="Task101_AbdomenSegmentation"):
 
+    """
+    Runs the pipeline to compute visceral slide for all scans of the specified set of the patients.
+    The pipeline consists of the following steps:
+    - Extraction of inspiration and expiration frames
+    - Segmentation of abdominal cavity on these fames with nn-UNet
+    - Calculation of visceral slide along the abdominal cavity contour
+    :param data_path: a path to the full cine-MRI data archive
+    :param nnUNet_model_path: a path to the "results" folder generated during nnU-Net training
+    :param output_path: a path to a folder to save visceral slide
+    :param patients_set_key: indicates which subset of patients to select, can be "train" or "test"
+    :param task_id: an id of a task for nnU-Net
+    :return:
+    """
     # Create output folder
     output_path.mkdir(parents=True)
 
@@ -300,17 +343,23 @@ def run_pileline(data_path,
     # Compute visceral slide with nnU-Net segmentation masks
     visceral_slide_path = output_path / results_folder
     compute_visceral_slide(nnUNet_input_path, nnUNet_output_path, visceral_slide_path)
-
     print("Done")
 
 
 def pipeline(argv):
+    """
+    A command line wrapper of run_pileline
+
+    :param argv: command line arguments
+    :return:
+    """
     parser = argparse.ArgumentParser()
-    parser.add_argument('data', type=str)
-    parser.add_argument('model', type=str)
-    parser.add_argument('--output', type=str, required=True)
-    parser.add_argument('--task', type=str, default="Task101_AbdomenSegmentation")
-    parser.add_argument('--mode', type=str, default="train")
+    parser.add_argument('data', type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument('model', type=str, help="a path to the \"results\" folder generated during nnU-Net training")
+    parser.add_argument('--output', type=str, required=True, help="a path to a folder to save visceral slide")
+    parser.add_argument('--task', type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
+    parser.add_argument('--mode', type=str, default="train",
+                        help="indicates which subset of patients to select, can be \"train\" or \"test\"")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
@@ -324,17 +373,7 @@ def pipeline(argv):
     elif mode == "test":
         run_pileline(data_path, nnUNet_results_path, output_path, "test_patients_ids", task)
     else:
-        raise ValueError("Usuppotred mode: should be train or test")
-
-
-def test():
-    data_path = Path("../../data/pipeline_test/images")
-    inspexp_file_path = Path("../../data/pipeline_test/inspexp.json")
-    destination_path = Path("../../data/pipeline_test/prennUNet")
-    prediction_path = Path("../../data/pipeline_test/prediction")
-    visceral_slide_path = Path("../../data/pipeline_test/visceral_slide")
-    #extract_insp_exp_frames(data_path, inspexp_file_path, destination_path)
-    compute_visceral_slide(destination_path, prediction_path, visceral_slide_path)
+        raise ValueError("Usupported mode: should be train or test")
 
 
 if __name__ == '__main__':
