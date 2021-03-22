@@ -17,13 +17,19 @@ import matplotlib.pyplot as plt
 
 # TODO: see if there is loss in quality when converting to .png
 def save_frame(source_path, target_path, index=0):
+    """Saves a single frame of  .mha cine-MRI slice as .npy and .png
+
+    Parameters
+    ----------
+    source_path : Path
+       A path to the original file
+    target_path : Path
+       A path to save .npy and .png files
+    index : int
+       An index of a frame to extract
+
     """
-    Saves a single frame of  .mha cine-MRI slice as .npy and .png
-    :param source_path: a path to the original file
-    :param target_path: a path to save .npy and .png files
-    :param index: an index of a frame to extract
-    :return:
-    """
+
     image = sitk.GetArrayFromImage(sitk.ReadImage(str(source_path)))[index]
 
     image_target_path = Path(target_path) / Path(source_path).stem
@@ -41,16 +47,22 @@ def extract_segmentation_data(archive_path,
                               segmentations_folder="cavity_segmentations",
                               target_images_folder="images",
                               target_segmentations_folder="masks"):
-    """
-    Extracts a subset of the archive only related to segmentation
+    """Extracts a subset of the archive only related to segmentation
 
-    :param archive_path: a path to the full cine-MRI data archive
-    :param destination_path: a path to save the extracted segmentation subset
-    :param images_folder: a name of the images folder in the archive
-    :param segmentations_folder: a name of the folder with cavity segmentations in the archive
-    :param target_images_folder: a name of the images folder in the segmentation subset
-    :param target_segmentations_folder: a name of the folder with cavity segmentations in the segmentation subset
-    :return:
+    Parameters
+    ----------
+    archive_path : Path
+       A path to the full cine-MRI data archive
+    destination_path : Path
+       A path to save the extracted segmentation subset
+    images_folder : str, default="images"
+       A name of the images folder in the archive
+    segmentations_folder : str, default="cavity_segmentations"
+       A name of the folder with cavity segmentations in the archive
+    target_images_folder : str, default="images"
+       A name of the images folder in the segmentation subset
+    target_segmentations_folder : str, default="masks"
+       A name of the folder with cavity segmentations in the segmentation subset
     """
 
     # create target paths and folders
@@ -96,13 +108,12 @@ def extract_segmentation_data(archive_path,
 
 
 def extract_segmentation(argv):
-    """
-        A command line wrapper of extract_segmentation_data
+    """A command line wrapper of extract_segmentation_data
 
-        Command line arguments
-        :param argv: command line arguments
-        :return:
-        """
+    Parameters
+    ----------
+    argv : list of str
+    """
 
     parser = argparse.ArgumentParser()
     parser.add_argument('archive_path', type=str, help="a path to the full cine-MRI data archive")
@@ -128,14 +139,25 @@ def extract_segmentation(argv):
                               target_segmentations_folder)
 
 
-def convert_2d_image_file_to_pseudo_3d(input_file_path, spacing=[999, 1, 1], is_seg= False):
-    """
-    Reads an image (must be .npy or fromat recognized by skimage) and converts it into a series of niftis.
-    The image should be grayscalse
-    :param input_file_path: a path to image to convert
-    :param spacing:
-    :param is_seg: is the specified image a segmentation mask
-    :return: an image converted to pseudo 2d format suitable for nnU-Net
+
+def convert_2d_image_file_to_pseudo_3d(input_file_path, spacing=[999, 1, 1], is_seg=False):
+    """Reads an image (must be .npy or fromat recognized by skimage) and converts it into a series of niftis.
+
+    The input image should be grayscalse.
+
+    Parameters
+    ----------
+    input_file_path : Path
+       A path to image to convert
+    spacing : list, default=[999, 1, 1]
+    is_seg : bool, default=False
+       Indicates if the specified image is a segmentation mask
+
+    Returns
+    -------
+    SimpleITK Image
+       An image converted to pseudo 2d format suitable for nnU-Net
+
     """
     img = np.load(input_file_path) if input_file_path.suffix == ".npy" else io.imread(input_file_path)
     return convert_2d_image_to_pseudo_3d(img, spacing, is_seg)
@@ -143,18 +165,27 @@ def convert_2d_image_file_to_pseudo_3d(input_file_path, spacing=[999, 1, 1], is_
 
 def convert_2d_image_to_pseudo_3d(image, spacing=[999, 1, 1], is_seg=False):
     """
-    Taken from https://github.com/MIC-DKFZ/nnUNet/blob/master/nnunet/utilities/file_conversions.py
-    and slightly modified
+    Taken from https://github.com/MIC-DKFZ/nnUNet/blob/master/nnunet/utilities/file_conversions.py and slightly modified
+
     Converts an image into a series of niftis.
     The image should be grayscalse
     !!!2D images are often natural images which do not have a voxel spacing that could be used for resampling. These images
     must be resampled by you prior to converting them to nifti!!!
     Datasets converted with this utility can only be used with the 2d U-Net configuration of nnU-Net
     Segmentations will be converted to np.uint32!
-    :param image: an image to convert
-    :param spacing:
-    :param is_seg: is the specified image a segmentation mask
-    :return: an image converted to pseudo 2d format suitable for nnU-Net
+
+    Parameters
+    ----------
+    image : ndarray
+       An image to convert
+    spacing : list, default=[999, 1, 1]
+    is_seg : bool, default=False
+       Indicates if the specified image is a segmentation mask
+
+    Returns
+    -------
+    SimpleITK Image
+       An image converted to pseudo 2d format suitable for nnU-Net
     """
 
     assert len(image.shape) == 2, 'images should be grayscalse'
@@ -174,15 +205,22 @@ def subset_to_diag_nnunet(patients,
                           images_folder="images",
                           masks_folder="masks",
                           is_train=True):
-    """
-    Saves images an masks for training or test subset of patients
-    :param patients: a list of patients in the subset
-    :param segmentation_path: a path to the segmentation dataset
-    :param target_path: a path to save the subset
-    :param images_folder: an images folder name
-    :param masks_folder: a masks folder name
-    :param is_train: a boolean flag indicating if it is a training subset
-    :return:
+    """Saves images an masks for training or test subset of patients
+
+    Parameters
+    ----------
+    patients : list of Patients
+       A list of patients in the subset
+    segmentation_path : Path
+       A path to the segmentation dataset
+    target_path : Path
+       A path to save the subset
+    images_folder : str, default="images"
+       An images folder name
+    masks_folder :  str, default="masks"
+       A masks folder name
+    is_train : bool, default=True
+       A boolean flag indicating if it is a training subset
     """
 
     # Create folders of the subset
@@ -222,16 +260,22 @@ def create_folds(data_path,
                  images_folder="images",
                  folds_num=5,
                  folds_file="splits_final.json"):
+    """Creates custom folds for nnU-Net stratified by patients
 
-    """
-    Creates custom folds for nnU-Net stratified by patients
-    :param data_path: a path to a training subset
-    :param train_patients_ids: a numpy array of patients' ids in the training subset
-    :param train_folder: a name of the folder with training data
-    :param images_folder: a name of the folder with images
-    :param folds_file: a name of a file to save folds split
-    :param folds_num: a number of folds
-    :return:
+    Parameters
+    ----------
+    data_path : Path
+       A path to a training subset
+    train_patients_ids : ndarray of str
+       An array of patients' ids in the training subset
+    train_folder : str, default="train"
+       A name of the folder with training data
+    images_folder : str, default="images"
+       A name of the folder with images
+    folds_num : int, default=5
+       A number of folds to make
+    folds_file : str, default="splits_final.json"
+       A name of a file to save folds split
     """
 
     random.shuffle(train_patients_ids)
@@ -264,18 +308,27 @@ def convert_to_diag_nnunet(segmentation_path,
                            train_folder="train",
                            test_folder="test",
                            train_split=0.8):
-    """
-    Converts the segmentation data subset to a format a dockerized version of nnU-Net from DIAG
-    can convert to nnU-Net input format
+    """Converts the segmentation data subset to a diag nnU-Net input format
 
-    :param  segmentation_path : path to a segmentation subset of cine-MRI data
-    :param  target_path: a destination path to save converted files
-    :param  images_folder : a folder inside the archive, which contains scans
-    :param  masks_folder : a folder inside the archive, which contains masks
-    :param  train_folder : a name of a folder with training data
-    :param  test_folder : a name of a folder with test data
-    :param  train_split : a share of the data to use for training
-    :return:
+    This format is expected by prepare method of a diag nnU-Net that
+    converts it to the nnU-Net input format
+
+    Parameters
+    ----------
+    segmentation_path : Path
+       A path to a segmentation subset of cine-MRI data
+    target_path : Path
+       A destination path to save converted files
+    images_folder : str
+       A name of a folder that contains scans inside the archive
+    masks_folder : str
+       A name of a folder that contains masks inside the archive
+    train_folder : str
+       A name of a folder with training data
+    test_folder : str
+       A name of a folder with test data
+    train_split : float
+       A share of the data to use for training
     """
 
     # Make directories to save converted images
@@ -310,11 +363,11 @@ def convert_to_diag_nnunet(segmentation_path,
 
 
 def to_diag_nnunet(argv):
-    """
-    A command line wrapper of convert_to_diag_nnunet
+    """A command line wrapper of convert_to_diag_nnunet
 
-    :param argv: command line arguments
-    :return:
+    Parameters
+    ----------
+    argv : list of str
     """
 
     parser = argparse.ArgumentParser()
@@ -407,8 +460,8 @@ def merge_frames(frames_folder,
     sitk.WriteImage(sitk_image, str(image_path))
 
 
-# Visualize the predicted mask as overlay on the frame and saved as png file
 def save_visualised_prediction(images_path, predictions_path, png_path, save_gif=True):
+    """Visualize the predicted mask as overlay on the frame and saved as png file"""
 
     png_path.mkdir(exist_ok=True)
 
@@ -443,12 +496,16 @@ def save_visualised_prediction(images_path, predictions_path, png_path, save_gif
         subprocess.run(command)
 
 
+
+
 def test():
     archive_path = Path("../../data/cinemri_mha/rijnstate")
     subset_path = Path("../../data/cinemri_mha/segmentation_subset")
     diag_nnUNet_path = Path("../../data/cinemri_mha/diag_nnunet")
 
-    extract_frames(subset_path, diag_nnUNet_path)
+    im_path = Path("ANON0P03RE1MR_1.2.752.24.7.621449243.4375030_1.3.12.2.1107.5.2.30.26380.201901301010594525512025.0.0.0_exp2.nii.gz")
+    save_frame(im_path, Path("res"))
+    #extract_frames(subset_path, diag_nnUNet_path)
 
     """
     unique_shapes = find_unique_shapes(archive_path, "cavity_segmentations")
@@ -460,11 +517,12 @@ def test():
 
     # extract_frames(Path("1.3.12.2.1107.5.2.30.26380.2019031314281933334670409.0.0.0.mha"), Path("frames"))
     # merge_frames(Path("../full_pred_test/prediction"), Path("merged_prediction"), Path("frames/metadata.json"))
-    save_visualised_prediction(Path("frames"), Path("prediction"), Path("vis"))
+    #save_visualised_prediction(Path("frames"), Path("prediction"), Path("vis"))
 
 
 if __name__ == '__main__':
-    """
+    #test()
+
     np.random.seed(99)
     random.seed(99)
 
@@ -480,5 +538,5 @@ if __name__ == '__main__':
         print('Usage: data_conversion ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
-    """
+
 

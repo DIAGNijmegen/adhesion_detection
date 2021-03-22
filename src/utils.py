@@ -4,11 +4,29 @@ import json
 from pathlib import Path
 import SimpleITK as sitk
 from cinemri.utils import get_patients
+from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY
 
 
 class CineMRISlice:
+    """
+    A representation of a cine-MRI slice
+
+    Attributes
+    __________
+       file_name : str
+       patient_id : str
+       scan_id :  str
+    """
 
     def __init__(self, file_name, patient_id, scan_id):
+        """
+
+        Parameters
+        ----------
+        file_name : str
+        patient_id : str
+        scan_id : str
+        """
         self.file_name = file_name
         self.patient_id = patient_id
         self.scan_id = scan_id
@@ -19,11 +37,20 @@ class CineMRISlice:
 
 def get_patients_without_slices(archive_path,
                                 images_folder="images"):
-    """
-    Finds patients who do not have any slices
-    :param archive_path: a path to the full cine-MRI data archive
-    :param images_folder: a name of the images folder in the archive
-    :return: a list of patients without slices
+    """Finds patients who do not have any slices
+
+    Parameters
+    ----------
+    archive_path : Path
+       A path to the full cine-MRI data archive
+    images_folder : str, default="images"
+       A name of the images folder in the archive
+
+    Returns
+    -------
+    list of Patient
+       A list of patients without slices
+
     """
 
     patients = get_patients(archive_path / images_folder, with_scans_only=False)
@@ -39,13 +66,23 @@ def train_test_split(archive_path,
                      split_destination,
                      images_folder="cavity_segmentations",
                      train_proportion=0.8):
-    """
-    Creates training/test split by patients
-    :param archive_path: a path to the full cine-MRI data archive
-    :param split_destination: a parth to save a json file with training/test split
-    :param images_folder: a name of the images folder in the archive
-    :param train_proportion: a share of the data to use for training
-    :return: a tuple with a list of patients to use for training and  a list of patients to use for testing
+    """Creates training/test split by patients
+
+    Parameters
+    ----------
+    archive_path : Path
+       A path to the full cine-MRI data archive
+    split_destination : Path
+       A path to save a json file with training/test split
+    images_folder : str, default=="cavity_segmentations"
+       A name of the images folder in the archive
+    train_proportion : float, default=0.8
+       A share of the data to use for training
+
+    Returns
+    -------
+    tuple of list of string
+       A tuple with a list of patients ids to use for training and a list of patients ids to use for testing
     """
 
     patients = get_patients(archive_path / images_folder)
@@ -57,11 +94,10 @@ def train_test_split(archive_path,
 
     train_patients_ids = [patient.id for patient in train_patients]
     test_patients_ids = [patient.id for patient in test_patients]
-    split_json = {"train_patients": train_patients_ids, "test_patients_ids": test_patients_ids}
+    split_json = {TRAIN_PATIENTS_KEY: train_patients_ids, TEST_PATIENTS_KEY: test_patients_ids}
 
-    dest_path = Path(split_destination)
-    dest_path.mkdir(exist_ok=True)
-    split_file_path = dest_path / "segm_train_test_split.json"
+    split_destination.mkdir(exist_ok=True)
+    split_file_path = split_destination / TRAIN_TEST_SPLIT_FILE_NAME
     with open(split_file_path, "w") as f:
         json.dump(split_json, f)
 
@@ -69,11 +105,14 @@ def train_test_split(archive_path,
 
 
 def find_unique_shapes(archive_path, images_folder="images"):
-    """
-    Finds unique shapes of slices in the archive
-    :param archive_path: a path to the full archive
-    :param images_folder: a name of the images folder in the archive
-    :return: a list of unique shapes
+    """Finds unique shapes of slices in the archive
+
+    Parameters
+    ----------
+    archive_path : Path
+       A path to a full archive
+    images_folder : str, default="images"
+       A list of unique slices shapes
     """
     shapes = []
 

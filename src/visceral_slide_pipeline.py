@@ -12,34 +12,37 @@ from cinemri.utils import get_patients, Patient
 from data_conversion import convert_2d_image_to_pseudo_3d
 from visceral_slide import VisceralSlideDetector
 import matplotlib.pyplot as plt
+from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
+    TEST_PATIENTS_KEY
 
 # TODO:
 # How do we evaluate registration?
-
-images_folder = "images"
-metadata_folder = "metadata"
-inspexp_file_name = "inspexp.json"
-train_test_split_file_name = "segm_train_test_split.json"
-nnUNet_input_folder = "nnUNet_input"
-predicted_masks_folder = "nnUNet_masks"
-results_folder = "visceral_slide"
+NNUNET_INPUT_FOLDER = "nnUNet_input"
+PREDICTED_MASKS_FOLDER = "nnUNet_masks"
+RESULTS_FOLDER = "visceral_slide"
 
 
 def extract_insp_exp_frames(images_path,
                             patients_ids,
                             inspexp_file_path,
                             destination_path):
-    """
-    Extracts inspiration and expiration frames and saves them to nn-UNet input format.
+    """Extracts inspiration and expiration frames and saves them to nn-UNet input format.
+
     The file names of the extracted frames have the following structure:
     patientId_scanId_sliceId_[insp/exp]_0000.nii.gz
     This helps to recover folders hierarchy when the calculated visceral slide for each slice is being saved.
-    :param images_path: a path to a folder in the archive that contains cine-MRI scans
-    :param patients_ids: a list of the patients ids for which frames will be extracted
-    :param inspexp_file_path: a path to a json file that contains information about inspiration and expiration frames
-                              for each slice
-    :param destination_path: a path where to save the extracted inspiration and expiration frames in nn-UNet input format
-    :return:
+
+    Parameters
+    ----------
+    images_path : Path
+       A path to a folder in the archive that contains cine-MRI scans
+    patients_ids : list of str
+       A list of the patients ids for which frames will be extracted
+    inspexp_file_path : Path
+       A path to a json file that contains information about inspiration and expiration frames
+       for each slice
+    destination_path : Path
+       A path where to save the extracted inspiration and expiration frames in nn-UNet input format
     """
 
     destination_path.mkdir(exist_ok=True)
@@ -98,12 +101,14 @@ def extract_insp_exp_frames(images_path,
 
 
 def extract_insp_exp(argv):
-    """
-    A command line wrapper of extract_segmentation_data
+    """A command line wrapper of extract_segmentation_data
 
-    :param argv: command line arguments
-    :return:
+    Parameters
+    ----------
+    argv: list of str
+       Command line arguments
     """
+
     parser = argparse.ArgumentParser()
     parser.add_argument("data", type=str, help="a path to the full cine-MRI data archive")
     parser.add_argument("--output", type=str, required=True,
@@ -113,20 +118,20 @@ def extract_insp_exp(argv):
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
-    images_path = data_path / images_folder
-    inspexp_file_path = data_path / metadata_folder / inspexp_file_name
+    images_path = data_path / IMAGES_FOLDER
+    inspexp_file_path = data_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     output_path = Path(args.output)
-    destination_path = output_path / nnUNet_input_folder
+    destination_path = output_path / NNUNET_INPUT_FOLDER
     mode = args.mode
 
     if mode == "train":
-        patients_key = "train_patients"
+        patients_key = TRAIN_PATIENTS_KEY
     elif mode == "test":
-        patients_key = "test_patients_ids"
+        patients_key = TEST_PATIENTS_KEY
     else:
         raise ValueError("Usuppotred mode: should be train or test")
 
-    train_test_split_file_path = data_path / metadata_folder / train_test_split_file_name
+    train_test_split_file_path = data_path / METADATA_FOLDER / TRAIN_TEST_SPLIT_FILE_NAME
     with open(train_test_split_file_path) as train_test_split_file:
         train_test_split = json.load(train_test_split_file)
     patients_ids = train_test_split[patients_key]
@@ -141,13 +146,20 @@ def segment_abdominal_cavity(nnUNet_model_path,
                              output_path,
                              task_id="Task101_AbdomenSegmentation",
                              network="2d"):
-    """
-    :param nnUNet_model_path: a path to the "results" folder generated during nnU-Net training
-    :param input_path: a path to a folder that contain the images to run inference for
-    :param output_path: a path to a folder where to save the predicted segmentation
-    :param task_id: an id of a task for nnU-Net
-    :param network: a type of nnU-Net network
-    :return:
+    """Runs inference of segmentation with the saved nnU-Net model
+
+    Parameters
+    ----------
+    nnUNet_model_path : Path
+       A path to the "results" folder generated during nnU-Net training
+    input_path :  Path
+       A path to a folder that contain the images to run inference for
+    output_path : Path
+       A path to a folder where to save the predicted segmentation
+    task_id : str, default="Task101_AbdomenSegmentation"
+       An id of a task for nnU-Net
+    network : str, default="2d"
+       A type of nnU-Net network
     """
 
     cmd = [
@@ -163,12 +175,14 @@ def segment_abdominal_cavity(nnUNet_model_path,
 
 
 def segment(argv):
-    """
-    A command line wrapper of segment_abdominal_cavity
+    """A command line wrapper of segment_abdominal_cavity
 
-    :param argv: command line arguments
-    :return:
+    Parameters
+    ----------
+    argv: list of str
+       Command line arguments
     """
+
     parser = argparse.ArgumentParser()
     parser.add_argument("work_dir", type=str,
                         help="a path to the folder which contains a folder with nnU-Net input and "
@@ -181,23 +195,30 @@ def segment(argv):
     data_path = Path(args.data)
     nnUNet_model_path = args.nnUNet_results
     task_id = args.task
-    input_path = data_path / nnUNet_input_folder
-    output_path = data_path / predicted_masks_folder
+    input_path = data_path / NNUNET_INPUT_FOLDER
+    output_path = data_path / PREDICTED_MASKS_FOLDER
     segment_abdominal_cavity(nnUNet_model_path, str(input_path), str(output_path), task_id)
 
 
 def compute_visceral_slide(images_path,
                            masks_path,
                            target_path):
+    """Computes visceral slide for each slice with VisceralSlideDetector
+
+    Parameters
+    ----------
+    images_path : Path
+       A path to a folder containing inspiration and expiration frames of slices in .nii.gz
+    masks_path : Path
+       A path to a folder containing predicted masks for inspiration and expiration
+                       frames of slices in .nii.gz
+    target_path : Path
+       A path to a folder to save visceral slide
+    Returns
+    -------
 
     """
-    Computes visceral slide for each slice with VisceralSlideDetector
-    :param images_path: a path to a folder containing inspiration and expiration frames of slices in .nii.gz
-    :param masks_path: a path to a folder containing predicted masks for inspiration and expiration
-                       frames of slices in .nii.gz
-    :param target_path: a path to a folder to save visceral slide
-    :return:
-    """
+
     target_path.mkdir(exist_ok=True)
     print("Computing visceral slide for each slice")
     print("The results will be stored in {}".format(str(target_path)))
@@ -274,6 +295,13 @@ def compute_visceral_slide(images_path,
 
 
 def compute(argv):
+    """A command line wrapper of compute_visceral_slide
+
+    Parameters
+    ----------
+    argv: list of str
+       Command line arguments
+    """
     parser = argparse.ArgumentParser()
     parser.add_argument("work_dir", type=str,
                         help="a path to the folder which contains folders with images and masks for visceral slide "
@@ -281,9 +309,9 @@ def compute(argv):
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
-    images_path = data_path / nnUNet_input_folder
-    masks_path = data_path / predicted_masks_folder
-    output_path = data_path / results_folder
+    images_path = data_path / NNUNET_INPUT_FOLDER
+    masks_path = data_path / PREDICTED_MASKS_FOLDER
+    output_path = data_path / RESULTS_FOLDER
 
     compute_visceral_slide(images_path, masks_path, output_path)
 
@@ -293,51 +321,60 @@ def run_pileline(data_path,
                  output_path,
                  patients_set_key,
                  task_id="Task101_AbdomenSegmentation"):
+    """Runs the pipeline to compute visceral slide for all scans of the specified set of the patients.
 
-    """
-    Runs the pipeline to compute visceral slide for all scans of the specified set of the patients.
     The pipeline consists of the following steps:
     - Extraction of inspiration and expiration frames
     - Segmentation of abdominal cavity on these fames with nn-UNet
     - Calculation of visceral slide along the abdominal cavity contour
-    :param data_path: a path to the full cine-MRI data archive
-    :param nnUNet_model_path: a path to the "results" folder generated during nnU-Net training
-    :param output_path: a path to a folder to save visceral slide
-    :param patients_set_key: indicates which subset of patients to select, can be "train" or "test"
-    :param task_id: an id of a task for nnU-Net
-    :return:
+
+    Parameters
+    ----------
+    data_path : Path
+       A path to the full cine-MRI data archive
+    nnUNet_model_path : Path
+       A path to the "results" folder generated during nnU-Net training
+    output_path : Path
+       A path to a folder to save visceral slide
+    patients_set_key : str
+       A key indicating which subset of patients to select, can be "train" or "test"
+    task_id : str, default="Task101_AbdomenSegmentation"
+       An id of a task for nnU-Net
     """
+
     # Create output folder
     output_path.mkdir(parents=True)
 
     # Extract inspiration and expiration frames and save in nnU-Net input format
-    images_path = data_path / images_folder
+    images_path = data_path / IMAGES_FOLDER
     # Extract a subset of patients
-    train_test_split_file_path = data_path / metadata_folder / train_test_split_file_name
+    train_test_split_file_path = data_path / METADATA_FOLDER / TRAIN_TEST_SPLIT_FILE_NAME
     with open(train_test_split_file_path) as train_test_split_file:
         train_test_split = json.load(train_test_split_file)
     patients_ids = train_test_split[patients_set_key]
-    inspexp_file_path = data_path / metadata_folder / inspexp_file_name
-    nnUNet_input_path = output_path / nnUNet_input_folder
+    inspexp_file_path = data_path / METADATA_FOLDER / INSPEXP_FILE_NAME
+    nnUNet_input_path = output_path / NNUNET_INPUT_FOLDER
     extract_insp_exp_frames(images_path, patients_ids, inspexp_file_path, nnUNet_input_path)
 
     # Run inference with nnU-Net
-    nnUNet_output_path = output_path / predicted_masks_folder
+    nnUNet_output_path = output_path / PREDICTED_MASKS_FOLDER
     segment_abdominal_cavity(str(nnUNet_model_path), str(nnUNet_input_path), str(nnUNet_output_path), task_id)
 
     # Compute visceral slide with nnU-Net segmentation masks
-    visceral_slide_path = output_path / results_folder
+    visceral_slide_path = output_path / RESULTS_FOLDER
     compute_visceral_slide(nnUNet_input_path, nnUNet_output_path, visceral_slide_path)
     print("Done")
 
 
 def pipeline(argv):
-    """
-    A command line wrapper of run_pileline
+    """A command line wrapper of run_pileline
 
-    :param argv: command line arguments
-    :return:
+    Parameters
+    ----------
+    argv: list of str
+        Command line arguments
     """
+
     parser = argparse.ArgumentParser()
     parser.add_argument('data', type=str, help="a path to the full cine-MRI data archive")
     parser.add_argument('model', type=str, help="a path to the \"results\" folder generated during nnU-Net training")
@@ -354,9 +391,9 @@ def pipeline(argv):
     mode = args.mode
 
     if mode == "train":
-        run_pileline(data_path, nnUNet_results_path, output_path, "train_patients", task)
+        run_pileline(data_path, nnUNet_results_path, output_path, TRAIN_PATIENTS_KEY, task)
     elif mode == "test":
-        run_pileline(data_path, nnUNet_results_path, output_path, "test_patients_ids", task)
+        run_pileline(data_path, nnUNet_results_path, output_path, TEST_PATIENTS_KEY, task)
     else:
         raise ValueError("Usupported mode: should be train or test")
 
