@@ -14,6 +14,7 @@ from visceral_slide import VisceralSlideDetector
 import matplotlib.pyplot as plt
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY
+from postprocessing import fill_in_holes
 
 # TODO:
 # How do we evaluate registration?
@@ -150,11 +151,11 @@ def segment_abdominal_cavity(nnUNet_model_path,
 
     Parameters
     ----------
-    nnUNet_model_path : Path
+    nnUNet_model_path : str
        A path to the "results" folder generated during nnU-Net training
-    input_path :  Path
+    input_path :  str
        A path to a folder that contain the images to run inference for
-    output_path : Path
+    output_path : str
        A path to a folder where to save the predicted segmentation
     task_id : str, default="Task101_AbdomenSegmentation"
        An id of a task for nnU-Net
@@ -172,6 +173,9 @@ def segment_abdominal_cavity(nnUNet_model_path,
 
     print("Segmenting inspiration and expiration frames with nnU-Net")
     subprocess.check_call(cmd)
+
+    # Postprocess the prediction by filling in holes
+    fill_in_holes(Path(output_path))
 
 
 def segment(argv):
