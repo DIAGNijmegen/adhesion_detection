@@ -404,39 +404,46 @@ def mha_to_niigz(mha_path,
     sitk.WriteImage(img, str(niigz_path))
 
 
-def extract_frames(mha_image_path,
-                   target_folder):
+def extract_frames(slice_path,
+                   slice_id,
+                   target_path_images,
+                   target_path_metadata):
 
-    target_folder.mkdir(exist_ok=True)
-    img = sitk.ReadImage(str(mha_image_path))
-    metadata = {
-                "Spacing": img.GetSpacing(),
-                "Origin": img.GetOrigin(),
-                "Direction": img.GetDirection(),
-                "PatientID": img.GetMetaData("PatientID"),
-                "StudyInstanceUID": img.GetMetaData("StudyInstanceUID"),
-                "SeriesInstanceUID": img.GetMetaData("SeriesInstanceUID")
-                }
+    img = sitk.ReadImage(str(slice_path))
+    depth = img.GetDepth()
+    direction = img.GetDirection()
+    if depth == 30 and utils.anatomical_orientation_asl(direction):
+        # TODO: add age and sex
+        metadata = {
+                    "Spacing": img.GetSpacing(),
+                    "Origin": img.GetOrigin(),
+                    "Direction": img.GetDirection(),
+                    "PatientID": img.GetMetaData("PatientID"),
+                    "StudyInstanceUID": img.GetMetaData("StudyInstanceUID"),
+                    "SeriesInstanceUID": img.GetMetaData("SeriesInstanceUID")
+                    }
+        metadata_file_path = target_path_metadata / (slice_id + ".json")
+        with open(metadata_file_path, "w") as f:
+            json.dump(metadata, f)
 
-    metadata_file_path = target_folder / "metadata.json"
-    with open(metadata_file_path, "w") as f:
-        json.dump(metadata, f)
-
-    img_array = sitk.GetArrayFromImage(img)
-    for ind, frame in enumerate(img_array):
-        frame_2d = convert_2d_image_to_pseudo_3d(frame)
-        niigz_path = target_folder / (mha_image_path.stem + "_" + str(ind) + "_0000.nii.gz")
-        sitk.WriteImage(frame_2d, str(niigz_path))
+        img_array = sitk.GetArrayFromImage(img)
+        for ind, frame in enumerate(img_array):
+            frame_2d = convert_2d_image_to_pseudo_3d(frame)
+            niigz_path = target_path_images / (slice_id + "_" + str(ind) + "_0000.nii.gz")
+            sitk.WriteImage(frame_2d, str(niigz_path))
+    else:
+        print("Skipping incomplete series or series with different anatomical plane, slice id: {}".format(slice_id))
 
 
 # Scans have adidtional "_0000" suffix, masks do not have it
-def merge_frames(frames_folder,
+def merge_frames(slice_glob_pattern,
+                 slice_name,
+                 frames_folder,
                  target_folder,
                  metadata_path,
                  masks=True):
 
-    target_folder.mkdir(exist_ok=True)
-    frame_files_glob = frames_folder.glob("*.nii.gz")
+    frame_files_glob = frames_folder.glob(slice_glob_pattern)
     image = []
     # Sort by file index
     sort_index = -1 if masks else -2
@@ -446,9 +453,9 @@ def merge_frames(frames_folder,
         image.append(sitk.GetArrayFromImage(frame)[0])
 
     image = np.array(image)
-    stem_shift = -10 if masks else -15
-    image_path = target_folder / (frame_file.name[:stem_shift] + ".mha")
+    image_path = target_folder / (slice_name + ".mha")
     sitk_image = sitk.GetImageFromArray(image)
+    # Extract and assign metadata
     with open(metadata_path) as metadata_file:
         metadata = json.load(metadata_file)
     sitk_image.SetOrigin(tuple(metadata["Origin"]))

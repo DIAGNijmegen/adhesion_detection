@@ -1,4 +1,5 @@
 import random
+import math
 import numpy as np
 import json
 from pathlib import Path
@@ -127,6 +128,12 @@ def find_unique_shapes(archive_path, images_folder="images"):
                     shapes.append(image.shape)
 
     return shapes
+
+# TODO: improve
+def anatomical_orientation_asl(direction):
+    return math.isclose(direction[2], -1, abs_tol=0.001) and \
+           math.isclose(direction[3], 1, abs_tol=0.001) and \
+           math.isclose(direction[7], -1, abs_tol=0.001)
 
 
 def test():
