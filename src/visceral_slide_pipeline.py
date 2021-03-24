@@ -4,7 +4,6 @@ import sys
 import pickle
 import argparse
 import json
-import subprocess
 import numpy as np
 from pathlib import Path
 import SimpleITK as sitk
@@ -14,7 +13,7 @@ from visceral_slide import VisceralSlideDetector
 import matplotlib.pyplot as plt
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY
-from postprocessing import fill_in_holes
+from segmentation import segment_abdominal_cavity
 
 # TODO:
 # How do we evaluate registration?
@@ -140,68 +139,6 @@ def extract_insp_exp(argv):
     # Create output folder
     output_path.mkdir(parents=True)
     extract_insp_exp_frames(images_path, patients_ids, inspexp_file_path, destination_path)
-
-
-def segment_abdominal_cavity(nnUNet_model_path,
-                             input_path,
-                             output_path,
-                             task_id="Task101_AbdomenSegmentation",
-                             network="2d"):
-    """Runs inference of segmentation with the saved nnU-Net model
-
-    Parameters
-    ----------
-    nnUNet_model_path : str
-       A path to the "results" folder generated during nnU-Net training
-    input_path :  str
-       A path to a folder that contain the images to run inference for
-    output_path : str
-       A path to a folder where to save the predicted segmentation
-    task_id : str, default="Task101_AbdomenSegmentation"
-       An id of a task for nnU-Net
-    network : str, default="2d"
-       A type of nnU-Net network
-    """
-
-    cmd = [
-        "nnunet", "predict", task_id,
-        "--results", nnUNet_model_path,
-        "--input", input_path,
-        "--output", output_path,
-        "--network", network
-    ]
-
-    print("Segmenting inspiration and expiration frames with nnU-Net")
-    subprocess.check_call(cmd)
-
-    # Postprocess the prediction by filling in holes
-    fill_in_holes(Path(output_path))
-
-
-def segment(argv):
-    """A command line wrapper of segment_abdominal_cavity
-
-    Parameters
-    ----------
-    argv: list of str
-       Command line arguments
-    """
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("work_dir", type=str,
-                        help="a path to the folder which contains a folder with nnU-Net input and "
-                             "where a folder for saving the predicted segmentation will be created")
-    parser.add_argument("--nnUNet_results", type=str, required=True,
-                        help="a path to the \"results\" folder generated during nnU-Net training")
-    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
-    args = parser.parse_args(argv)
-
-    data_path = Path(args.data)
-    nnUNet_model_path = args.nnUNet_results
-    task_id = args.task
-    input_path = data_path / NNUNET_INPUT_FOLDER
-    output_path = data_path / PREDICTED_MASKS_FOLDER
-    segment_abdominal_cavity(nnUNet_model_path, str(input_path), str(output_path), task_id)
 
 
 def compute_visceral_slide(images_path,
@@ -407,7 +344,6 @@ if __name__ == '__main__':
     # Very first argument determines action
     actions = {
         "extract_frames": extract_insp_exp,
-        "segment_frames": segment,
         "compute": compute,
         "pipeline": pipeline
     }

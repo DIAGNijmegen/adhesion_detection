@@ -535,8 +535,8 @@ if __name__ == '__main__':
 
     # Very first argument determines action
     actions = {
-        'extract_segmentation': extract_segmentation,
-        'to_diag_nnunet': to_diag_nnunet
+        "extract_segmentation": extract_segmentation,
+        "to_diag_nnunet": to_diag_nnunet
     }
 
     try:

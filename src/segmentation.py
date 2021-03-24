@@ -1,15 +1,18 @@
 import sys
+import subprocess
 import argparse
 import numpy as np
 from pathlib import Path
 from cinemri.utils import get_patients, Patient
 from config import IMAGES_FOLDER
 from data_conversion import extract_frames, merge_frames
+from postprocessing import fill_in_holes
 
 SEPARATOR = "_"
 FRAMES_FOLDER = "frames"
+MASKS_FOLDER = "masks"
 METADATA_FOLDER = "images_metadata"
-
+MERGED_MASKS_FOLDER = "merged_masks"
 
 # function to extract frames and metadata
 def extract_segmentation_data(archive_path,
@@ -37,13 +40,49 @@ def extract_segmentation_data(archive_path,
 
 def extract_data(argv):
     parser = argparse.ArgumentParser()
-    parser.add_argument('archive_path', type=str, help="a path to the full cine-MRI data archive")
-    parser.add_argument('target_path', type=str, help="a path to save the extracted frames")
+    parser.add_argument("archive_path", type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument("target_path", type=str, help="a path to save the extracted frames")
     args = parser.parse_args(argv)
 
     archive_path = Path(args.archive_path)
     target_path = Path(args.target_path)
     extract_segmentation_data(archive_path, target_path)
+
+
+def segment_abdominal_cavity(nnUNet_model_path,
+                             input_path,
+                             output_path,
+                             task_id="Task101_AbdomenSegmentation",
+                             network="2d"):
+    """Runs inference of segmentation with the saved nnU-Net model
+
+    Parameters
+    ----------
+    nnUNet_model_path : str
+       A path to the "results" folder generated during nnU-Net training
+    input_path :  str
+       A path to a folder that contain the images to run inference for
+    output_path : str
+       A path to a folder where to save the predicted segmentation
+    task_id : str, default="Task101_AbdomenSegmentation"
+       An id of a task for nnU-Net
+    network : str, default="2d"
+       A type of nnU-Net network
+    """
+
+    cmd = [
+        "nnunet", "predict", task_id,
+        "--results", nnUNet_model_path,
+        "--input", input_path,
+        "--output", output_path,
+        "--network", network
+    ]
+
+    print("Segmenting inspiration and expiration frames with nnU-Net")
+    subprocess.check_call(cmd)
+
+    # Postprocess the prediction by filling in holes
+    fill_in_holes(Path(output_path))
 
 
 def merge_segmentation(segmentation_path,
@@ -84,17 +123,78 @@ def merge_segmentation(segmentation_path,
                 merge_frames(slice_glob_pattern, slice_id, segmentation_path, scan_path, slice_metadata_path)
 
 
+def segment(argv):
+    """A command line wrapper of segment_abdominal_cavity
+
+    Parameters
+    ----------
+    argv: list of str
+       Command line arguments
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", type=str, help="a path to the folder which contains a nnUNet input")
+    parser.add_argument('--output', type=str, help="a path to the folder to save a nnUNet output")
+    parser.add_argument("--nnUNet_results", type=str, required=True,
+                        help="a path to the \"results\" folder generated during nnU-Net training")
+    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
+    args = parser.parse_args(argv)
+
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    nnUNet_model_path = args.nnUNet_results
+    task_id = args.task
+    segment_abdominal_cavity(nnUNet_model_path, str(input_path), str(output_path), task_id)
+
+
 def merge(argv):
     parser = argparse.ArgumentParser()
-    parser.add_argument('segmentation_path', type=str, help="a path to the predicted segmentation")
-    parser.add_argument('metadata_path', type=str, help="a path to the images metadata")
-    parser.add_argument('target_path', type=str, help="a path to save the merged prediction")
+    parser.add_argument("segmentation_path", type=str, help="a path to the predicted segmentation")
+    parser.add_argument("--metadata_path", type=str, help="a path to the images metadata", required=True)
+    parser.add_argument("--target_path", type=str, help="a path to save the merged prediction", required=True)
     args = parser.parse_args(argv)
 
     segmentation_path = Path(args.segmentation_path)
     metadata_path = Path(args.metadata_path)
     target_path = Path(args.target_path)
     merge_segmentation(segmentation_path, metadata_path, target_path)
+
+
+def run_full_inference(archive_path,
+                       output_path,
+                       nnUNet_model_path,
+                       nnUNet_task):
+
+    extract_segmentation_data(archive_path, output_path)
+
+    nnUNet_input_path = output_path / FRAMES_FOLDER
+    nnUNet_output_path = output_path / MASKS_FOLDER
+
+    segment_abdominal_cavity(nnUNet_model_path,
+                             nnUNet_input_path,
+                             nnUNet_output_path,
+                             nnUNet_task)
+
+    metadata_path = output_path / METADATA_FOLDER
+    merged_masks_path = output_path / MERGED_MASKS_FOLDER
+    merge_segmentation(nnUNet_output_path, metadata_path, merged_masks_path)
+
+
+def full_inference(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument("archive_path", type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument("--output_path", type=str, help="a path where to save the output")
+    parser.add_argument("--nnUNet_results", type=str, required=True,
+                        help="a path to the \"results\" folder generated during nnU-Net training")
+    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
+    args = parser.parse_args(argv)
+
+    archive_path = Path(args.archive_path)
+    output_path = Path(args.output_path)
+    nnUNet_results_path = Path(args.nnUNet_results)
+    nnUNet_task = args.task
+
+    run_full_inference(archive_path, output_path, nnUNet_results_path, nnUNet_task)
 
 
 def test():
@@ -111,8 +211,10 @@ def test():
 
 if __name__ == '__main__':
     actions = {
-        'extract_data': extract_data,
-        'merge': merge
+        "extract_data": extract_data,
+        "segment": segment,
+        "merge": merge,
+        "full_inference": full_inference,
     }
 
     try:
