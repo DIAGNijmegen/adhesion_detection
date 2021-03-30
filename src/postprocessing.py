@@ -25,7 +25,7 @@ def fill_in_holes(masks_path):
 
 
 def test():
-    masks_path = Path("../../data/prediction")
+    masks_path = Path("../../data/visceral_slide/nnUNet_masks")
     fill_in_holes(masks_path)
 
 if __name__ == '__main__':

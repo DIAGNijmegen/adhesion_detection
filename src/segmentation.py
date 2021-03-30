@@ -1,14 +1,15 @@
+#!/usr/local/bin/python3
+
 import sys
 import subprocess
 import argparse
 import numpy as np
 from pathlib import Path
 from cinemri.utils import get_patients, Patient
-from config import IMAGES_FOLDER
+from config import IMAGES_FOLDER, SEPARATOR
 from data_conversion import extract_frames, merge_frames
 from postprocessing import fill_in_holes
 
-SEPARATOR = "_"
 FRAMES_FOLDER = "frames"
 MASKS_FOLDER = "masks"
 METADATA_FOLDER = "images_metadata"

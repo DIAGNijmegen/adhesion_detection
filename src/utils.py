@@ -131,9 +131,9 @@ def find_unique_shapes(archive_path, images_folder="images"):
 
 # TODO: improve
 def anatomical_orientation_asl(direction):
-    return math.isclose(direction[2], -1, abs_tol=0.001) and \
-           math.isclose(direction[3], 1, abs_tol=0.001) and \
-           math.isclose(direction[7], -1, abs_tol=0.001)
+    return math.isclose(direction[2], -1, abs_tol=0.1) and \
+           math.isclose(direction[3], 1, abs_tol=0.1) and \
+           math.isclose(direction[7], -1, abs_tol=0.1)
 
 
 def test():
