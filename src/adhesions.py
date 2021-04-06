@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR
 from cinemri.config import ARCHIVE_PATH
-from cinemri.contour import _get_tangent_vectors, get_outward_normal_vectors
+from cinemri.contour import get_contour
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
@@ -26,11 +26,38 @@ class Adhesion:
     def center(self):
         return self.origin_x + round(self.width / 2), self.origin_y + round(self.height / 2)
 
-    def contains_point(self, x, y, tolerance=3):
+    def contains_point(self, x, y, tolerance=0):
+
+        """ Check if a point belongs to the adhesion
+
+        Parameters
+        ----------
+        x : a point coordinate on x axis
+        y: a point coordinate on y axis
+        tolerance: extra margin around the bounding box to register a hit
+        """
         x_min, x_max = self.origin_x - tolerance, self.origin_x + self.width + tolerance
         y_min, y_max = self.origin_y - tolerance, self.origin_y + self.height + tolerance
 
         return x_min <= x <= x_max and y_min <= y <= y_max
+
+    def intersects_contour(self, contour_x, contour_y, tolerance=0):
+        """ Check if a point belongs to the adhesion
+
+        Parameters
+        ----------
+        contour_x : a list of contour coordinates on x axis
+        contour_y: a list of contour coordinates on y axis
+        tolerance: extra margin around the bounding box to register a hit
+        """
+
+        intersects = False
+        for x, y in zip(contour_x, contour_y):
+            intersects = self.contains_point(x, y, tolerance=tolerance)
+            if intersects:
+                break
+
+        return intersects
 
 
 class AdhesionAnnotation:
@@ -74,6 +101,28 @@ def show_annotation(annotation, archive_path):
         plt.imshow(frame, cmap="gray")
         plt.axis('off')
         plt.tight_layout()
+        plt.show()
+
+
+def show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame, title=None, save_file_name=None):
+    slide_normalized = np.abs(visceral_slide) / np.max(np.abs(visceral_slide))
+
+    plt.figure()
+    plt.imshow(expiration_frame, cmap="gray")
+    plt.scatter(x, y, s=5, c=slide_normalized, cmap="jet")
+    ax = plt.gca()
+    for adhesion in annotation.adhesions:
+        adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
+                                  linewidth=1.5, edgecolor='r', facecolor='none')
+        ax.add_patch(adhesion_rect)
+    plt.axis("off")
+    if title:
+        plt.title(title)
+    plt.colorbar()
+    if save_file_name:
+        plt.savefig(save_file_name, bbox_inches='tight', pad_inches=0)
+        plt.close()
+    else:
         plt.show()
 
 
@@ -194,24 +243,35 @@ def vis_annotation_and_vs(archive_path,
 
             slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
             annotated_visc_slide_path = output_path / (slice_id + ".png")
-            slide_normalized = np.abs(visceral_slide) / np.max(np.abs(visceral_slide))
 
-            plt.figure()
-            plt.imshow(expiration_frame, cmap="gray")
-            plt.scatter(x, y, s=5, c=slide_normalized, cmap="jet")
-            ax = plt.gca()
-            for adhesion in annotation.adhesions:
-                adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
-                                          linewidth=1.5, edgecolor='r', facecolor='none')
-                ax.add_patch(adhesion_rect)
-            plt.axis('off')
-            plt.colorbar()
-            plt.savefig(annotated_visc_slide_path, bbox_inches='tight', pad_inches=0)
-            plt.close()
+            show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame, save_file_name=annotated_visc_slide_path)
 
 
-def annotations_to_abdominal_wall(archive_path,
-                                  visceral_slide_path):
+def load_visceral_slide(visceral_slide_file_path):
+    # Load the computed visceral slide
+    with open(str(visceral_slide_file_path), "r+b") as file:
+        visceral_slide_data = pickle.load(file)
+        x, y = visceral_slide_data["x"], visceral_slide_data["y"]
+        visceral_slide = visceral_slide_data["slide"]
+
+    return x, y, visceral_slide
+
+
+def load_expiration_frame(archive_path, inspexp_data, patient_id, scan_id, slice_id):
+    patient_data = inspexp_data[patient_id]
+    scan_data = patient_data[scan_id]
+    exp_frame = scan_data[slice_id][1]
+
+    # Load the expiration frame (visceral slide is computed for the expiration frame)
+    expiration_frame_path = archive_path / IMAGES_FOLDER / patient_id / scan_id / (slice_id + ".mha")
+    expiration_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(expiration_frame_path)))[exp_frame]
+
+    return expiration_frame
+
+
+def annotations_statistics(archive_path,
+                           full_segmentation_path,
+                           visceral_slide_path):
 
     annotations_path = archive_path / METADATA_FOLDER / ANNOTATIONS_FILE_NAME
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
@@ -228,79 +288,62 @@ def annotations_to_abdominal_wall(archive_path,
     adhesions_num = 0
     annotations_num = 0
     annotated_num = 0
+    annotated_vs_num = 0
     for annotation in annotations:
         annotated_num += len(annotation.adhesions)
         print("Annotation {}".format(annotations_num))
-        visceral_slide_results_path = visceral_slide_path / annotation.patient_id / annotation.scan_id / annotation.slice_id
-        if visceral_slide_results_path.exists():
-
-
-            # Load the computed visceral slide
-            visceral_slide_file_path = visceral_slide_results_path / "visceral_slide.pkl"
-            with open(str(visceral_slide_file_path), "r+b") as file:
-                visceral_slide_data = pickle.load(file)
-                x, y = visceral_slide_data["x"], visceral_slide_data["y"]
-                visceral_slide = visceral_slide_data["slide"]
-
-            contour_coord = np.column_stack((x, y))
-            anterior_wall_coord = get_anterior_wall_coord(x, y)
+        segmentation_path = full_segmentation_path / annotation.patient_id / annotation.scan_id / (annotation.slice_id + ".mha")
+        if segmentation_path.exists():
+            visceral_slide_file_path = visceral_slide_path / annotation.patient_id / annotation.scan_id / annotation.slice_id / "visceral_slide.pkl"
+            if visceral_slide_file_path.exists():
+                x, y, visceral_slide = load_visceral_slide(visceral_slide_file_path)
+            else:
+                visceral_slide = None
+                print("No visceral slide data for patient {}, scan {}, slice {}".format(annotation.patient_id,
+                                                                                        annotation.scan_id,
+                                                                                        annotation.slice_id))
 
             try:
-                patient_data = inspexp_data[annotation.patient_id]
-                scan_data = patient_data[annotation.scan_id]
-                exp_frame = scan_data[annotation.slice_id][1]
+                expiration_frame = load_expiration_frame(archive_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
             except:
+                expiration_frame = None
                 print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                            annotation.scan_id,
                                                                                            annotation.slice_id))
 
-            # Load the expiration frame (visceral slide is computed for the expiration frame)
-            expiration_frame_path = archive_path / IMAGES_FOLDER / annotation.patient_id / annotation.scan_id / (annotation.slice_id + ".mha")
-            expiration_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(expiration_frame_path)))[exp_frame]
+            # To visually evaluate of intersection detection is correct
+            if visceral_slide is not None and expiration_frame is not None:
+                if annotations_num == 50:
+                    show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame,
+                                           title="Annotation {}".format(annotations_num))
 
-            slide_normalized = np.abs(visceral_slide) / np.max(np.abs(visceral_slide))
-            # To validate detection visually
-            if annotations_num > 100:
-                plt.figure()
-                plt.imshow(expiration_frame, cmap="gray")
-                plt.scatter(x, y, s=5, c=slide_normalized, cmap="jet")
-                ax = plt.gca()
-                for adhesion in annotation.adhesions:
-                    adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
-                                              linewidth=1.5, edgecolor='r', facecolor='none')
-                    ax.add_patch(adhesion_rect)
-                plt.axis("off")
-                plt.title("Annotation {}".format(annotations_num))
-                plt.colorbar()
-                plt.show()
-
+            # Load predicted segmentation for the whole scan
+            slice_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(segmentation_path)))
             # For each adhesion in this annotation check if it is adjacent to the front abdominal wall
             for adhesion in annotation.adhesions:
                 intersect_anterior_wall = False
-                for coord in anterior_wall_coord:
-                    intersect_anterior_wall = adhesion.contains_point(coord[0], coord[1])
+                intersect_contour = False
+                # For all frames in the slice check if any intersects with adhesion annotation
+                for mask in slice_mask:
+                    x, y, _, _ = get_contour(mask)
+                    anterior_wall_coord = get_anterior_wall_coord(x, y)
+                    intersect_anterior_wall = adhesion.intersects_contour(anterior_wall_coord[:, 0], anterior_wall_coord[:, 1])
                     if intersect_anterior_wall:
+                        intersect_contour = True
                         break
+
+                    intersect_contour = intersect_contour or adhesion.intersects_contour(x, y)
 
                 if intersect_anterior_wall:
                     print("This adhesion annotation is adjacent to the front abdominal wall")
                     annotations_to_front_wall += 1
-                    # No need to check the rest of contour for this adhesion
                     annotations_to_contour += 1
-                else:
-                    # Check the whole contour
-                    intersect_contour = False
-                    for coord in contour_coord:
-                        intersect_contour = adhesion.contains_point(coord[0], coord[1])
-                        if intersect_contour:
-                            break
-
-                    if intersect_contour:
-                        print("This adhesion annotation is adjacent to the abdominal cavity contour")
-                        annotations_to_contour += 1
-
+                elif intersect_contour:
+                    print("This adhesion annotation is adjacent to the abdominal cavity contour")
+                    annotations_to_contour += 1
 
                 adhesions_num += 1
+            annotated_vs_num += 1
         annotations_num += 1
 
     print("{} of {} annotated adhesions have information about contour".format(adhesions_num, annotated_num))
@@ -344,7 +387,8 @@ def test_anterior_wall_detection(archive_path, visceral_slide_path):
                     annotation.slice_id + ".mha")
             exp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(expiration_frame_path)))[exp_frame]
 
-            verify_anterior_wall(x, y, exp_frame, annotation.scan_id)
+            slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
+            verify_anterior_wall(x, y, exp_frame, slice_id)
 
 
 # Allows to visually evaluate quality of the detection of front abdominal wall
@@ -417,12 +461,13 @@ def get_anterior_wall_coord(x, y, connectivity_threshold=5):
 
 def test():
     archive_path = Path(ARCHIVE_PATH)
-    visceral_slide_path = archive_path / "visceral_slide" / "visceral_slide"
+    visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
     output_path = archive_path / "visceral_slide" / "annotated"
+    full_segmentation_path = Path("../../data/full_segmentation/merged_segmentation")
 
     #vis_annotation_and_vs(archive_path, visceral_slide_path, output_path)
     #test_anterior_wall_detection(archive_path, visceral_slide_path)
-    annotations_to_abdominal_wall(archive_path, visceral_slide_path)
+    annotations_statistics(archive_path, full_segmentation_path, visceral_slide_path)
 
     """
     annotations = load_bounding_boxes(annotations_path)
