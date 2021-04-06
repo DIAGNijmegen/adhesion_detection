@@ -452,7 +452,7 @@ def merge_frames(slice_glob_pattern,
         frame = sitk.ReadImage(str(frame_file))
         image.append(sitk.GetArrayFromImage(frame)[0])
 
-    image = np.array(image)
+    image = np.array(image).astype(np.uint8)
     image_path = target_folder / (slice_name + ".mha")
     sitk_image = sitk.GetImageFromArray(image)
     # Extract and assign metadata

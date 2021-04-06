@@ -1,19 +1,25 @@
 #!/usr/local/bin/python3
 
+import os
+import shutil
 import sys
 import subprocess
 import argparse
 import numpy as np
 from pathlib import Path
 from cinemri.utils import get_patients, Patient
-from config import IMAGES_FOLDER, SEPARATOR
+from config import IMAGES_FOLDER
 from data_conversion import extract_frames, merge_frames
 from postprocessing import fill_in_holes
 
+SEPARATOR = "_"
 FRAMES_FOLDER = "frames"
 MASKS_FOLDER = "masks"
 METADATA_FOLDER = "images_metadata"
 MERGED_MASKS_FOLDER = "merged_masks"
+
+container_input_dir = Path("/tmp/nnunet/input")
+container_output_dir = Path("/tmp/nnunet/output")
 
 # function to extract frames and metadata
 def extract_segmentation_data(archive_path,
@@ -30,7 +36,7 @@ def extract_segmentation_data(archive_path,
     target_metadata_path = target_path / target_metadata_folder
     target_metadata_path.mkdir()
 
-    patients = get_patients(archive_path / images_folder)
+    patients = get_patients(archive_path)
     for patient in patients:
         for (scan_id, slices) in patient.scans.items():
             for slice in slices:
@@ -50,6 +56,36 @@ def extract_data(argv):
     extract_segmentation_data(archive_path, target_path)
 
 
+def delete_folder_contents(folder):
+    for path in Path(folder).iterdir():
+        if path.is_file():
+            path.unlink()
+        elif path.is_dir():
+            shutil.rmtree(path)
+
+
+def _predict_and_save(nnUNet_model_path, output_path, network, task_id):
+    cmd = [
+        "nnunet", "predict", task_id,
+        "--results", nnUNet_model_path,
+        "--input", str(container_input_dir),
+        "--output", str(container_output_dir),
+        "--network", network
+    ]
+    subprocess.check_call(cmd)
+
+    masks_files = container_output_dir.glob("*.nii.gz")
+    for mask_path in masks_files:
+        print("Saving a mask for {}".format(mask_path.name))
+        shutil.copyfile(mask_path, output_path / mask_path.name)
+
+    delete_folder_contents(container_input_dir)
+    delete_folder_contents(container_output_dir)
+
+
+# Currently shutil.copy() does not work on cluster because it is not allowed to change permissions of a file on a mount
+# Workaround is to iterate through input files and separately for each file run inference and move it to
+# the destination path on Chansey. This way the progress is not lost if the jobs is interrupted
 def segment_abdominal_cavity(nnUNet_model_path,
                              input_path,
                              output_path,
@@ -71,19 +107,51 @@ def segment_abdominal_cavity(nnUNet_model_path,
        A type of nnU-Net network
     """
 
-    cmd = [
-        "nnunet", "predict", task_id,
-        "--results", nnUNet_model_path,
-        "--input", input_path,
-        "--output", output_path,
-        "--network", network
-    ]
+    container_input_dir.mkdir(exist_ok=True, parents=True)
+    container_output_dir.mkdir(exist_ok=True, parents=True)
+
+    output_path = Path(output_path)
+    # Prepare output directory to prevent crashes
+    output_path.mkdir(parents=True, exist_ok=True)
 
     print("Segmenting inspiration and expiration frames with nnU-Net")
-    subprocess.check_call(cmd)
+    input_path = Path(input_path)
+    input_files = input_path.glob("*.nii.gz")
+    batch_size = 1000
+    for (index, input_frame_path) in enumerate(input_files):
+        shutil.copy(input_frame_path, container_input_dir)
+        if index > 0 and index % batch_size == 0:
+            _predict_and_save(nnUNet_model_path, output_path, network, task_id)
 
-    # Postprocess the prediction by filling in holes
+    # Process remaining images
+    _predict_and_save(nnUNet_model_path, output_path, network, task_id)
+
+    print("Running post processing")
     fill_in_holes(Path(output_path))
+
+
+def segment(argv):
+    """A command line wrapper of segment_abdominal_cavity
+
+    Parameters
+    ----------
+    argv: list of str
+       Command line arguments
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("input", type=str, help="a path to the folder which contains a nnUNet input")
+    parser.add_argument('--output', type=str, help="a path to the folder to save a nnUNet output")
+    parser.add_argument("--nnUNet_results", type=str, required=True,
+                        help="a path to the \"results\" folder generated during nnU-Net training")
+    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
+    args = parser.parse_args(argv)
+
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    nnUNet_model_path = args.nnUNet_results
+    task_id = args.task
+    segment_abdominal_cavity(nnUNet_model_path, str(input_path), str(output_path), task_id)
 
 
 def merge_segmentation(segmentation_path,
@@ -122,30 +190,6 @@ def merge_segmentation(segmentation_path,
                 # and save in a scan folder
                 slice_glob_pattern = slice_name + "*.nii.gz"
                 merge_frames(slice_glob_pattern, slice_id, segmentation_path, scan_path, slice_metadata_path)
-
-
-def segment(argv):
-    """A command line wrapper of segment_abdominal_cavity
-
-    Parameters
-    ----------
-    argv: list of str
-       Command line arguments
-    """
-
-    parser = argparse.ArgumentParser()
-    parser.add_argument("input", type=str, help="a path to the folder which contains a nnUNet input")
-    parser.add_argument('--output', type=str, help="a path to the folder to save a nnUNet output")
-    parser.add_argument("--nnUNet_results", type=str, required=True,
-                        help="a path to the \"results\" folder generated during nnU-Net training")
-    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
-    args = parser.parse_args(argv)
-
-    input_path = Path(args.input)
-    output_path = Path(args.output)
-    nnUNet_model_path = args.nnUNet_results
-    task_id = args.task
-    segment_abdominal_cavity(nnUNet_model_path, str(input_path), str(output_path), task_id)
 
 
 def merge(argv):
@@ -199,18 +243,21 @@ def full_inference(argv):
 
 
 def test():
-    archive_path = Path("../../data/cinemri_mha/rijnstate1")
-    target_path_images = Path("../../data/cinemri_mha/full_segmentation")
-    target_path_metadata = Path("../../data/cinemri_mha/images_metadata")
-    segmentation_path = Path("../../data/cinemri_mha/segmentation")
-    merged_segmentation_path = Path("../../data/cinemri_mha/merged_segmentation")
+    archive_path = Path("../../data/cinemri_mha/rijnstate")
+    target_path_images = Path("../../data/cinemri_mha/frames")
+    target_path_metadata = Path("../../data/images_metadata")
+    segmentation_path = Path("../../data/masks")
+    merged_segmentation_path = Path("../../data/merged_segmentation1")
 
-    #extract_data(archive_path, target_path_images, target_path_metadata)
+    #extract_segmentation_data(archive_path, target_path_images)
     #simulate_segmentation(target_path_images, segmentation_path)
     merge_segmentation(segmentation_path, target_path_metadata, merged_segmentation_path)
 
 
 if __name__ == '__main__':
+    test()
+
+    """
     actions = {
         "extract_data": extract_data,
         "segment": segment,
@@ -224,8 +271,4 @@ if __name__ == '__main__':
         print('Usage: data_conversion ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
-
-
-
-
-
+    """

@@ -22,7 +22,21 @@ PREDICTED_MASKS_FOLDER = "nnUNet_masks"
 RESULTS_FOLDER = "visceral_slide"
 
 
-def extract_insp_exp_frames(images_path,
+def get_patients_ids(train_test_split, mode):
+
+    if mode == "all":
+        patients_ids = train_test_split[TRAIN_PATIENTS_KEY] + train_test_split[TEST_PATIENTS_KEY]
+    elif mode == "train":
+        patients_ids = train_test_split[TRAIN_PATIENTS_KEY]
+    elif mode == "test":
+        patients_ids = train_test_split[TEST_PATIENTS_KEY]
+    else:
+        raise ValueError("Usuppotred mode: should be train or test")
+
+    return patients_ids
+
+
+def extract_insp_exp_frames(archive_path,
                             patients_ids,
                             inspexp_file_path,
                             destination_path):
@@ -34,8 +48,8 @@ def extract_insp_exp_frames(images_path,
 
     Parameters
     ----------
-    images_path : Path
-       A path to a folder in the archive that contains cine-MRI scans
+    archive_path : Path
+       A path to the full cine-MRI data archive
     patients_ids : list of str
        A list of the patients ids for which frames will be extracted
     inspexp_file_path : Path
@@ -55,8 +69,10 @@ def extract_insp_exp_frames(images_path,
         inspexp_data = json.load(inspexp_file)
 
     # Extract the subset of patients
-    patients = get_patients(images_path)
+    patients = get_patients(archive_path)
     patients = [patient for patient in patients if patient.id in patients_ids]
+
+    images_path = archive_path / IMAGES_FOLDER
 
     for patient in patients:
         print("Extracting frames for slices of a patient {}".format(patient.id))
@@ -114,7 +130,7 @@ def extract_insp_exp(argv):
     parser.add_argument("--output", type=str, required=True,
                         help="a path to save the extracted inspiration and expiration frames")
     parser.add_argument("--mode", type=str, default="train",
-                        help="indicates which subset of patients to select, can be \"train\" or \"test\"")
+                        help="indicates which subset of patients to select, can be \"all\", \"train\" or \"test\"")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
@@ -124,17 +140,11 @@ def extract_insp_exp(argv):
     destination_path = output_path / NNUNET_INPUT_FOLDER
     mode = args.mode
 
-    if mode == "train":
-        patients_key = TRAIN_PATIENTS_KEY
-    elif mode == "test":
-        patients_key = TEST_PATIENTS_KEY
-    else:
-        raise ValueError("Usuppotred mode: should be train or test")
-
     train_test_split_file_path = data_path / METADATA_FOLDER / TRAIN_TEST_SPLIT_FILE_NAME
     with open(train_test_split_file_path) as train_test_split_file:
         train_test_split = json.load(train_test_split_file)
-    patients_ids = train_test_split[patients_key]
+
+    patients_ids = get_patients_ids(train_test_split, mode)
 
     # Create output folder
     output_path.mkdir(parents=True)
@@ -260,7 +270,7 @@ def compute(argv):
 def run_pileline(data_path,
                  nnUNet_model_path,
                  output_path,
-                 patients_set_key,
+                 mode,
                  task_id="Task101_AbdomenSegmentation"):
     """Runs the pipeline to compute visceral slide for all scans of the specified set of the patients.
 
@@ -277,8 +287,8 @@ def run_pileline(data_path,
        A path to the "results" folder generated during nnU-Net training
     output_path : Path
        A path to a folder to save visceral slide
-    patients_set_key : str
-       A key indicating which subset of patients to select, can be "train" or "test"
+    mode : str
+       A key indicating which subset of patients to select, can be "all", "train" or "test"
     task_id : str, default="Task101_AbdomenSegmentation"
        An id of a task for nnU-Net
     """
@@ -286,16 +296,18 @@ def run_pileline(data_path,
     # Create output folder
     output_path.mkdir(parents=True)
 
-    # Extract inspiration and expiration frames and save in nnU-Net input format
-    images_path = data_path / IMAGES_FOLDER
     # Extract a subset of patients
     train_test_split_file_path = data_path / METADATA_FOLDER / TRAIN_TEST_SPLIT_FILE_NAME
     with open(train_test_split_file_path) as train_test_split_file:
         train_test_split = json.load(train_test_split_file)
-    patients_ids = train_test_split[patients_set_key]
+
+    patients_ids = get_patients_ids(train_test_split, mode)
+
     inspexp_file_path = data_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     nnUNet_input_path = output_path / NNUNET_INPUT_FOLDER
-    extract_insp_exp_frames(images_path, patients_ids, inspexp_file_path, nnUNet_input_path)
+
+    # Extract inspiration and expiration frames and save in nnU-Net input format
+    extract_insp_exp_frames(data_path, patients_ids, inspexp_file_path, nnUNet_input_path)
 
     # Run inference with nnU-Net
     nnUNet_output_path = output_path / PREDICTED_MASKS_FOLDER
@@ -322,7 +334,7 @@ def pipeline(argv):
     parser.add_argument('--output', type=str, required=True, help="a path to a folder to save visceral slide")
     parser.add_argument('--task', type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
     parser.add_argument('--mode', type=str, default="train",
-                        help="indicates which subset of patients to select, can be \"train\" or \"test\"")
+                        help="indicates which subset of patients to select, can be \"all\", \"train\" or \"test\"")
     args = parser.parse_args(argv)
 
     data_path = Path(args.data)
@@ -331,12 +343,8 @@ def pipeline(argv):
     task = args.task
     mode = args.mode
 
-    if mode == "train":
-        run_pileline(data_path, nnUNet_results_path, output_path, TRAIN_PATIENTS_KEY, task)
-    elif mode == "test":
-        run_pileline(data_path, nnUNet_results_path, output_path, TEST_PATIENTS_KEY, task)
-    else:
-        raise ValueError("Usupported mode: should be train or test")
+    run_pileline(data_path, nnUNet_results_path, output_path, mode, task)
+
 
 
 if __name__ == '__main__':
