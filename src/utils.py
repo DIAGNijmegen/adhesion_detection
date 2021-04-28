@@ -4,36 +4,8 @@ import numpy as np
 import json
 from pathlib import Path
 import SimpleITK as sitk
-from cinemri.utils import get_patients
 from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY
-
-
-class CineMRISlice:
-    """
-    A representation of a cine-MRI slice
-
-    Attributes
-    __________
-       file_name : str
-       patient_id : str
-       scan_id :  str
-    """
-
-    def __init__(self, file_name, patient_id, scan_id):
-        """
-
-        Parameters
-        ----------
-        file_name : str
-        patient_id : str
-        scan_id : str
-        """
-        self.file_name = file_name
-        self.patient_id = patient_id
-        self.scan_id = scan_id
-
-    def build_path(self, relative_path):
-        return Path(relative_path) / self.patient_id / self.scan_id / self.file_name
+from cinemri.utils import get_patients
 
 
 def get_patients_without_slices(archive_path,
@@ -140,7 +112,7 @@ def test():
     archive_path = Path("../../data/cinemri_mha/rijnstate")
     subset_path = Path("../../data/cinemri_mha/segmentation_subset")
 
-    train_test_split(archive_path, subset_path, train_proportion=1)
+    #train_test_split(archive_path, subset_path, train_proportion=1)
 
     """
     unique_shapes = find_unique_shapes(archive_path, "cavity_segmentations")

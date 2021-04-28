@@ -1,7 +1,7 @@
 from pathlib import Path
 import numpy as np
 from torch.utils.data import Dataset
-from utils import CineMRISlice
+from cinemri.utils import CineMRISlice
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 
@@ -58,7 +58,7 @@ class SegmentationDatasetFull(Dataset):
                 slices = [f.name for f in scan_path.iterdir() if f.is_file()]
 
                 for slice in slices:
-                    self.slices.append(CineMRISlice(slice, patient_id, scan_id))
+                    self.slices.append(CineMRISlice(patient_id, scan_id, slice.stem))
 
 
 class SegmentationDataset(Dataset):
@@ -113,7 +113,7 @@ class SegmentationDataset(Dataset):
                 slices = [f.name for f in scan_path.iterdir() if f.suffix == ".npy"]
 
                 for slice in slices:
-                    self.slices.append(CineMRISlice(slice, patient_id, scan_id))
+                    self.slices.append(CineMRISlice(patient_id, scan_id, slice.stem))
 
 
 def test():

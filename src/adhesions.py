@@ -10,9 +10,37 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import cv2
 import numpy as np
+from cinemri.utils import CineMRISlice
+from enum import Enum, unique
+from visceral_slide import VisceralSlideDetector
+from cinemri.utils import get_patients
 
-ANNOTATIONS_FILE_NAME = "annotations.json"
-ANNOTATIONS_VIS_FOLDER = "vis_annotations"
+# bounding box annotations
+BB_ANNOTATIONS_FILE_NAME = "annotations.json"
+# patient level annotations
+PATIENT_ANNOTATIONS_FILE_NAME = "rijnstate.json"
+# Folder to save visualized annotations
+ANNOTATIONS_VIS_FOLDER = "vis_annotations2"
+# patient level annotations
+ANNOTATIONS_TYPE_FILE_NAME = "annotations_type.json"
+# bounding boxes annotations with indication of adhesion type
+ANNOTATIONS_EXPANDED_FILE_NAME = "annotations_expanded.json"
+
+# TODO: clean up the code for detection of negative patients and statistics of reader study/ report
+# TODO: this file requires serious clean up
+
+@unique
+class AnnotationType(Enum):
+    bounding_box = 1
+    positive = 2
+    negative = 3
+
+@unique
+class AdhesionType(Enum):
+    anteriorWall = 1
+    abdominalCavityContour = 2
+    inside = 3
+
 
 class Adhesion:
 
@@ -63,10 +91,23 @@ class Adhesion:
 class AdhesionAnnotation:
 
     def __init__(self, patient_id, scan_id, slice_id, bounding_boxes):
-        self.patient_id = patient_id
-        self.scan_id = scan_id
-        self.slice_id = slice_id
+        self.slice = CineMRISlice(patient_id, scan_id, slice_id)
         self.adhesions = [Adhesion(bounding_box) for bounding_box in bounding_boxes]
+
+    @property
+    def patient_id(self):
+        return self.slice.patient_id
+
+    @property
+    def scan_id(self):
+        return self.slice.scan_id
+
+    @property
+    def slice_id(self):
+        return self.slice.slice_id
+
+    def build_path(self, relative_path, extension=".mha"):
+        return Path(relative_path) / self.patient_id / self.scan_id / (self.slice_id + extension)
 
 
 def load_bounding_boxes(annotations_path):
@@ -74,17 +115,195 @@ def load_bounding_boxes(annotations_path):
         annotations_dict = json.load(annotations_file)
 
     annotations = []
-    adhesions_num = 0
     for patient_id, scans_dict in annotations_dict.items():
         for scan_id, slices_dict in scans_dict.items():
             for slice_id, bounding_boxes in slices_dict.items():
                 if len(bounding_boxes) > 0:
-                    adhesions_num += len(bounding_boxes)
                     annotation = AdhesionAnnotation(patient_id, scan_id, slice_id, bounding_boxes)
                     annotations.append(annotation)
 
 
     return annotations
+
+
+def load_annotated_slices(annotations_path):
+    with open(annotations_path) as annotations_file:
+        annotations_dict = json.load(annotations_file)
+
+    slices = []
+    for patient_id, scans_dict in annotations_dict.items():
+        for scan_id, slices_dict in scans_dict.items():
+            for slice_id, bounding_boxes in slices_dict.items():
+                if len(bounding_boxes) > 0:
+                    slice = CineMRISlice(patient_id, scan_id, slice_id)
+                    slices.append(slice)
+
+
+    return slices
+
+
+# annotations_path - path to reports with patient level annotations
+def load_negative_ids_rijnstate(annotations_path):
+
+    with open(annotations_path) as annotations_file:
+        reports = json.load(annotations_file)
+
+    patient_ids = []
+    for report in reports:
+        # If patient is healthy append the id to array
+        if report["normal"] == "1":
+            patient_ids.append(report["id"])
+
+    return patient_ids
+
+
+# Extract ids of patients that were included into the reader study
+def load_patient_ids_reader_study(annotations_path):
+    with open(annotations_path) as annotations_file:
+        annotations_dict = json.load(annotations_file)
+
+    return list(annotations_dict.keys())
+
+
+# annotations_path - path to reports with patient level annotations
+def load_patients_with_bb_ids(annotations_path):
+
+    with open(annotations_path) as annotations_file:
+        annotations_dict = json.load(annotations_file)
+
+    # In the dictionary with annotations some patients have an empty array of annotations
+    # We need filter them out
+    # First, calculate how many annotations a patient has
+    patients = []
+    for patient_id, scans_dict in annotations_dict.items():
+        annotated_slices_count = 0
+        for scan_id, slices_dict in scans_dict.items():
+            for slice_id, bounding_boxes in slices_dict.items():
+                if len(bounding_boxes) > 0:
+                    annotated_slices_count += 1
+
+        patients.append((patient_id, annotated_slices_count))
+
+    # Then filter out patients without annotations
+    patient_ids = np.array([p for p, n in patients if n > 0])
+    return patient_ids
+
+
+# annotations_path - path to reports with patient level annotations
+def load_patients_without_bb_ids(archive_path):
+
+    all_patients = get_patients(archive_path)
+
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    patients_with_bb_annotations = load_patients_with_bb_ids(annotations_path)
+
+    patients = [p for p in all_patients if p.id not in patients_with_bb_annotations]
+    return patients
+
+
+# Those who was included into the reader study and do not have bounding boxes
+# And those who was not included into the reader study and is negative in the report data
+def load_negative_patients(archive_path):
+    annotations_type_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE_NAME
+
+    with open(annotations_type_path) as annotations_type_file:
+        annotations_type = json.load(annotations_type_file)
+
+    negative_patients_ids = [patient_id for patient_id, annotation_type in annotations_type.items() if annotation_type == AnnotationType.negative.value]
+    all_patients = get_patients(archive_path)
+
+    negative_patients = [p for p in all_patients if p.id in negative_patients_ids]
+    return negative_patients
+
+
+# To quickly know which patients have bb annotations and which have binary annotations
+def extract_annotations_metadata(archive_path):
+    all_patients = get_patients(archive_path)
+    all_patient_ids = [p.id for p in all_patients]
+
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    reader_study_patient_ids = load_patient_ids_reader_study(annotations_path)
+    bb_patient_ids = load_patients_with_bb_ids(annotations_path)
+
+    reader_study_negative = list(set(reader_study_patient_ids).difference(set(bb_patient_ids)))
+
+    report_only_patient_ids = list(set(all_patient_ids).difference(set(reader_study_patient_ids)))
+    patient_annotation_path = archive_path / METADATA_FOLDER / PATIENT_ANNOTATIONS_FILE_NAME
+    report_negative_patient_ids = load_negative_ids_rijnstate(patient_annotation_path)
+    report_only_negative = list(set(report_only_patient_ids) & set(report_negative_patient_ids))
+
+    negative_ids = reader_study_negative + report_only_negative
+
+    annotations_type_dict = {}
+    for patient_id in all_patient_ids:
+        if patient_id in bb_patient_ids:
+            annotation_type = AnnotationType.bounding_box
+        elif patient_id in negative_ids:
+            annotation_type = AnnotationType.negative
+        else:
+            annotation_type = AnnotationType.positive
+
+        annotations_type_dict[patient_id] = annotation_type.value
+
+    file_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE_NAME
+
+    with open(file_path, "w") as file:
+        json.dump(annotations_type_dict, file)
+
+
+# To have information about adhesion type - v
+def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation_path):
+    with open(annotations_path) as annotations_file:
+        annotations_dict = json.load(annotations_file)
+
+    annotations_dict_expanded = {}
+    for patient_id, scans_dict in annotations_dict.items():
+        scans_dict_expanded = {}
+        for scan_id, slices_dict in scans_dict.items():
+            slices_dict_expanded = {}
+            for slice_id, bounding_boxes in slices_dict.items():
+                segmentation_path = full_segmentation_path / patient_id / scan_id / (slice_id + ".mha")
+                if segmentation_path.exists():
+                    # Load predicted segmentation for the whole scan
+                    slice_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(segmentation_path)))
+
+                adhesions_array = []
+                for bounding_box in bounding_boxes:
+                    adhesion = Adhesion(bounding_box)
+                    intersect_anterior_wall = False
+                    intersect_contour = False
+                    # For all frames in the slice check if any intersects with adhesion annotation
+                    for mask in slice_mask:
+                        x, y, _, _ = get_contour(mask)
+                        anterior_wall_coord = get_anterior_wall_coord(x, y)
+                        intersect_anterior_wall = adhesion.intersects_contour(anterior_wall_coord[:, 0],
+                                                                              anterior_wall_coord[:, 1])
+                        if intersect_anterior_wall:
+                            intersect_contour = True
+                            break
+
+                        intersect_contour = intersect_contour or adhesion.intersects_contour(x, y)
+
+                    if intersect_anterior_wall:
+                        adhesion_type = AdhesionType.anteriorWall
+                    elif intersect_contour:
+                        adhesion_type = AdhesionType.abdominalCavityContour
+                    else:
+                        adhesion_type = AdhesionType.inside
+
+                    adhesion_dict = {"bb": bounding_box, "type": adhesion_type.value}
+                    adhesions_array.append(adhesion_dict)
+
+                slices_dict_expanded[slice_id] = adhesions_array
+
+            scans_dict_expanded[scan_id] = slices_dict_expanded
+
+        annotations_dict_expanded[patient_id] = scans_dict_expanded
+
+    annotations_expanded_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE_NAME
+
+    with open(annotations_expanded_path, "w") as file:
+        json.dump(annotations_dict_expanded, file)
 
 
 def show_annotation(annotation, archive_path):
@@ -105,7 +324,7 @@ def show_annotation(annotation, archive_path):
 
 
 def show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame, title=None, save_file_name=None):
-    slide_normalized = np.abs(visceral_slide) / np.max(np.abs(visceral_slide))
+    slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
 
     plt.figure()
     plt.imshow(expiration_frame, cmap="gray")
@@ -180,11 +399,13 @@ def save_annotated_gifs(annotations, archive_path):
         for frame_id, frame in enumerate(slice):
             plt.figure()
             plt.imshow(frame, cmap="gray")
+
             ax = plt.gca()
             for adhesion in annotation.adhesions:
                 adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
                                           linewidth=1, edgecolor='r', facecolor='none')
                 ax.add_patch(adhesion_rect)
+
             plt.axis("off")
             annotated_frame_file_path = vis_path / (str(frame_id) + ".png")
             plt.savefig(annotated_frame_file_path, bbox_inches='tight', pad_inches=0)
@@ -208,7 +429,7 @@ def vis_annotation_and_vs(archive_path,
                           output_path):
     output_path.mkdir(exist_ok=True)
 
-    annotations_path = archive_path / METADATA_FOLDER / ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     
     # load annotations
@@ -247,6 +468,55 @@ def vis_annotation_and_vs(archive_path,
             show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame, save_file_name=annotated_visc_slide_path)
 
 
+def vis_annotation_and_vs1(archive_path,
+                           output_path):
+    output_path.mkdir(exist_ok=True)
+
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
+
+    images_path = archive_path / IMAGES_FOLDER
+    masks_path = archive_path / "full_segmentation" / "merged_segmentation"
+
+    # load annotations
+    annotations = load_bounding_boxes(annotations_path)
+    # load inspiration and expiration data
+    with open(inspexp_file_path) as inspexp_file:
+        inspexp_data = json.load(inspexp_file)
+
+    # load slices with visceral slide and annotations
+    for annotation in annotations:
+
+        try:
+            patient_data = inspexp_data[annotation.patient_id]
+            scan_data = patient_data[annotation.scan_id]
+            inspexp_frames = scan_data[annotation.slice_id]
+        except:
+            print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
+                                                                                       annotation.scan_id,
+                                                                                       annotation.slice_id))
+
+        # load images
+        slice_path = annotation.build_path(images_path)
+        slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+        insp_frame = slice_array[inspexp_frames[0]].astype(np.uint32)
+        exp_frame = slice_array[inspexp_frames[1]].astype(np.uint32)
+
+        # load masks
+        mask_path = annotation.build_path(masks_path)
+        mask_array = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
+        insp_mask = mask_array[inspexp_frames[0]]
+        exp_mask = mask_array[inspexp_frames[1]]
+
+        # registration
+        x, y, visceral_slide = VisceralSlideDetector().get_visceral_slide(insp_frame, insp_mask, exp_frame, exp_mask)
+
+        slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
+        annotated_visc_slide_path = output_path / (slice_id + ".png")
+
+        show_annotation_and_vs(x, y, visceral_slide, annotation, insp_frame, save_file_name=annotated_visc_slide_path)
+
+
 def load_visceral_slide(visceral_slide_file_path):
     # Load the computed visceral slide
     with open(str(visceral_slide_file_path), "r+b") as file:
@@ -273,7 +543,7 @@ def annotations_statistics(archive_path,
                            full_segmentation_path,
                            visceral_slide_path):
 
-    annotations_path = archive_path / METADATA_FOLDER / ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load annotations
@@ -354,7 +624,7 @@ def annotations_statistics(archive_path,
 # A function to examine the detected front wall for all annotation for each
 # abdominal cavity contour is available at the moment
 def test_anterior_wall_detection(archive_path, visceral_slide_path):
-    annotations_path = archive_path / METADATA_FOLDER / ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load annotations
@@ -461,22 +731,29 @@ def get_anterior_wall_coord(x, y, connectivity_threshold=5):
 
 def test():
     archive_path = Path(ARCHIVE_PATH)
+    metadata_path = archive_path / METADATA_FOLDER
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
-    output_path = archive_path / "visceral_slide" / "annotated"
-    full_segmentation_path = Path("../../data/full_segmentation/merged_segmentation")
+    output_path = archive_path / "visceral_slide" / "new_insp_exp"
+    full_segmentation_path = archive_path / "full_segmentation" / "merged_segmentation"
+    bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE_NAME
 
+    #annotations = load_bounding_boxes(bb_annotation_path)
+    #save_annotated_gifs(annotations, archive_path)
     #vis_annotation_and_vs(archive_path, visceral_slide_path, output_path)
+    #vis_annotation_and_vs1(archive_path, output_path)
+
     #test_anterior_wall_detection(archive_path, visceral_slide_path)
-    annotations_statistics(archive_path, full_segmentation_path, visceral_slide_path)
+    #annotations_statistics(archive_path, full_segmentation_path, visceral_slide_path)
+
+    extract_adhesions_metadata(archive_path, bb_annotation_path, full_segmentation_path)
+    #extract_annotations_metadata(archive_path, metadata_path)
 
     """
-    annotations = load_bounding_boxes(annotations_path)
-    for annotation in annotations:
-        print("Patient {}, scan {}, slice {}".format(annotation.patient_id, annotation.scan_id, annotation.slice_id))
-        for adhesion in annotation.adhesions:
-            print("Adhesion box x: {}, y: {}, width: {}, height: {}".format(adhesion.origin_x, adhesion.origin_y, adhesion.width, adhesion.height))
-
+    negative_patients = load_negative_patients(archive_path)
+    print("Certainly negative patients")
+    print([p.id for p in negative_patients])
     """
+
     
     # Show randomly sampled annotation
     #annotation = random.choice(annotations)
