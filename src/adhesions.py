@@ -37,6 +37,7 @@ class AnnotationType(Enum):
 
 @unique
 class AdhesionType(Enum):
+    unset = 0
     anteriorWall = 1
     abdominalCavityContour = 2
     inside = 3
@@ -44,11 +45,12 @@ class AdhesionType(Enum):
 
 class Adhesion:
 
-    def __init__(self, bounding_box):
+    def __init__(self, bounding_box, type=AdhesionType.unset):
         self.origin_x = bounding_box[0]
         self.origin_y = bounding_box[1]
         self.width = bounding_box[2]
         self.height = bounding_box[3]
+        self.type = type
 
     @property
     def center(self):
@@ -90,9 +92,11 @@ class Adhesion:
 
 class AdhesionAnnotation:
 
-    def __init__(self, patient_id, scan_id, slice_id, bounding_boxes):
+    def __init__(self, patient_id, scan_id, slice_id, bounding_boxes, types=None):
         self.slice = CineMRISlice(patient_id, scan_id, slice_id)
-        self.adhesions = [Adhesion(bounding_box) for bounding_box in bounding_boxes]
+        if types is None:
+            types = [AdhesionType.unset for _ in bounding_boxes]
+        self.adhesions = [Adhesion(bounding_box, type) for bounding_box, type in zip(bounding_boxes, types)]
 
     @property
     def patient_id(self):
@@ -110,34 +114,56 @@ class AdhesionAnnotation:
         return Path(relative_path) / self.patient_id / self.scan_id / (self.slice_id + extension)
 
 
-def load_bounding_boxes(annotations_path):
+# Assume we have expanded annotation with bb types
+def load_bounding_boxes(annotations_path,
+                        adhesion_types=[AdhesionType.anteriorWall.value,
+                                        AdhesionType.abdominalCavityContour.value,
+                                        AdhesionType.inside.value]):
+
     with open(annotations_path) as annotations_file:
         annotations_dict = json.load(annotations_file)
 
     annotations = []
     for patient_id, scans_dict in annotations_dict.items():
         for scan_id, slices_dict in scans_dict.items():
-            for slice_id, bounding_boxes in slices_dict.items():
-                if len(bounding_boxes) > 0:
-                    annotation = AdhesionAnnotation(patient_id, scan_id, slice_id, bounding_boxes)
-                    annotations.append(annotation)
+            for slice_id, bounding_box_dicts in slices_dict.items():
+                # Include bounding boxes which have requested type
+                bounding_boxes = []
+                types = []
+                for bounding_box_dict in bounding_box_dicts:
+                    if bounding_box_dict["type"] in adhesion_types:
+                        bounding_boxes.append(bounding_box_dict["bb"])
+                        types.append(bounding_box_dict["type"])
 
+                if len(bounding_boxes) > 0:
+                    annotation = AdhesionAnnotation(patient_id, scan_id, slice_id, bounding_boxes, types)
+                    annotations.append(annotation)
 
     return annotations
 
-
-def load_annotated_slices(annotations_path):
+# Assume we have expanded annotation with bb types
+def load_annotated_slices(annotations_path,
+                          adhesion_types=[AdhesionType.anteriorWall.value,
+                                          AdhesionType.abdominalCavityContour.value,
+                                          AdhesionType.inside.value]):
     with open(annotations_path) as annotations_file:
         annotations_dict = json.load(annotations_file)
 
     slices = []
     for patient_id, scans_dict in annotations_dict.items():
         for scan_id, slices_dict in scans_dict.items():
-            for slice_id, bounding_boxes in slices_dict.items():
-                if len(bounding_boxes) > 0:
-                    slice = CineMRISlice(patient_id, scan_id, slice_id)
-                    slices.append(slice)
+            for slice_id, bounding_box_dicts in slices_dict.items():
+                if len(bounding_box_dicts) > 0:
+                    # If any of BB annotations for a slice has a requested type, include this slice
+                    has_requested_type = False
+                    for bounding_box_dict in bounding_box_dicts:
+                        if bounding_box_dict["type"] in adhesion_types:
+                            has_requested_type = True
+                            break
 
+                    if has_requested_type:
+                        slice = CineMRISlice(patient_id, scan_id, slice_id)
+                        slices.append(slice)
 
     return slices
 
@@ -300,7 +326,7 @@ def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation
 
         annotations_dict_expanded[patient_id] = scans_dict_expanded
 
-    annotations_expanded_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE_NAME
+    annotations_expanded_path = archive_path / METADATA_FOLDER / ANNOTATIONS_EXPANDED_FILE_NAME
 
     with open(annotations_expanded_path, "w") as file:
         json.dump(annotations_dict_expanded, file)
@@ -737,6 +763,8 @@ def test():
     full_segmentation_path = archive_path / "full_segmentation" / "merged_segmentation"
     bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE_NAME
 
+    bb_expanded_annotation_path = metadata_path / ANNOTATIONS_EXPANDED_FILE_NAME
+
     #annotations = load_bounding_boxes(bb_annotation_path)
     #save_annotated_gifs(annotations, archive_path)
     #vis_annotation_and_vs(archive_path, visceral_slide_path, output_path)
@@ -745,8 +773,11 @@ def test():
     #test_anterior_wall_detection(archive_path, visceral_slide_path)
     #annotations_statistics(archive_path, full_segmentation_path, visceral_slide_path)
 
-    extract_adhesions_metadata(archive_path, bb_annotation_path, full_segmentation_path)
-    #extract_annotations_metadata(archive_path, metadata_path)
+    annotations = load_bounding_boxes(bb_expanded_annotation_path, adhesion_types=[3])
+    print(len(annotations))
+
+    #extract_adhesions_metadata(archive_path, bb_annotation_path, full_segmentation_path)
+    #extract_annotations_metadata(archive_path)
 
     """
     negative_patients = load_negative_patients(archive_path)

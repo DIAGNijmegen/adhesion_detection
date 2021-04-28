@@ -9,7 +9,7 @@ import json
 import random
 from skimage import io
 import SimpleITK as sitk
-from cinemri.utils import get_patients
+from cinemri.utils import get_patients, get_image_orientation
 import utils
 from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
@@ -412,7 +412,7 @@ def extract_frames(slice_path,
     img = sitk.ReadImage(str(slice_path))
     depth = img.GetDepth()
     direction = img.GetDirection()
-    if depth == 30 and utils.anatomical_orientation_asl(direction):
+    if depth == 30 and get_image_orientation(img) == "ASL":
         # TODO: add age and sex
         metadata = {
                     "Spacing": img.GetSpacing(),
