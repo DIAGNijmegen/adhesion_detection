@@ -2,7 +2,8 @@ import json
 import pickle
 import subprocess
 from pathlib import Path
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR
+from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, PATIENT_ANNOTATIONS_FILE_NAME, \
+    BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import get_contour
 import SimpleITK as sitk
@@ -16,16 +17,8 @@ from enum import Enum, unique
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
 
-# bounding box annotations
-BB_ANNOTATIONS_FILE_NAME = "annotations.json"
-# patient level annotations
-PATIENT_ANNOTATIONS_FILE_NAME = "rijnstate.json"
 # Folder to save visualized annotations
 ANNOTATIONS_VIS_FOLDER = "vis_annotations"
-# patient level annotations
-ANNOTATIONS_TYPE_FILE_NAME = "annotations_type.json"
-# bounding boxes annotations with indication of adhesion type
-ANNOTATIONS_EXPANDED_FILE_NAME = "annotations_expanded.json"
 
 # TODO: clean up the code for detection of negative patients and statistics of reader study/ report
 # TODO: this file requires serious clean up
@@ -221,7 +214,7 @@ def load_patients_without_bb_ids(archive_path):
 
     all_patients = get_patients(archive_path)
 
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
     patients_with_bb_annotations = load_patients_with_bb_ids(annotations_path)
 
     patients = [p for p in all_patients if p.id not in patients_with_bb_annotations]
@@ -231,7 +224,7 @@ def load_patients_without_bb_ids(archive_path):
 # Those who was included into the reader study and do not have bounding boxes
 # And those who was not included into the reader study and is negative in the report data
 def load_negative_patients(archive_path):
-    annotations_type_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE_NAME
+    annotations_type_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE
 
     with open(annotations_type_path) as annotations_type_file:
         annotations_type = json.load(annotations_type_file)
@@ -248,7 +241,7 @@ def extract_annotations_metadata(archive_path):
     all_patients = get_patients(archive_path)
     all_patient_ids = [p.id for p in all_patients]
 
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
     reader_study_patient_ids = load_patient_ids_reader_study(annotations_path)
     bb_patient_ids = load_patients_with_bb_ids(annotations_path)
 
@@ -272,7 +265,7 @@ def extract_annotations_metadata(archive_path):
 
         annotations_type_dict[patient_id] = annotation_type.value
 
-    file_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE_NAME
+    file_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE
 
     with open(file_path, "w") as file:
         json.dump(annotations_type_dict, file)
@@ -326,7 +319,7 @@ def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation
 
         annotations_dict_expanded[patient_id] = scans_dict_expanded
 
-    annotations_expanded_path = archive_path / METADATA_FOLDER / ANNOTATIONS_EXPANDED_FILE_NAME
+    annotations_expanded_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
 
     with open(annotations_expanded_path, "w") as file:
         json.dump(annotations_dict_expanded, file)
@@ -459,7 +452,7 @@ def vis_annotation_and_vs(archive_path,
                           output_path):
     output_path.mkdir(exist_ok=True)
 
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     
     # load annotations
@@ -502,7 +495,7 @@ def vis_annotation_and_vs1(archive_path,
                            output_path):
     output_path.mkdir(exist_ok=True)
 
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     images_path = archive_path / IMAGES_FOLDER
@@ -573,7 +566,7 @@ def annotations_statistics(archive_path,
                            full_segmentation_path,
                            visceral_slide_path):
 
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load annotations
@@ -654,7 +647,7 @@ def annotations_statistics(archive_path,
 # A function to examine the detected front wall for all annotation for each
 # abdominal cavity contour is available at the moment
 def test_anterior_wall_detection(archive_path, visceral_slide_path):
-    annotations_path = archive_path / METADATA_FOLDER / ANNOTATIONS_EXPANDED_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load annotations
@@ -721,9 +714,9 @@ def test():
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
     output_path = archive_path / "visceral_slide" / "new_insp_exp"
     full_segmentation_path = archive_path / "full_segmentation" / "merged_segmentation"
-    bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE_NAME
+    bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE
 
-    bb_expanded_annotation_path = metadata_path / ANNOTATIONS_EXPANDED_FILE_NAME
+    bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
 
     #annotations = load_bounding_boxes(bb_annotation_path)
     #save_annotated_gifs(annotations, archive_path)

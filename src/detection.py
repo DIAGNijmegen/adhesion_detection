@@ -10,20 +10,17 @@
 
 import json
 import shutil
-import ants
 from pathlib import Path
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 import numpy as np
 from visceral_slide import VisceralSlideDetector
-from adhesions import BB_ANNOTATIONS_FILE_NAME, ANNOTATIONS_EXPANDED_FILE_NAME
 from adhesions import load_annotated_slices, load_bounding_boxes, load_negative_patients, AdhesionType
 from cinemri.config import ARCHIVE_PATH
+from cinemri.contour import get_contour
 from cinemri.utils import get_image_orientation
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR
+from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, BB_ANNOTATIONS_EXPANDED_FILE
 from skimage import io
-
-from cinemri import contour
 
 # detection_input_whole folder contains adhesions of all types
 # detection_input_contour folder contains adhesions along the abdominal cavity contour
@@ -185,7 +182,7 @@ def visualize_deformation_and_annotations(slice,
         plt.show()
 
     # Visualize deformation as 3 channels image and add tangent vectors of abdominal cavity contour
-    x, y, u, v = contour.get_contour(insp_mask)
+    x, y, u, v = get_contour(insp_mask)
     # take each 10th vector and invert v to properly display it
     x_vis, y_vis, u_vis, v_vis = x[::10], y[::10], u[::10], -np.array(v[::10])
 
@@ -444,7 +441,7 @@ def npy_to_jpg(npy_path,
 
 if __name__ == '__main__':
     archive_path = Path(ARCHIVE_PATH)
-    annotations_path = archive_path / METADATA_FOLDER / ANNOTATIONS_EXPANDED_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     inspexp_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     images_path = archive_path / IMAGES_FOLDER
 
