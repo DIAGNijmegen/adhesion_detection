@@ -11,12 +11,12 @@ from cinemri.utils import get_patients, Patient
 from data_conversion import convert_2d_image_to_pseudo_3d
 from visceral_slide import VisceralSlideDetector
 import matplotlib.pyplot as plt
+from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY
 from segmentation import segment_abdominal_cavity
 
-# TODO:
-# How do we evaluate registration?
+# TODO: How do we evaluate registration?
 NNUNET_INPUT_FOLDER = "nnUNet_input"
 PREDICTED_MASKS_FOLDER = "nnUNet_masks"
 RESULTS_FOLDER = "visceral_slide"
@@ -82,38 +82,33 @@ def extract_insp_exp_frames(archive_path,
             print("No data about inspitation and expiration frames for a patient {}".format(patient.id))
             continue
 
-        for (scan_id, slices) in patient.scans.items():
-            if scan_id in patient_data:
-                scan_data = patient_data[scan_id]
+        for cinemri_slice in patient.cinemri_slices:
+            if cinemri_slice.scan_id in patient_data:
+                scan_data = patient_data[cinemri_slice.scan_id]
+
+                if cinemri_slice.slice_id in scan_data:
+                    inspexp_frames = scan_data[cinemri_slice.slice_id]
+                else:
+                    print("No data about inspiration and expiration frames for a slice {}".format(cinemri_slice.slice_id))
+                    continue
             else:
-                print("No data about inspiration and expiration frames for a scan {}".format(scan_id))
+                print("No data about inspiration and expiration frames for a scan {}".format(cinemri_slice.scan_id))
                 continue
 
-            for slice in slices:
-                slice_stem = slice[:-4]
-                if slice_stem in scan_data:
-                    inspexp_frames = scan_data[slice_stem]
-                else:
-                    print("No data about inspiration and expiration frames for a slice {}".format(slice_stem))
-                    continue
+            slice_path = cinemri_slice.build_path(images_path)
+            slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
 
-                separator = "_"
-                slice_id = separator.join([patient.id, scan_id, slice_stem])
+            # Extract and save inspiration frame
+            insp_frame = slice_array[inspexp_frames[0]]
+            insp_pseudo_3d_image = convert_2d_image_to_pseudo_3d(insp_frame)
+            insp_file_path = destination_path / (cinemri_slice.full_id + "_insp_0000.nii.gz")
+            sitk.WriteImage(insp_pseudo_3d_image, str(insp_file_path))
 
-                slice_path = images_path / patient.id / scan_id / slice
-                slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
-
-                # Extract and save inspiration frame
-                insp_frame = slice_array[inspexp_frames[0]]
-                insp_pseudo_3d_image = convert_2d_image_to_pseudo_3d(insp_frame)
-                insp_file_path = destination_path / (slice_id + "_insp_0000.nii.gz")
-                sitk.WriteImage(insp_pseudo_3d_image, str(insp_file_path))
-
-                # Extract and save expiration frame
-                exp_frame = slice_array[inspexp_frames[1]]
-                exp_pseudo_3d_image = convert_2d_image_to_pseudo_3d(exp_frame)
-                exp_file_path = destination_path / (slice_id + "_exp_0000.nii.gz")
-                sitk.WriteImage(exp_pseudo_3d_image, str(exp_file_path))
+            # Extract and save expiration frame
+            exp_frame = slice_array[inspexp_frames[1]]
+            exp_pseudo_3d_image = convert_2d_image_to_pseudo_3d(exp_frame)
+            exp_file_path = destination_path / (cinemri_slice.full_id + "_exp_0000.nii.gz")
+            sitk.WriteImage(exp_pseudo_3d_image, str(exp_file_path))
 
 
 def extract_insp_exp(argv):

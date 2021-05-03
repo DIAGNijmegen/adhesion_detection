@@ -1,5 +1,4 @@
 import random
-import math
 import numpy as np
 import json
 from pathlib import Path
@@ -26,7 +25,7 @@ def get_patients_without_slices(archive_path,
 
     """
 
-    patients = get_patients(archive_path / images_folder, with_scans_only=False)
+    patients = get_patients(archive_path, images_folder=images_folder, with_scans_only=False)
     patients_without_slices = []
     for patient in patients:
         if len(patient.slices()) == 0:
@@ -58,7 +57,7 @@ def train_test_split(archive_path,
        A tuple with a list of patients ids to use for training and a list of patients ids to use for testing
     """
 
-    patients = get_patients(archive_path / images_folder)
+    patients = get_patients(archive_path, images_folder=images_folder)
     random.shuffle(patients)
     train_size = round(len(patients) * train_proportion)
 
@@ -89,15 +88,15 @@ def find_unique_shapes(archive_path, images_folder="images"):
     """
     shapes = []
 
-    patients = get_patients(archive_path / images_folder)
+    patients = get_patients(archive_path, images_folder=images_folder)
     for patient in patients:
-        for scan_id, slices in patient.scans.items():
-            for slice in slices:
-                slice_image_path = archive_path / images_folder / patient.id / scan_id / slice
-                image = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_image_path)))[0]
 
-                if not (image.shape in shapes):
-                    shapes.append(image.shape)
+        for cinemri_slice in patient.cinemri_slices:
+            slice_image_path = cinemri_slice.build_path(archive_path / images_folder)
+            image = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_image_path)))[0]
+
+            if not (image.shape in shapes):
+                shapes.append(image.shape)
 
     return shapes
 
@@ -107,9 +106,8 @@ def test():
     subset_path = Path("../../data/cinemri_mha/segmentation_subset")
 
     #train_test_split(archive_path, subset_path, train_proportion=1)
-
     """
-    unique_shapes = find_unique_shapes(archive_path, "cavity_segmentations")
+    unique_shapes = find_unique_shapes(archive_path, "images")
     print("Unique scan dimensions in the dataset")
     print(unique_shapes)
     """

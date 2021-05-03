@@ -9,6 +9,8 @@ import json
 import random
 from skimage import io
 import SimpleITK as sitk
+from cinemri.config import ARCHIVE_PATH
+from cinemri.utils import CineMRISlice
 from cinemri.utils import get_patients, get_image_orientation
 import utils
 from sklearn.model_selection import KFold
@@ -75,7 +77,7 @@ def extract_segmentation_data(archive_path,
     target_segmentations_path = destination_path / target_segmentations_folder
     target_segmentations_path.mkdir(exist_ok=True)
 
-    patients = get_patients(archive_path / segmentations_folder)
+    patients = get_patients(archive_path, images_folder=segmentations_folder)
     # Now get all scans for each patient and create an array of Patients
     for patient in patients:
         # Create patient folder in both images and masks target directories
@@ -97,13 +99,14 @@ def extract_segmentation_data(archive_path,
             scan_segmentations_path = patient_segmentations_path / scan_id
             scan_segmentations_path.mkdir(exist_ok=True)
 
-            for slice in slices:
+            for slice_id in slices:
+                cinemri_slice = CineMRISlice(patient.id, scan_id, slice_id)
                 # read an image and extract the first frame
-                slice_path = Path(archive_path) / images_folder / patient.id / scan_id / slice
+                slice_path = cinemri_slice.build_path(Path(archive_path) / images_folder)
                 save_frame(slice_path, scan_images_path)
 
                 # read a segmentation mask and extract the first frame
-                segmentation_path = Path(archive_path) / segmentations_folder / patient.id / scan_id / slice
+                segmentation_path = cinemri_slice.build_path(Path(archive_path) / segmentations_folder)
                 save_frame(segmentation_path, scan_segmentations_path)
 
 
@@ -412,7 +415,7 @@ def extract_frames(slice_path,
     img = sitk.ReadImage(str(slice_path))
     depth = img.GetDepth()
     direction = img.GetDirection()
-    if depth == 30 and get_image_orientation(img) == "ASL":
+    if depth >= 30 and get_image_orientation(img) == "ASL":
         # TODO: add age and sex
         metadata = {
                     "Spacing": img.GetSpacing(),
@@ -467,9 +470,12 @@ def merge_frames(slice_glob_pattern,
     sitk.WriteImage(sitk_image, str(image_path))
 
 
-def save_visualised_prediction(images_path, predictions_path, png_path, save_gif=True):
+def save_visualised_prediction(images_path, predictions_path, target_path, save_gif=True):
     """Visualize the predicted mask as overlay on the frame and saved as png file"""
 
+    target_path.mkdir(exist_ok=True)
+
+    png_path = target_path / "pngs"
     png_path.mkdir(exist_ok=True)
 
     # get frames ids
@@ -498,7 +504,7 @@ def save_visualised_prediction(images_path, predictions_path, png_path, save_gif
             "-loop",
             "0",
             str(png_path) + "/*png",
-            str(png_path) + "/" + frame_id[:-3] + ".gif",
+            str(target_path) + "/" + frame_id[:-3] + ".gif",
         ]
         subprocess.run(command)
 
@@ -506,12 +512,10 @@ def save_visualised_prediction(images_path, predictions_path, png_path, save_gif
 
 
 def test():
-    archive_path = Path("../../data/cinemri_mha/rijnstate")
-    subset_path = Path("../../data/cinemri_mha/segmentation_subset")
+    archive_path = Path(ARCHIVE_PATH)
+    subset_path = Path("segmentation_subset")
     diag_nnUNet_path = Path("../../data/cinemri_mha/diag_nnunet")
 
-    im_path = Path("ANON0P03RE1MR_1.2.752.24.7.621449243.4375030_1.3.12.2.1107.5.2.30.26380.201901301010594525512025.0.0.0_exp2.nii.gz")
-    save_frame(im_path, Path("res"))
     #extract_frames(subset_path, diag_nnUNet_path)
 
     """
@@ -520,7 +524,7 @@ def test():
     print(unique_shapes)
     """
 
-    # extract_segmentation_data(archive_path, subset_path)
+    extract_segmentation_data(archive_path, subset_path)
 
     # extract_frames(Path("1.3.12.2.1107.5.2.30.26380.2019031314281933334670409.0.0.0.mha"), Path("frames"))
     # merge_frames(Path("../full_pred_test/prediction"), Path("merged_prediction"), Path("frames/metadata.json"))
@@ -545,5 +549,3 @@ if __name__ == '__main__':
         print('Usage: data_conversion ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
-
-

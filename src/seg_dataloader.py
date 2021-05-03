@@ -82,19 +82,19 @@ class SegmentationDataset(Dataset):
     def __getitem__(self, idx):
         slice = self.slices[idx]
 
-        if slice.file_name in self.images:
-            image = self.images[slice.file_name]
+        if slice.full_id in self.images:
+            image = self.images[slice.full_id]
         else:
-            image_path = slice.build_path(self.images_path)
+            image_path = slice.build_path(self.images_path, extension=".npy")
             image = np.load(image_path)
-            self.images[slice.file_name] = image
+            self.images[slice.full_id] = image
 
-        if slice.file_name in self.masks:
-            mask = self.masks[slice.file_name]
+        if slice.full_id in self.masks:
+            mask = self.masks[slice.full_id]
         else:
-            segmentation_path = slice.build_path(self.segmentations_path)
+            segmentation_path = slice.build_path(self.segmentations_path, extension=".npy")
             mask = np.load(segmentation_path)
-            self.masks[slice.file_name] = mask
+            self.masks[slice.full_id] = mask
 
         return image, mask
 
@@ -110,10 +110,10 @@ class SegmentationDataset(Dataset):
 
             for scan_id in scans:
                 scan_path = patient_segmentations_path / scan_id
-                slices = [f.name for f in scan_path.iterdir() if f.suffix == ".npy"]
+                slice_ids = [f.stem for f in scan_path.iterdir() if f.suffix == ".npy"]
 
-                for slice in slices:
-                    self.slices.append(CineMRISlice(patient_id, scan_id, slice.stem))
+                for slice_id in slice_ids:
+                    self.slices.append(CineMRISlice(patient_id, scan_id, slice_id))
 
 
 def test():

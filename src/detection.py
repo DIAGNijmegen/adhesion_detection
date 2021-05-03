@@ -31,9 +31,6 @@ from cinemri import contour
 # add possibility to extract scans adjacent to front abdominal wall or abdominal cavity contour (enum)
 # save as metadata?
 
-# TODO change code assuming that slice ids in a patient object have .mha extension
-# TODO: make a metadata file with negative and positive patients ids
-
 def get_insp_exp_indices(slice, inspexp_data):
 
     # Extract inspiration and expiration frames for the slice
@@ -190,7 +187,7 @@ def visualize_deformation_and_annotations(slice,
     # Visualize deformation as 3 channels image and add tangent vectors of abdominal cavity contour
     x, y, u, v = contour.get_contour(insp_mask)
     # take each 10th vector and invert v to properly display it
-    x_vis, y_vis, u_vis, v_vis = x[::10], y[::10], u[::10], - np.array(v[::10])
+    x_vis, y_vis, u_vis, v_vis = x[::10], y[::10], u[::10], -np.array(v[::10])
 
     fig = plt.figure()
     ax = fig.add_subplot(111)

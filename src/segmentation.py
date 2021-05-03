@@ -8,6 +8,7 @@ import argparse
 import numpy as np
 from pathlib import Path
 from cinemri.utils import get_patients, Patient
+from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER
 from data_conversion import extract_frames, merge_frames
 from postprocessing import fill_in_holes
@@ -36,13 +37,11 @@ def extract_segmentation_data(archive_path,
     target_metadata_path = target_path / target_metadata_folder
     target_metadata_path.mkdir()
 
-    patients = get_patients(archive_path)
+    patients = get_patients(archive_path, images_folder=images_folder)
     for patient in patients:
-        for (scan_id, slices) in patient.scans.items():
-            for slice in slices:
-                slice_path = archive_path / images_folder / patient.id / scan_id / slice
-                slice_id = SEPARATOR.join([patient.id, scan_id, slice[:-4]])
-                extract_frames(slice_path, slice_id, target_images_path, target_metadata_path)
+        for cinemri_slice in patient.cinemri_slices:
+            slice_path = cinemri_slice.build_path(archive_path / images_folder)
+            extract_frames(slice_path, cinemri_slice.full_id, target_images_path, target_metadata_path)
 
 
 def extract_data(argv):
@@ -243,21 +242,20 @@ def full_inference(argv):
 
 
 def test():
-    archive_path = Path("../../data/cinemri_mha/rijnstate")
-    target_path_images = Path("../../data/cinemri_mha/frames")
+    archive_path = Path(ARCHIVE_PATH)
+    target_path_images = Path("../../data/target")
     target_path_metadata = Path("../../data/images_metadata")
     segmentation_path = Path("../../data/masks")
     merged_segmentation_path = Path("../../data/merged_segmentation1")
 
-    #extract_segmentation_data(archive_path, target_path_images)
+    extract_segmentation_data(archive_path, target_path_images)
     #simulate_segmentation(target_path_images, segmentation_path)
-    merge_segmentation(segmentation_path, target_path_metadata, merged_segmentation_path)
+    #merge_segmentation(segmentation_path, target_path_metadata, merged_segmentation_path)
 
 
 if __name__ == '__main__':
-    test()
+    # test()
 
-    """
     actions = {
         "extract_data": extract_data,
         "segment": segment,
@@ -271,4 +269,3 @@ if __name__ == '__main__':
         print('Usage: data_conversion ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
-    """

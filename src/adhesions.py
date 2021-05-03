@@ -11,6 +11,7 @@ from matplotlib.patches import Rectangle
 import cv2
 import numpy as np
 from cinemri.utils import CineMRISlice
+from cinemri.contour import get_anterior_wall_coord
 from enum import Enum, unique
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
@@ -20,7 +21,7 @@ BB_ANNOTATIONS_FILE_NAME = "annotations.json"
 # patient level annotations
 PATIENT_ANNOTATIONS_FILE_NAME = "rijnstate.json"
 # Folder to save visualized annotations
-ANNOTATIONS_VIS_FOLDER = "vis_annotations2"
+ANNOTATIONS_VIS_FOLDER = "vis_annotations"
 # patient level annotations
 ANNOTATIONS_TYPE_FILE_NAME = "annotations_type.json"
 # bounding boxes annotations with indication of adhesion type
@@ -301,9 +302,8 @@ def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation
                     # For all frames in the slice check if any intersects with adhesion annotation
                     for mask in slice_mask:
                         x, y, _, _ = get_contour(mask)
-                        anterior_wall_coord = get_anterior_wall_coord(x, y)
-                        intersect_anterior_wall = adhesion.intersects_contour(anterior_wall_coord[:, 0],
-                                                                              anterior_wall_coord[:, 1])
+                        x_anterior, y_anterior = get_anterior_wall_coord(x, y)
+                        intersect_anterior_wall = adhesion.intersects_contour(x_anterior, y_anterior)
                         if intersect_anterior_wall:
                             intersect_contour = True
                             break
@@ -422,6 +422,9 @@ def save_annotated_gifs(annotations, archive_path):
         vis_path = vis_annotations_path / annotation.patient_id / annotation.scan_id / annotation.slice_id
         vis_path.mkdir(parents=True, exist_ok=True)
 
+        png_path = vis_path / "pngs"
+        png_path.mkdir(exist_ok=True)
+
         for frame_id, frame in enumerate(slice):
             plt.figure()
             plt.imshow(frame, cmap="gray")
@@ -432,8 +435,9 @@ def save_annotated_gifs(annotations, archive_path):
                                           linewidth=1, edgecolor='r', facecolor='none')
                 ax.add_patch(adhesion_rect)
 
+
             plt.axis("off")
-            annotated_frame_file_path = vis_path / (str(frame_id) + ".png")
+            annotated_frame_file_path = png_path / (str(frame_id) + ".png")
             plt.savefig(annotated_frame_file_path, bbox_inches='tight', pad_inches=0)
             plt.close()
 
@@ -444,7 +448,7 @@ def save_annotated_gifs(annotations, archive_path):
             "20",
             "-loop",
             "0",
-            str(vis_path) + "/*png",
+            str(png_path) + "/*png",
             str(vis_path) + "/" + "annotated_slice.gif",
         ]
         subprocess.run(command)
@@ -622,8 +626,8 @@ def annotations_statistics(archive_path,
                 # For all frames in the slice check if any intersects with adhesion annotation
                 for mask in slice_mask:
                     x, y, _, _ = get_contour(mask)
-                    anterior_wall_coord = get_anterior_wall_coord(x, y)
-                    intersect_anterior_wall = adhesion.intersects_contour(anterior_wall_coord[:, 0], anterior_wall_coord[:, 1])
+                    x_anterior, y_anterior = get_anterior_wall_coord(x, y)
+                    intersect_anterior_wall = adhesion.intersects_contour(x_anterior, y_anterior)
                     if intersect_anterior_wall:
                         intersect_contour = True
                         break
@@ -650,7 +654,7 @@ def annotations_statistics(archive_path,
 # A function to examine the detected front wall for all annotation for each
 # abdominal cavity contour is available at the moment
 def test_anterior_wall_detection(archive_path, visceral_slide_path):
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE_NAME
+    annotations_path = archive_path / METADATA_FOLDER / ANNOTATIONS_EXPANDED_FILE_NAME
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load annotations
@@ -672,19 +676,19 @@ def test_anterior_wall_detection(archive_path, visceral_slide_path):
             try:
                 patient_data = inspexp_data[annotation.patient_id]
                 scan_data = patient_data[annotation.scan_id]
-                exp_frame = scan_data[annotation.slice_id][1]
+                insp_frame = scan_data[annotation.slice_id][0]
             except:
                 print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                            annotation.scan_id,
                                                                                            annotation.slice_id))
 
-            # Load the expiration frame (visceral slide is computed for the expiration frame)
-            expiration_frame_path = archive_path / IMAGES_FOLDER / annotation.patient_id / annotation.scan_id / (
+            # Load the inspiration frame (visceral slide is computed for the inspiration frame)
+            inspiration_frame_path = archive_path / IMAGES_FOLDER / annotation.patient_id / annotation.scan_id / (
                     annotation.slice_id + ".mha")
-            exp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(expiration_frame_path)))[exp_frame]
+            insp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(inspiration_frame_path)))[insp_frame]
 
             slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
-            verify_anterior_wall(x, y, exp_frame, slice_id)
+            verify_anterior_wall(x, y, insp_frame, slice_id)
 
 
 # Allows to visually evaluate quality of the detection of front abdominal wall
@@ -700,59 +704,15 @@ def verify_anterior_wall(x, y, exp_frame, slice_id):
     plt.axis('off')
     ax.scatter(x, y, s=4, color="r")
 
-    anterior_wall_coord = get_anterior_wall_coord(x, y)
+    x_anterior, y_anterior = get_anterior_wall_coord(x, y)
 
     ax = fig.add_subplot(122)
     plt.imshow(exp_frame, cmap="gray")
     plt.axis('off')
-    ax.scatter(anterior_wall_coord[:, 0], anterior_wall_coord[:, 1], s=4, color="r")
+    ax.scatter(x_anterior, y_anterior, s=4, color="r")
     plt.axis('off')
     plt.savefig(out_path / (slice_id + ".png"), bbox_inches='tight', pad_inches=0)
     plt.close()
-
-
-def get_anterior_wall_coord(x, y, connectivity_threshold=5):
-    coords = np.column_stack((x, y))
-
-    # Get unique y coordinates
-    y_unique = np.unique(y)
-    # For each unique y find the leftmost x
-    x_left = []
-    for y_current in y_unique:
-        xs = [coord[0] for coord in coords if coord[1] == y_current]
-        x_left.append(sorted(xs)[0])
-
-    # Unique y coordinates and the corresponding leftmost x coordinates
-    # Should give good approximation of the anterior abdominal wall
-    x_left = np.array(x_left)
-    anterior_wall_coord = np.column_stack((x_left, y_unique))
-
-    # However, for some scans this approach fails because it will also keep pieces of
-    # the countour on the right side (e.g. in pelvis area or due to poor quality segmentation)
-    # Hence we first find all discontinuity points
-    coord_prev = anterior_wall_coord[0]
-    discontinuity_points = []
-    for index in range(1, anterior_wall_coord.shape[0]):
-        coord_cur = anterior_wall_coord[index]
-        if abs(coord_cur[0] - coord_prev[0]) > connectivity_threshold:
-            discontinuity_points.append(coord_prev)
-        coord_prev = coord_cur
-
-    # Then we remove small regions determined as a part of the front abdominal wall
-    # The front wall is usually smooth enough not to have large gaps in x values,
-    # hence this approach should be rather safe
-    for discontinuity_point in discontinuity_points:
-        index = np.where((anterior_wall_coord == discontinuity_point).all(axis=1))[0][0]
-        before_len = index
-        after_len = anterior_wall_coord.shape[0] - index
-        if before_len < after_len:
-            anterior_wall_coord = anterior_wall_coord[before_len + 1:]
-        else:
-            anterior_wall_coord = anterior_wall_coord[:before_len]
-            # stop the loop since we removed all the next discontinuity points
-            break
-
-    return anterior_wall_coord
 
 
 def test():
@@ -773,8 +733,8 @@ def test():
     #test_anterior_wall_detection(archive_path, visceral_slide_path)
     #annotations_statistics(archive_path, full_segmentation_path, visceral_slide_path)
 
-    annotations = load_bounding_boxes(bb_expanded_annotation_path, adhesion_types=[3])
-    print(len(annotations))
+    #annotations = load_bounding_boxes(bb_expanded_annotation_path, adhesion_types=[3])
+    #print(len(annotations))
 
     #extract_adhesions_metadata(archive_path, bb_annotation_path, full_segmentation_path)
     #extract_annotations_metadata(archive_path)
