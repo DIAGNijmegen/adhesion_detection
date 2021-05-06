@@ -15,7 +15,7 @@ import SimpleITK as sitk
 import matplotlib.pyplot as plt
 import numpy as np
 from visceral_slide import VisceralSlideDetector
-from adhesions import load_annotated_slices, load_bounding_boxes, load_negative_patients, AdhesionType
+from adhesions import load_annotated_slices, load_annotations, load_negative_patients, AdhesionType
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import get_contour
 from cinemri.utils import get_image_orientation
@@ -343,7 +343,7 @@ def annotations_to_yolov5(annotations_path,
                                           AdhesionType.inside.value]):
 
     labels_path.mkdir(exist_ok=True, parents=True)
-    annotations = load_bounding_boxes(annotations_path, adhesion_types=adhesion_types)
+    annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
 
     for annotation in annotations:
         print("Converting annotation {} {} {}".format(annotation.patient_id, annotation.scan_id, annotation.slice_id))

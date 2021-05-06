@@ -101,6 +101,16 @@ def find_unique_shapes(archive_path, images_folder="images"):
     return shapes
 
 
+def interval_overlap(interval_a, interval_b):
+    a_x_min, a_x_max = interval_a
+    b_x_min, b_x_max = interval_b
+
+    if b_x_min < a_x_min:
+        return 0 if b_x_max < a_x_min else min(a_x_max, b_x_max) - a_x_min
+    else:
+        return 0 if a_x_max < b_x_min else min(a_x_max, b_x_max) - b_x_min
+
+
 def test():
     archive_path = Path("../../data/cinemri_mha/rijnstate")
     subset_path = Path("../../data/cinemri_mha/segmentation_subset")

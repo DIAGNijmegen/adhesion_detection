@@ -11,7 +11,6 @@ from cinemri.utils import get_patients, Patient
 from data_conversion import convert_2d_image_to_pseudo_3d
 from visceral_slide import VisceralSlideDetector
 import matplotlib.pyplot as plt
-from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY
 from segmentation import segment_abdominal_cavity
@@ -20,6 +19,8 @@ from segmentation import segment_abdominal_cavity
 NNUNET_INPUT_FOLDER = "nnUNet_input"
 PREDICTED_MASKS_FOLDER = "nnUNet_masks"
 RESULTS_FOLDER = "visceral_slide"
+
+# TODO: probably also add an option to load saved segmentation since it I run it for the whole dataset
 
 
 def get_patients_ids(train_test_split, mode):
@@ -210,7 +211,7 @@ def compute_visceral_slide(images_path,
                 exp_mask_path = masks_path / (slice_name + "_exp.nii.gz")
                 exp_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(exp_mask_path)))[0]
 
-                x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(exp_frame, exp_mask, insp_frame, insp_mask)
+                x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(insp_frame, insp_mask, exp_frame, exp_mask)
 
                 # Save pickle and figure
                 pickle_path = slice_path / "visceral_slide.pkl"
@@ -218,24 +219,20 @@ def compute_visceral_slide(images_path,
                 with open(pickle_path, "w+b") as file:
                     pickle.dump(slide_dict, file)
 
-                color_matrix = np.zeros((len(x), 4))
-                slide_normalized = np.abs(visceral_slide) / np.max(np.abs(visceral_slide))
-                for i in range(len(x)):
-                    color_matrix[i, 0] = 1
-                    color_matrix[i, 3] = slide_normalized[i]
+                slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
 
                 plt.figure()
-                plt.imshow(exp_frame, cmap="gray")
-                plt.scatter(x, y, c=color_matrix)
+                plt.imshow(insp_frame, cmap="gray")
+                plt.scatter(x, y, s=5, c=slide_normalized, cmap="jet")
                 plt.axis('off')
                 plt.savefig(slice_path / "visceral_slide_overlayed.png", bbox_inches='tight', pad_inches=0)
 
                 fig = plt.figure()
                 ax = fig.add_subplot(111)
-                ax.scatter(x, exp_frame.shape[0] - y, c=color_matrix)
+                ax.scatter(x, insp_frame.shape[0] - y, s=5, c=slide_normalized, cmap="jet")
                 ax.set_aspect(1)
-                plt.xlim((0, exp_frame.shape[1]))
-                plt.ylim((0, exp_frame.shape[0]))
+                plt.xlim((0, insp_frame.shape[1]))
+                plt.ylim((0, insp_frame.shape[0]))
                 plt.axis('off')
                 fig.savefig(slice_path / "visceral_slide.png", bbox_inches='tight', pad_inches=0)
 
@@ -254,7 +251,7 @@ def compute(argv):
                              "computation and in which the computed visceral slide will be saved")
     args = parser.parse_args(argv)
 
-    data_path = Path(args.data)
+    data_path = Path(args.work_dir)
     images_path = data_path / NNUNET_INPUT_FOLDER
     masks_path = data_path / PREDICTED_MASKS_FOLDER
     output_path = data_path / RESULTS_FOLDER

@@ -5,17 +5,17 @@ from pathlib import Path
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, PATIENT_ANNOTATIONS_FILE_NAME, \
     BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from cinemri.config import ARCHIVE_PATH
-from cinemri.contour import get_contour
+from cinemri.contour import get_contour, get_abdominal_wall_coord, AbdominalContourPart
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 import cv2
 import numpy as np
 from cinemri.utils import CineMRISlice
-from cinemri.contour import get_anterior_wall_coord
 from enum import Enum, unique
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
+from utils import interval_overlap
 
 # Folder to save visualized annotations
 ANNOTATIONS_VIS_FOLDER = "vis_annotations"
@@ -50,6 +50,27 @@ class Adhesion:
     def center(self):
         return self.origin_x + round(self.width / 2), self.origin_y + round(self.height / 2)
 
+    @property
+    def max_x(self):
+        return self.origin_x + self.width
+
+    @property
+    def max_y(self):
+        return self.origin_y + self.height
+
+    def adjust_size(self, min_width=15, min_height=15):
+
+        center = self.center
+
+        if self.width < min_width:
+            self.origin_x = max(center[0] - round(min_width / 2), 0)
+            self.width = min_width
+
+        if self.height < min_height:
+            self.origin_y = max(center[1] - round(min_height / 2), 0)
+            self.height = min_height
+
+
     def contains_point(self, x, y, tolerance=0):
 
         """ Check if a point belongs to the adhesion
@@ -83,6 +104,28 @@ class Adhesion:
 
         return intersects
 
+    def iou(self, adhesion):
+        """
+        Computes intersection over union with another adhesion
+
+        Parameters
+        ----------
+        adhesion : Adhesion
+           An adhesion annotation with which to compute IoU
+
+        Returns
+        -------
+        iou : float
+        """
+        intersect_w = interval_overlap([self.origin_x, self.max_x], [adhesion.origin_x, adhesion.max_x])
+        intersect_h = interval_overlap([self.origin_y, self.max_y], [adhesion.origin_y, adhesion.max_y])
+
+        intersect = intersect_w * intersect_h
+        union = self.width * self.height + adhesion.width * adhesion.height - intersect
+
+        return float(intersect) / union
+
+
 
 class AdhesionAnnotation:
 
@@ -104,15 +147,19 @@ class AdhesionAnnotation:
     def slice_id(self):
         return self.slice.slice_id
 
+    @property
+    def full_id(self):
+        return self.slice.full_id
+
     def build_path(self, relative_path, extension=".mha"):
         return Path(relative_path) / self.patient_id / self.scan_id / (self.slice_id + extension)
 
 
 # Assume we have expanded annotation with bb types
-def load_bounding_boxes(annotations_path,
-                        adhesion_types=[AdhesionType.anteriorWall.value,
-                                        AdhesionType.abdominalCavityContour.value,
-                                        AdhesionType.inside.value]):
+def load_annotations(annotations_path,
+                     adhesion_types=[AdhesionType.anteriorWall.value,
+                                     AdhesionType.abdominalCavityContour.value,
+                                     AdhesionType.inside.value]):
 
     with open(annotations_path) as annotations_file:
         annotations_dict = json.load(annotations_file)
@@ -295,7 +342,7 @@ def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation
                     # For all frames in the slice check if any intersects with adhesion annotation
                     for mask in slice_mask:
                         x, y, _, _ = get_contour(mask)
-                        x_anterior, y_anterior = get_anterior_wall_coord(x, y)
+                        x_anterior, y_anterior = get_abdominal_wall_coord(x, y)
                         intersect_anterior_wall = adhesion.intersects_contour(x_anterior, y_anterior)
                         if intersect_anterior_wall:
                             intersect_contour = True
@@ -456,7 +503,7 @@ def vis_annotation_and_vs(archive_path,
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     
     # load annotations
-    annotations = load_bounding_boxes(annotations_path)
+    annotations = load_annotations(annotations_path)
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
@@ -502,7 +549,7 @@ def vis_annotation_and_vs1(archive_path,
     masks_path = archive_path / "full_segmentation" / "merged_segmentation"
 
     # load annotations
-    annotations = load_bounding_boxes(annotations_path)
+    annotations = load_annotations(annotations_path)
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
@@ -570,7 +617,7 @@ def annotations_statistics(archive_path,
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load annotations
-    annotations = load_bounding_boxes(annotations_path)
+    annotations = load_annotations(annotations_path)
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
@@ -619,7 +666,7 @@ def annotations_statistics(archive_path,
                 # For all frames in the slice check if any intersects with adhesion annotation
                 for mask in slice_mask:
                     x, y, _, _ = get_contour(mask)
-                    x_anterior, y_anterior = get_anterior_wall_coord(x, y)
+                    x_anterior, y_anterior = get_abdominal_wall_coord(x, y)
                     intersect_anterior_wall = adhesion.intersects_contour(x_anterior, y_anterior)
                     if intersect_anterior_wall:
                         intersect_contour = True
@@ -646,12 +693,15 @@ def annotations_statistics(archive_path,
 
 # A function to examine the detected front wall for all annotation for each
 # abdominal cavity contour is available at the moment
-def test_anterior_wall_detection(archive_path, visceral_slide_path):
+def test_abdominal_wall_detection(archive_path, visceral_slide_path, target_path, type=AbdominalContourPart.anterior_wall):
+
+    target_path.mkdir(exist_ok=True)
+
     annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load annotations
-    annotations = load_bounding_boxes(annotations_path)
+    annotations = load_annotations(annotations_path)
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
@@ -681,15 +731,119 @@ def test_anterior_wall_detection(archive_path, visceral_slide_path):
             insp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(inspiration_frame_path)))[insp_frame]
 
             slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
-            verify_anterior_wall(x, y, insp_frame, slice_id)
+            verify_abdominal_wall(x, y, insp_frame, slice_id, target_path, type)
+
+
+
+def get_connected_regions(contour_subset_coords, connectivity_threshold=5):
+    """
+    Given a subset of contour coordinates returns a list of connected regions
+    considering the specified connectivity threshold
+
+    Parameters
+    ----------
+    contour_subset_coords : list of list
+       A list containing a subset of coordinates of a contour
+    connectivity_threshold : int, default=5
+       Threshold which indicates the maximum difference in x component allowed between
+       the subsequent coordinates of a contour to be considered connected
+
+    Returns
+    -------
+    regions : list of list
+       A list of start and end coordinates of all connected regions
+
+    """
+
+    regions = []
+    region_start = contour_subset_coords[0]
+    coord_prev = region_start
+    coords_num = contour_subset_coords.shape[0]
+    for index in range(1, coords_num):
+        coord_curr = contour_subset_coords[index]
+        if abs(coord_curr[1] - coord_prev[1]) > connectivity_threshold:
+            regions.append([region_start, coord_prev])
+            region_start = coord_curr
+        coord_prev = coord_curr
+
+    regions.append([region_start, contour_subset_coords[-1]])
+
+    return regions
+
+
+def get_abdominal_contour_top(x, y, connectivity_threshold=5):
+    """
+    Extracts coordinates of the abdominal wall of the specified type from abdominal cavity contour
+
+    Parameters
+    ----------
+    x, y : list of int
+       x-axis and y-axis components of abdominal cavity contour
+    type : AbdominalContourPart
+       indicates which abdominal wall to detect, anterior or posterior
+
+    connectivity_threshold : int, default=5
+       Threshold which indicates the maximum difference in x component allowed between
+       the subsequent coordinates of a contour to be considered connected
+
+    Returns
+    -------
+    x_wall, y_wall : ndarray of int
+       x-axis and y-axis components of abdominal wall
+    """
+
+    coords = np.column_stack((x, y))
+    # Get unique x coordinates
+    x_unique = np.unique(x)
+
+    # For each unique y find the x on the specified side of abdominal cavity contour
+    y_top = []
+    for x_current in x_unique:
+        # Get all x values of coordinates which have y = y_current
+        ys = [coord[1] for coord in coords if coord[0] == x_current]
+        y_top.append(sorted(ys)[0])
+
+    # Unique y coordinates and the corresponding x coordinates
+    # should give good approximation of the abdominal wall
+    y_top = np.array(y_top)
+    top_contour_coords = np.column_stack((x_unique, y_top))
+
+    regions = get_connected_regions(top_contour_coords, connectivity_threshold)
+
+    # Discard regions below the middle y
+    y = np.array(y)
+    middle_y = (y.max() - y.min()) / 2
+    top_regions = []
+    for region in regions:
+        # Check that min and max y of a region is above middle_y
+        if region[0][1] < middle_y and region[1][1] < middle_y:
+            top_regions.append(region)
+
+    # Find and return the longest region
+    top_regions_len = np.array([(region[1][0] - region[0][0] + 1) for region in top_regions])
+    longest_region_ind = np.argmax(top_regions_len)
+    longest_region = top_regions[longest_region_ind]
+
+    longest_region_start = longest_region[0]
+    longest_region_end = longest_region[1]
+
+    # The contour returned by cinemri.contour.get_contour() always starts from
+    # the lowest-left point of the contour, so when we determine the top part
+    # we can safely expect that by using the start and end point
+    # of the longest top region we will get a connected area from the contour coordinates
+
+    longest_region_start_ind = np.where((coords == longest_region_start).all(axis=1))[0][0]
+    longest_region_end_ind = np.where((coords == longest_region_end).all(axis=1))[0][0]
+    top_coords = coords[longest_region_start_ind:longest_region_end_ind]
+
+    return top_coords[:, 0], top_coords[:, 1]
+
 
 
 # Allows to visually evaluate quality of the detection of front abdominal wall
 # By plotting abdominal cavity contour over the frame and the detected front wall over the frame
 # next to each other
-def verify_anterior_wall(x, y, exp_frame, slice_id):
-    out_path = Path("anterior_wall_results")
-    out_path.mkdir(exist_ok=True)
+def verify_abdominal_wall(x, y, exp_frame, slice_id, target_path, type=AbdominalContourPart.anterior_wall):
 
     fig = plt.figure()
     ax = fig.add_subplot(121)
@@ -697,14 +851,15 @@ def verify_anterior_wall(x, y, exp_frame, slice_id):
     plt.axis('off')
     ax.scatter(x, y, s=4, color="r")
 
-    x_anterior, y_anterior = get_anterior_wall_coord(x, y)
+    x_abdominal_wall, y_abdominal_wall = get_abdominal_contour_top(x, y)
+    #x_abdominal_wall, y_abdominal_wall = get_abdominal_wall_coord(x, y, type)
 
     ax = fig.add_subplot(122)
     plt.imshow(exp_frame, cmap="gray")
     plt.axis('off')
-    ax.scatter(x_anterior, y_anterior, s=4, color="r")
+    ax.scatter(x_abdominal_wall, y_abdominal_wall, s=4, color="r")
     plt.axis('off')
-    plt.savefig(out_path / (slice_id + ".png"), bbox_inches='tight', pad_inches=0)
+    plt.savefig(target_path / (slice_id + ".png"), bbox_inches='tight', pad_inches=0)
     plt.close()
 
 
@@ -718,15 +873,17 @@ def test():
 
     bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
 
-    #annotations = load_bounding_boxes(bb_annotation_path)
+    #annotations = load_annotations(bb_annotation_path)
     #save_annotated_gifs(annotations, archive_path)
     #vis_annotation_and_vs(archive_path, visceral_slide_path, output_path)
     #vis_annotation_and_vs1(archive_path, output_path)
 
-    #test_anterior_wall_detection(archive_path, visceral_slide_path)
+    test_abdominal_wall_detection(archive_path, visceral_slide_path, Path("contour_top_results_disc_filled"))
+    #test_abdominal_wall_detection(archive_path, visceral_slide_path, Path("anterior_wall_results"))
+    #test_abdominal_wall_detection(archive_path, visceral_slide_path, Path("posterior_wall_results"), AbdominalContourPart.posterior_wall)
     #annotations_statistics(archive_path, full_segmentation_path, visceral_slide_path)
 
-    #annotations = load_bounding_boxes(bb_expanded_annotation_path, adhesion_types=[3])
+    #annotations = load_annotations(bb_expanded_annotation_path, adhesion_types=[3])
     #print(len(annotations))
 
     #extract_adhesions_metadata(archive_path, bb_annotation_path, full_segmentation_path)
