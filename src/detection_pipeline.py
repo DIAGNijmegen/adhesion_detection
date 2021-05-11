@@ -296,7 +296,7 @@ def visualize_gt_vs_prediction(annotation, bounding_boxes, x, y, slide_normalize
 
 
 def predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output_path,
-                          threshold=0.2, min_region_len=3):
+                          threshold=0.2, min_region_len=5):
 
     output_path.mkdir(exist_ok=True)
 
@@ -470,7 +470,7 @@ def prediction_by_threshold(annotations, visceral_slide_path):
 
     # vary threshold level
     # Get predictions by visceral slide level threshold
-    predictions = predict(full_ids, visceral_slide_dict, mean_width, mean_height, 0.1, 5)
+    predictions = predict(full_ids, visceral_slide_dict, mean_width, mean_height, 0.2, 5)
 
     archive_path = Path(ARCHIVE_PATH)
     images_path = archive_path / IMAGES_FOLDER
@@ -505,7 +505,7 @@ def test():
     output = Path("threshold_prediction")
     
     #annotations_stat(annotations)
-    #predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output)
+    predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output)
     prediction_by_threshold(annotations, visceral_slide_path)
 
     #bb_with_threshold(annotations, visceral_slide_path, inspexp_data, images_path)

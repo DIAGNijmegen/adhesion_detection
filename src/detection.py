@@ -7,7 +7,7 @@
 # 5. See if there are any insights from YOLOv5 training results
 # 6. Build custom pipeline
 
-
+import random
 import json
 import shutil
 from pathlib import Path
@@ -21,6 +21,7 @@ from cinemri.contour import get_contour
 from cinemri.utils import get_image_orientation
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, BB_ANNOTATIONS_EXPANDED_FILE
 from skimage import io
+from sklearn.model_selection import KFold
 
 # detection_input_whole folder contains adhesions of all types
 # detection_input_contour folder contains adhesions along the abdominal cavity contour
@@ -439,7 +440,182 @@ def npy_to_jpg(npy_path,
         io.imsave(str(jpg_file_path), rgb_image)
 
 
+# Generates empty images to verifi that YOLO / other model is being trained reasonably
+def generate_zero_input(img_path, output_folder):
+    output_folder.mkdir(exist_ok=True)
+
+    images_glob = img_path.glob("*.jpg")
+
+    for file_path in images_glob:
+        img = io.imread(str(file_path))
+        new_img = np.zeros(img.shape)
+
+        output_file_path = output_folder / file_path.name
+        io.imsave(str(output_file_path), new_img)
+
+
+# make train/val/test splits
+# 20 % test set
+# 20 % validation set
+# hierarchy
+# test
+#   images
+#   labels
+# train
+#   train
+#      images
+#      labels
+#   val
+#      images
+#      labels
+def data_split(data_path, archive_path, annotations_path, output_path, train_proportion=0.8, folds_num=5):
+
+    output_path.mkdir()
+
+    image_path = data_path / "images" / "train"
+    labels_path = data_path / "labels" / "train"
+
+    # Get a list of slices for negative patients
+    negative_patients = load_negative_patients(archive_path)
+    negative_ids = []
+
+    # Extract slices, check if the orientation is correct
+    for patient in negative_patients:
+        full_ids = [cinemri_slice.full_id for cinemri_slice in patient.cinemri_slices]
+        negative_ids = negative_ids + full_ids
+
+    # Get a list of slices with annotations
+    annotated_slices = load_annotated_slices(annotations_path)
+    positive_ids = [cinemri_slice.full_id for cinemri_slice in annotated_slices]
+
+    # read ids in the full dataset
+    images_glob = image_path.glob("*.jpg")
+    dataset_ids = [file.stem for file in images_glob]
+
+    # filter negative and postive slices lists with a list of slices with annotations
+    negative_ids = [full_id for full_id in negative_ids if full_id in dataset_ids]
+    positive_ids = [full_id for full_id in positive_ids if full_id in dataset_ids]
+
+    # split positive and negative separately and extract the test set
+    random.shuffle(negative_ids)
+    random.shuffle(positive_ids)
+
+    # Split negative
+    train_size_neg = round(len(negative_ids) * train_proportion)
+    train_negative = negative_ids[:train_size_neg]
+    test_negative = negative_ids[train_size_neg:]
+
+    # Split positive
+    train_size_pos = round(len(positive_ids) * train_proportion)
+    train_positive = positive_ids[:train_size_pos]
+    test_positive = positive_ids[train_size_pos:]
+
+    split_dict = {}
+
+    # Save test set
+    test_ids = test_negative + test_positive
+    split_dict["test"] = test_ids
+
+    test_set_path = output_path / "test"
+    test_set_path.mkdir()
+
+    test_images_path = test_set_path / "images"
+    test_images_path.mkdir()
+
+    test_labels_path = test_set_path / "labels"
+    test_labels_path.mkdir()
+
+    for test_id in test_ids:
+        shutil.copy(image_path / (test_id + ".jpg"), test_images_path)
+        label_path = labels_path / (test_id + ".txt")
+        if label_path.exists():
+            shutil.copy(label_path, test_labels_path)
+
+    # Split training set into folds
+    kf = KFold(n_splits=folds_num)
+    folds = []
+
+    folds_train = []
+    folds_val = []
+    train_negative = np.array(train_negative)
+    # Handle negatives
+    for train_index, val_index in kf.split(train_negative):
+        fold_train_ids = train_negative[train_index]
+        fold_val_ids = train_negative[val_index]
+
+        folds_train.append(fold_train_ids)
+        folds_val.append(fold_val_ids)
+
+    train_positive = np.array(train_positive)
+    # Handle positives
+    for index, (train_index, val_index) in enumerate(kf.split(train_positive)):
+        fold_train_ids = train_positive[train_index]
+        fold_val_ids = train_positive[val_index]
+
+        folds_train[index] = np.concatenate((folds_train[index], fold_train_ids))
+        folds_val[index] = np.concatenate((folds_val[index], fold_val_ids))
+
+    # Save folds
+    index = 1
+    train_set_path = output_path / "train"
+    train_set_path.mkdir()
+    for train_ids, val_ids in zip(folds_train, folds_val):
+        fold = {"train": train_ids.tolist(), "val": val_ids.tolist()}
+        folds.append(fold)
+
+        # Create fold folder
+        fold_dir = train_set_path / "fold{}".format(index)
+        fold_dir.mkdir(exist_ok=True)
+
+        # Create images folder
+        fold_images_path = fold_dir / "images"
+        fold_images_path.mkdir()
+
+        # Create labels folder
+        fold_labels_path = fold_dir / "labels"
+        fold_labels_path.mkdir()
+
+        # Create train folders
+        train_images_path = fold_images_path / "train"
+        train_images_path.mkdir()
+
+        train_labels_path = fold_labels_path / "train"
+        train_labels_path.mkdir()
+
+        # Copy files
+        for train_id in train_ids:
+            shutil.copy(image_path / (train_id + ".jpg"), train_images_path)
+            label_path = labels_path / (train_id + ".txt")
+            if label_path.exists():
+                shutil.copy(label_path, train_labels_path)
+
+        # Create validation folders
+        val_images_path = fold_images_path / "val"
+        val_images_path.mkdir()
+
+        val_labels_path = fold_labels_path / "val"
+        val_labels_path.mkdir()
+
+        # Copy files
+        for val_id in val_ids:
+            shutil.copy(image_path / (val_id + ".jpg"), val_images_path)
+            label_path = labels_path / (val_id + ".txt")
+            if label_path.exists():
+                shutil.copy(label_path, val_labels_path)
+
+        index += 1
+
+    split_dict["train"] = folds
+    split_file_path = output_path / "detection_split.json"
+
+    with open(split_file_path, "w") as f:
+        json.dump(split_dict, f)
+
+
 if __name__ == '__main__':
+    np.random.seed(99)
+    random.seed(99)
+
     archive_path = Path(ARCHIVE_PATH)
     annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     inspexp_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
@@ -457,6 +633,13 @@ if __name__ == '__main__':
 
     detection_contour_npy_path = archive_path / "detection_input_whole" / "full"
     detection_contour_jpg_path = archive_path / "detection_input_whole" / "full_jpg1"
+
+    adhesions_input = Path("../../data/adhesions_local")
+    output_path = Path("../../data/adhesions_local_cv")
+
+    data_split(adhesions_input, archive_path, annotations_path, output_path)
+
+
     
     #npy_to_jpg(detection_contour_npy_path, detection_contour_jpg_path)
 
