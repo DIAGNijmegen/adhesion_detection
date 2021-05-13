@@ -15,6 +15,7 @@ from cinemri.utils import get_patients, get_image_orientation
 import utils
 from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
+from config import SEPARATOR
 
 
 # TODO: see if there is loss in quality when converting to .png
@@ -322,15 +323,15 @@ def convert_to_diag_nnunet(segmentation_path,
        A path to a segmentation subset of cine-MRI data
     target_path : Path
        A destination path to save converted files
-    images_folder : str
+    images_folder : str, default="images"
        A name of a folder that contains scans inside the archive
-    masks_folder : str
+    masks_folder : str, default="masks"
        A name of a folder that contains masks inside the archive
-    train_folder : str
+    train_folder : str, default="train"
        A name of a folder with training data
-    test_folder : str
+    test_folder : str, default="test"
        A name of a folder with test data
-    train_split : float
+    train_split : float, default=0.8
        A share of the data to use for training
     """
 
@@ -400,23 +401,29 @@ def to_diag_nnunet(argv):
                            train_split)
 
 
-def mha_to_niigz(mha_path,
-                 target_folder):
-    img = sitk.ReadImage(str(mha_path))
-    niigz_path = target_folder / (mha_path.stem + "_0000.nii.gz")
-    sitk.WriteImage(img, str(niigz_path))
-
-
 def extract_frames(slice_path,
                    slice_id,
                    target_path_images,
                    target_path_metadata):
+    """
+    Extracts frame of a cine-MRI slice, converts each frame to a pseudo 3D image to meet nn-Unet input requirements
+    and saves the extracted frames and slice metadata to the specified locations
+    Parameters
+    ----------
+    slice_path : Path
+       A path to a cine-MRI slice in format "patientID_scanID_sliceID"
+    slice_id : str
+       A full id of a slice
+    target_path_images : Path
+       A path where to save the extracted frames
+    target_path_metadata : Path
+       A path where to save the slice metadata
+    """
 
     img = sitk.ReadImage(str(slice_path))
     depth = img.GetDepth()
-    direction = img.GetDirection()
+    # Check that a slice is valid
     if depth >= 30 and get_image_orientation(img) == "ASL":
-        # TODO: add age and sex
         metadata = {
                     "Spacing": img.GetSpacing(),
                     "Origin": img.GetOrigin(),
@@ -425,6 +432,13 @@ def extract_frames(slice_path,
                     "StudyInstanceUID": img.GetMetaData("StudyInstanceUID"),
                     "SeriesInstanceUID": img.GetMetaData("SeriesInstanceUID")
                     }
+
+        if metadata.HasMetaDataKey("Sex"):
+            metadata["Sex"] = img.GetMetaData("Sex")
+
+        if metadata.HasMetaDataKey("Age"):
+            metadata["Age"] = img.GetMetaData("Age")
+
         metadata_file_path = target_path_metadata / (slice_id + ".json")
         with open(metadata_file_path, "w") as f:
             json.dump(metadata, f)
@@ -432,6 +446,7 @@ def extract_frames(slice_path,
         img_array = sitk.GetArrayFromImage(img)
         for ind, frame in enumerate(img_array):
             frame_2d = convert_2d_image_to_pseudo_3d(frame)
+            # 0000 suffix is necessary for nn-UNet
             niigz_path = target_path_images / (slice_id + "_" + str(ind) + "_0000.nii.gz")
             sitk.WriteImage(frame_2d, str(niigz_path))
     else:
@@ -439,25 +454,44 @@ def extract_frames(slice_path,
 
 
 # Scans have adidtional "_0000" suffix, masks do not have it
-def merge_frames(slice_glob_pattern,
-                 slice_name,
+def merge_frames(slice_full_id,
                  frames_folder,
                  target_folder,
                  metadata_path,
                  masks=True):
+    """
+    Merges frames extracted from a cine-MRI slice into the full slice or predicted segmentation masks into
+    a single file
 
-    frame_files_glob = frames_folder.glob(slice_glob_pattern)
-    image = []
-    # Sort by file index
+    Parameters
+    ----------
+    slice_full_id : str
+       A full id of a cine-MRI slice in format "patientID_scanID_sliceID"
+    frames_folder : Path
+       A path to a folder containing frames of a cine-MRI slice
+    target_folder : Path
+       A path to a folder where to save a merged cine-MRI slice
+    metadata_path : Path
+       A path to a folder containing metadata of a cine-MRI slice
+    masks : bool, default=True
+       A flag indicating whether frames are from a cine-MRI slice or predicted masks
+    """
+
+    frame_files_glob = frames_folder.glob(slice_full_id + "*.nii.gz")
+    # Sort by file index to merge the images in the correct order
     sort_index = -1 if masks else -2
     files = sorted([file for file in frame_files_glob], key=lambda file: int(file.name[:-7].split("_")[sort_index]))
+
+    image = []
     for frame_file in files:
         frame = sitk.ReadImage(str(frame_file))
         image.append(sitk.GetArrayFromImage(frame)[0])
 
     image = np.array(image).astype(np.uint8)
-    image_path = target_folder / (slice_name + ".mha")
+    slice_id = slice_full_id.split(SEPARATOR)
+    image_path = target_folder / (slice_id + ".mha")
     sitk_image = sitk.GetImageFromArray(image)
+
     # Extract and assign metadata
     with open(metadata_path) as metadata_file:
         metadata = json.load(metadata_file)
@@ -467,11 +501,28 @@ def merge_frames(slice_glob_pattern,
     sitk_image.SetMetaData("PatientID", metadata["PatientID"])
     sitk_image.SetMetaData("StudyInstanceUID", metadata["StudyInstanceUID"])
     sitk_image.SetMetaData("SeriesInstanceUID", metadata["SeriesInstanceUID"])
-    sitk.WriteImage(sitk_image, str(image_path))
+
+    try:
+        sitk_image.SetMetaData("Sex", metadata["Sex"])
+        sitk_image.SetMetaData("Age", metadata["Age"])
+    except:
+        pass
 
 
 def save_visualised_prediction(images_path, predictions_path, target_path, save_gif=True):
-    """Visualize the predicted mask as overlay on the frame and saved as png file"""
+    """
+    Visualises the predicted masks as overlays on the frames and saves as a png file
+    Parameters
+    ----------
+    images_path : Path
+       A path to a folder that contains frames extracted from a cine-MRI slice
+    predictions_path : Path
+       A path to a folder that contains predicted segmentation masks
+    target_path : Path
+       A path to a folder to save visualized prediction
+    save_gif : bool, default=True
+       A boolean flag indicating whether visualized prediction should be merged into a gif and saved
+    """
 
     target_path.mkdir(exist_ok=True)
 
@@ -507,8 +558,6 @@ def save_visualised_prediction(images_path, predictions_path, target_path, save_
             str(target_path) + "/" + frame_id[:-3] + ".gif",
         ]
         subprocess.run(command)
-
-
 
 
 def test():

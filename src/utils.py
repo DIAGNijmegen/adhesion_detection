@@ -102,6 +102,17 @@ def find_unique_shapes(archive_path, images_folder="images"):
 
 
 def interval_overlap(interval_a, interval_b):
+    """
+    Calculates a length of an overlap of two intervals
+    Parameters
+    ----------
+    interval_a, interval_b : list of float
+       Start and end coordinates of the interval [min, max]
+
+    Returns
+    -------
+       A length of an overlap between intervals
+    """
     a_x_min, a_x_max = interval_a
     b_x_min, b_x_max = interval_b
 
@@ -109,6 +120,36 @@ def interval_overlap(interval_a, interval_b):
         return 0 if b_x_max < a_x_min else min(a_x_max, b_x_max) - a_x_min
     else:
         return 0 if a_x_max < b_x_min else min(a_x_max, b_x_max) - b_x_min
+
+
+def select_segmentation_patients_subset(archive_path, target_path, n=10):
+    """
+    Randomly samples a subset of patient for which to perform abdominal cavity segmentation
+    Parameters
+    ----------
+    archive_path : Path
+       A path to the full cine-MRI data archive
+    target_path : Path
+       A path where to create folders for selected patients
+    n : int, default=10
+       A sample size
+    """
+
+    target_path.mkdir(parents=True, exist_ok=True)
+
+    patients = get_patients(archive_path)
+    patients_ids = [patient.id for patient in patients]
+
+    ids_to_segm = random.sample(patients_ids, n)
+    print("Patients in the sampled segmentation subset: {}".format(ids_to_segm))
+
+    patients_subset = [patient for patient in patients if patient.id in ids_to_segm]
+    for patient in patients_subset:
+        patient_dir = target_path / patient.id
+        patient_dir.mkdir()
+        for scan_id in patient.scan_ids:
+            scan_dir = patient_dir / scan_id
+            scan_dir.mkdir()
 
 
 def test():
