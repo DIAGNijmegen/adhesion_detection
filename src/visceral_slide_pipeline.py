@@ -21,9 +21,21 @@ PREDICTED_MASKS_FOLDER = "nnUNet_masks"
 RESULTS_FOLDER = "visceral_slide"
 
 # TODO: probably also add an option to load saved segmentation since it I run it for the whole dataset
-
-
 def get_patients_ids(train_test_split, mode):
+    """
+    Filters patients ids based on the data split for nn-UNet training and mode ("all", "train", "test")
+    Parameters
+    ----------
+    train_test_split : dict
+       A dictionary containing train/test split used for nn-UNet training and evaluation
+    mode : str
+       A string id indicating which subset of patients to keep
+
+    Returns
+    -------
+    patients_ids : list
+       A list of patient ids
+    """
 
     if mode == "all":
         patients_ids = train_test_split[TRAIN_PATIENTS_KEY] + train_test_split[TEST_PATIENTS_KEY]

@@ -1,18 +1,18 @@
 import json
 import pickle
 import subprocess
+from enum import Enum, unique
 from pathlib import Path
+import numpy as np
+import cv2
+import SimpleITK as sitk
+import matplotlib.pyplot as plt
+from matplotlib.patches import Rectangle
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, PATIENT_ANNOTATIONS_FILE_NAME, \
     BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import get_contour, get_abdominal_wall_coord, AbdominalContourPart
-import SimpleITK as sitk
-import matplotlib.pyplot as plt
-from matplotlib.patches import Rectangle
-import cv2
-import numpy as np
 from cinemri.utils import CineMRISlice
-from enum import Enum, unique
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
 from utils import interval_overlap
@@ -38,8 +38,28 @@ class AdhesionType(Enum):
 
 
 class Adhesion:
+    """
+    An object representing an adhesion
+    Attributes
+    ----------
+       origin_x, origin_y : float
+          Origin of a bounding box by x and y axes
+       width, height : float
+          Width and height of a bounding box
+       type : AdhesionType
+          A type of adhesion w.r.t. its location
+    """
+
 
     def __init__(self, bounding_box, type=AdhesionType.unset):
+        """
+        Parameters
+        ----------
+        bounding_box : list of float
+           A list containing origin of a bounding box and its width and height [origin_x, origin_y, width, height]
+        type : AdhesionType
+           A type of adhesion w.r.t. its location
+        """
         self.origin_x = bounding_box[0]
         self.origin_y = bounding_box[1]
         self.width = bounding_box[2]
@@ -59,6 +79,15 @@ class Adhesion:
         return self.origin_y + self.height
 
     def adjust_size(self, min_width=15, min_height=15):
+        """
+        Checks whether width and height of an adhesion bounding box is less than the minimum values
+        and if it is, sets the size of a bounding box to the specified minimum. The center of the bounding box is kept
+        and the origin is shifted accordingly
+        Parameters
+        ----------
+        min_width, min_height : float
+           A minimum width and height required for a bounding box
+        """
 
         center = self.center
 
@@ -77,8 +106,7 @@ class Adhesion:
 
         Parameters
         ----------
-        x : a point coordinate on x axis
-        y: a point coordinate on y axis
+        x, y : a point coordinates by x and y axes
         tolerance: extra margin around the bounding box to register a hit
         """
         x_min, x_max = self.origin_x - tolerance, self.origin_x + self.width + tolerance
@@ -87,13 +115,17 @@ class Adhesion:
         return x_min <= x <= x_max and y_min <= y <= y_max
 
     def intersects_contour(self, contour_x, contour_y, tolerance=0):
-        """ Check if a point belongs to the adhesion
+        """ Check if a point belongs to the adhesion bounding box
 
         Parameters
         ----------
-        contour_x : a list of contour coordinates on x axis
-        contour_y: a list of contour coordinates on y axis
+        contour_x, contour_y : a list of contour coordinates by x and y axies
         tolerance: extra margin around the bounding box to register a hit
+
+        Returns
+        -------
+        intersects : bool
+           A boolean flag indicating whether a bounding box intersects a contour
         """
 
         intersects = False
@@ -116,6 +148,7 @@ class Adhesion:
         Returns
         -------
         iou : float
+           Calculated intersection over union
         """
         intersect_w = interval_overlap([self.origin_x, self.max_x], [adhesion.origin_x, adhesion.max_x])
         intersect_h = interval_overlap([self.origin_y, self.max_y], [adhesion.origin_y, adhesion.max_y])
@@ -126,10 +159,28 @@ class Adhesion:
         return float(intersect) / union
 
 
-
 class AdhesionAnnotation:
+    """
+    An object representing an adhesion annotation
+    Attributes
+    ----------
+        slice : CineMRISlice
+            A cine-MRI slice for which an annotation is made
+        adhesions : list of Adhesion
+            A list of adhesions specified in the annotation
+    """
 
     def __init__(self, patient_id, scan_id, slice_id, bounding_boxes, types=None):
+        """
+        Parameters
+        ----------
+        patient_id, scan_id, slice_id : str
+           IDs of a patient, scan and slices of an annotation
+        bounding_boxes : list of float
+           A list of bounding boxes of annotated adhesions
+        types : list of AdhesionType, optional
+           A list of adhesion types corresponding to bouding boxes
+        """
         self.slice = CineMRISlice(patient_id, scan_id, slice_id)
         if types is None:
             types = [AdhesionType.unset for _ in bounding_boxes]
@@ -152,7 +203,22 @@ class AdhesionAnnotation:
         return self.slice.full_id
 
     def build_path(self, relative_path, extension=".mha"):
-        return Path(relative_path) / self.patient_id / self.scan_id / (self.slice_id + extension)
+        """
+        Builds path to a file containing a cine-MRI slice for which annotation is made
+        Parameters
+        ----------
+        relative_path : Path
+           A location of a cine-MRI slice
+        extension : str
+           Cine-MRI slice file extension
+
+        Returns
+        -------
+        path : Path
+           A path to a cine-MRI scan
+
+        """
+        return relative_path / self.patient_id / self.scan_id / (self.slice_id + extension)
 
 
 # Assume we have expanded annotation with bb types
@@ -285,22 +351,37 @@ def load_negative_patients(archive_path):
 
 # To quickly know which patients have bb annotations and which have binary annotations
 def extract_annotations_metadata(archive_path):
+    """
+    Extract annotation type for each patient and saves as a metadata file.
+    Possible annotation types are in AnnotationType enum. A new metadata file name is ANNOTATIONS_TYPE_FILE
+    and it is saved inside the metadata folder of an archive.
+
+    Parameters
+    ----------
+    archive_path : Path
+       A path to the full cine-MRI data archive
+    """
     all_patients = get_patients(archive_path)
     all_patient_ids = [p.id for p in all_patients]
 
     annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
+
+    # Extract ids of patients diagnosed as positive and negative in a reader study
     reader_study_patient_ids = load_patient_ids_reader_study(annotations_path)
     bb_patient_ids = load_patients_with_bb_ids(annotations_path)
-
     reader_study_negative = list(set(reader_study_patient_ids).difference(set(bb_patient_ids)))
 
+    # Extract patients which were not included into the reader study and are negative
+    # according to the original report
     report_only_patient_ids = list(set(all_patient_ids).difference(set(reader_study_patient_ids)))
     patient_annotation_path = archive_path / METADATA_FOLDER / PATIENT_ANNOTATIONS_FILE_NAME
     report_negative_patient_ids = load_negative_ids_rijnstate(patient_annotation_path)
     report_only_negative = list(set(report_only_patient_ids) & set(report_negative_patient_ids))
 
+    # Get list of negative patients id according to both reader study and the report
     negative_ids = reader_study_negative + report_only_negative
 
+    # For each patient id specify an annotation type
     annotations_type_dict = {}
     for patient_id in all_patient_ids:
         if patient_id in bb_patient_ids:
@@ -312,8 +393,8 @@ def extract_annotations_metadata(archive_path):
 
         annotations_type_dict[patient_id] = annotation_type.value
 
+    # Save as a new metadata file
     file_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE
-
     with open(file_path, "w") as file:
         json.dump(annotations_type_dict, file)
 
