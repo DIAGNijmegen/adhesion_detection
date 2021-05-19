@@ -19,6 +19,8 @@ from segmentation import segment_abdominal_cavity
 NNUNET_INPUT_FOLDER = "nnUNet_input"
 PREDICTED_MASKS_FOLDER = "nnUNet_masks"
 RESULTS_FOLDER = "visceral_slide"
+VISCERAL_SLIDE_FILE = "visceral_slide.pkl"
+
 
 # TODO: probably also add an option to load saved segmentation since it I run it for the whole dataset
 def get_patients_ids(train_test_split, mode):
@@ -47,6 +49,116 @@ def get_patients_ids(train_test_split, mode):
         raise ValueError("Usuppotred mode: should be train or test")
 
     return patients_ids
+
+
+def load_visceral_slide(visceral_slide_path):
+    """
+    Load the saved visceral slide
+    Parameters
+    ----------
+    visceral_slide_path : Path
+       A path to the file with saved visceral slide
+
+    Returns
+    -------
+    x, y, visceral_slide : list of int, list of int, list of float
+       Coordinates of abominal cavity and the corresponding values of visceral slide
+    """
+
+    visceral_slide_file_path = visceral_slide_path / VISCERAL_SLIDE_FILE
+
+    with open(str(visceral_slide_file_path), "r+b") as file:
+        visceral_slide_data = pickle.load(file)
+        x, y = visceral_slide_data["x"], visceral_slide_data["y"]
+        visceral_slide = visceral_slide_data["slide"]
+
+    return x, y, visceral_slide
+
+
+# TODO: should be wrapped into try/cath
+def get_insp_exp_indices(slice, inspexp_data):
+    """
+    Loads indexes of inspiration and expiration frames for the specified cine-MRI slice
+    Parameters
+    ----------
+    slice: CineMRISlice
+        A cine-MRI slice for which to extract inspiration and expiration frames
+    inspexp_data : dict
+        A dictionary with inspiration / expiration frames data
+
+    Returns
+    -------
+    insp_ind, exp_ind : ndarray
+        The inspiration and expiration frames indexes
+    """
+
+    patient_data = inspexp_data[slice.patient_id]
+    scan_data = patient_data[slice.scan_id]
+    inspexp_frames = scan_data[slice.slice_id]
+    insp_ind = inspexp_frames[0]
+    exp_ind = inspexp_frames[1]
+    return insp_ind, exp_ind
+
+
+# TODO: should be wrapped into try/cath
+def get_inspexp_frames(slice, inspexp_data, images_path):
+    """
+    Loads inspiration and expiration frames for the specified cine-MRI slice
+    Parameters
+    ----------
+    slice: CineMRISlice
+        A cine-MRI slice for which to extract inspiration and expiration frames
+    inspexp_data : dict
+       A dictionary with inspiration / expiration frames data
+    images_path : Path
+       A path to the image folder in cine-MRI archive
+
+    Returns
+    -------
+    insp_frame, exp_frame : ndarray
+       The inspiration and expiration frames
+    """
+
+    insp_ind, exp_ind = get_insp_exp_indices(slice, inspexp_data)
+
+    # Load the expiration frame (visceral slide is computed for the expiration frame)
+    slice_path = slice.build_path(images_path)
+    insp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))[insp_ind]
+    exp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))[exp_ind]
+    return insp_frame, exp_frame
+
+
+def get_insp_exp_frames_and_masks(slice, insp_ind, exp_ind, images_path, masks_path):
+    """
+    Loads inspiration and expiration frames of the slice and the corresponding mask
+    Parameters
+    ----------
+    slice : CineMRISlice
+        A cine-MRI slice for which to extract inspiration and expiration frames
+    insp_ind, exp_ind : int
+       Inspiration and expiration indices
+    images_path, masks_path : Path
+       Paths to images and masks
+
+    Returns
+    -------
+    insp_frame, insp_mask, exp_frame, exp_mask : ndarray
+       Inspiration frame and mask, expiration frame and mask
+
+    """
+    # load image
+    slice_path = slice.build_path(images_path)
+    slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+    insp_frame = slice_array[insp_ind].astype(np.uint32)
+    exp_frame = slice_array[exp_ind].astype(np.uint32)
+
+    # load mask
+    mask_path = slice.build_path(masks_path)
+    mask_array = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
+    insp_mask = mask_array[insp_ind]
+    exp_mask = mask_array[exp_ind]
+
+    return insp_frame, insp_mask, exp_frame, exp_mask
 
 
 def extract_insp_exp_frames(archive_path,
@@ -226,7 +338,7 @@ def compute_visceral_slide(images_path,
                 x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(insp_frame, insp_mask, exp_frame, exp_mask)
 
                 # Save pickle and figure
-                pickle_path = slice_path / "visceral_slide.pkl"
+                pickle_path = slice_path / VISCERAL_SLIDE_FILE
                 slide_dict = {"x": x, "y": y, "slide": visceral_slide}
                 with open(pickle_path, "w+b") as file:
                     pickle.dump(slide_dict, file)

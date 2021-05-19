@@ -15,53 +15,30 @@ import SimpleITK as sitk
 import matplotlib.pyplot as plt
 import numpy as np
 from visceral_slide import VisceralSlideDetector
-from adhesions import load_annotated_slices, load_annotations, load_negative_patients, AdhesionType
+from adhesions import load_annotated_slices, load_annotations, load_patients_of_type, AdhesionType, AnnotationType
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import get_contour
 from cinemri.utils import get_image_orientation
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, BB_ANNOTATIONS_EXPANDED_FILE
+from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from skimage import io
 from sklearn.model_selection import KFold
+from visceral_slide_pipeline import get_insp_exp_indices, get_inspexp_frames, get_insp_exp_frames_and_masks
+
+POSITIVE_FOLDER = "positive"
+
+# CV folders names
+CV_IMAGES_FOLDER = "images"
+CV_LABELS_FOLDER = "labels"
+CV_TRAIN_FOLDER = "train"
+CV_VALIDATION_FOLDER = "val"
+CV_TEST_FOLDER = "test"
+CV_SPLIT_FILE = "detection_split.json"
 
 # detection_input_whole folder contains adhesions of all types
 # detection_input_contour folder contains adhesions along the abdominal cavity contour
 
 # add possibility to extract scans adjacent to front abdominal wall or abdominal cavity contour (enum)
 # save as metadata?
-
-def get_insp_exp_indices(slice, inspexp_data):
-
-    # Extract inspiration and expiration frames for the slice
-    try:
-        patient_data = inspexp_data[slice.patient_id]
-        scan_data = patient_data[slice.scan_id]
-        inspexp_frames = scan_data[slice.slice_id]
-        insp_frame_index = inspexp_frames[0]
-        exp_frame_index = inspexp_frames[1]
-        return insp_frame_index, exp_frame_index
-    except:
-        print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
-                                                                                   slice.scan_id,
-                                                                                   slice.slice_id))
-        return None, None
-
-
-def get_insp_exp_frames_and_masks(slice, insp_index, exp_index, images_path, masks_path):
-    # load image
-    slice_path = slice.build_path(images_path)
-    slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
-    insp_frame = slice_array[insp_index].astype(np.uint32)
-    exp_frame = slice_array[exp_index].astype(np.uint32)
-
-    # load mask
-    mask_path = slice.build_path(masks_path)
-    mask_array = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
-    insp_mask = mask_array[insp_index]
-    exp_mask = mask_array[exp_index]
-
-    return insp_frame, insp_mask, exp_frame, exp_mask
-
-
 def get_pseudo_image(deformation_field, x, y, visceral_slide):
 
     height, width = deformation_field.shape[0], deformation_field.shape[1]
@@ -82,43 +59,61 @@ def save_visualization(annotations_path,
                        images_path,
                        masks_path,
                        output_path=None):
+    """
+    Visualise deformation field and visceral slide for all annotations
+    Parameters
+    ----------
+    annotations_path, inspexp_path, images_path, masks_path : Path
+       Paths to annotations, inspiration/expiration metadata, images and masks
+    output_path : Path, optional
+       A path where to save visualisation
+    """
 
     # load annotated slices
     annotated_slices = load_annotated_slices(annotations_path)
 
     for ind, slice in enumerate(annotated_slices):
-        visualize_deformation_and_annotations(slice, inspexp_path, images_path, masks_path, output_path)
+        visualize_deformation_field(slice, inspexp_path, images_path, masks_path, output_path)
 
 
-def visualize_deformation_and_annotations(slice,
-                                          inspexp_path,
-                                          images_path,
-                                          masks_path,
-                                          output_path=None):
+def visualize_deformation_field(slice,
+                                inspexp_path,
+                                images_path,
+                                masks_path,
+                                output_path=None):
+    """
+    Visualises deformation field and visceral slide for the specified slice and saves to disk
+    if output_path is specified, otherwise shows
+    Parameters
+    ----------
+    slice : CineMRISlice
+       A slice to make visualisation for
+    inspexp_path, images_path, masks_path : Path
+       Paths to inspiration/expiration metadata, images and masks
+    output_path : Path, optional
+       A path to save the results
+    """
 
     # load inspiration and expiration data
     with open(inspexp_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
-    print("Annotation for patient {}, slice {}".format(slice.patient_id, slice.slice_id))
+    print("Patient {}, slice {}".format(slice.patient_id, slice.slice_id))
 
     if output_path is not None:
-        target_folder = output_path / SEPARATOR.join([slice.patient_id, slice.scan_id, slice.slice_id])
+        target_folder = slice.build_path(output_path, extension="")
         target_folder.mkdir(parents=True, exist_ok=True)
     else:
         target_folder = None
 
-    # Extract inspiration and expiration frames for the slice
-    insp_index, exp_index = get_insp_exp_indices(slice, inspexp_data)
-
-    if insp_index is None:
-        return
-
-    insp_frame, insp_mask, exp_frame, exp_mask = get_insp_exp_frames_and_masks(slice,
-                                                                               insp_index,
-                                                                               exp_index,
-                                                                               images_path,
-                                                                               masks_path)
+    # Extract inspiration and expiration frames and masks for the slice
+    try:
+        insp_frame, exp_frame = get_inspexp_frames(slice, inspexp_data, images_path)
+        insp_mask, exp_mask = get_inspexp_frames(slice, inspexp_data, masks_path)
+    except:
+        print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
+                                                                                   slice.scan_id,
+                                                                                   slice.slice_id))
 
     # Save or show masked inspiration and expiration frames
     plt.figure()
@@ -140,7 +135,6 @@ def visualize_deformation_and_annotations(slice,
         plt.savefig(target_folder / "exp_frame.png", bbox_inches='tight', pad_inches=0)
     else:
         plt.show()
-
 
     # get visceral slide
     x, y, visceral_slide = VisceralSlideDetector().get_visceral_slide(insp_frame, insp_mask, exp_frame, exp_mask)
@@ -235,34 +229,39 @@ def visualize_deformation_and_annotations(slice,
         plt.show()
 
 
-# For now just visualize displacement field (and save data for all annotations for future)
 def extract_annotated_slices(annotations_path, inspexp_path, images_path, masks_path, output_path):
+    """
+    Extracts a pseudo image composed from the deformation field and visceral slide
+    for annotated slices and saves to disk
+    Parameters
+    ----------
+    annotations_path, inspexp_path, images_path, masks_path: Path
+       Paths to annotations, inspiration/expiration metadata, images and masks
+    output_path : Path
+       A path to save the extracted presudo images
+    """
 
-    positive_path = output_path / "positive"
+    # Make a folder for positive samples in the target folder
+    positive_path = output_path / POSITIVE_FOLDER
     positive_path.mkdir(exist_ok=True, parents=True)
 
     annotated_slices = load_annotated_slices(annotations_path)
-    print("Number of annotated slices {}".format(len(annotated_slices)))
 
     # load inspiration and expiration data
     with open(inspexp_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
     for slice in annotated_slices:
-        print("{} {} {}".format(slice.patient_id, slice.scan_id, slice.slice_id))
+        print("Slice {}".format(slice.full_id))
 
-        insp_index, exp_index = get_insp_exp_indices(slice, inspexp_data)
-
-        if insp_index is None:
-            continue
-
-        insp_frame, insp_mask, exp_frame, exp_mask = get_insp_exp_frames_and_masks(slice,
-                                                                                   insp_index,
-                                                                                   exp_index,
-                                                                                   images_path,
-                                                                                   masks_path)
-
-        height, width = insp_frame.shape[0], insp_frame.shape[1]
+        # Extract inspiration and expiration frames and masks for the slice
+        try:
+            insp_frame, exp_frame = get_inspexp_frames(slice, inspexp_data, images_path)
+            insp_mask, exp_mask = get_inspexp_frames(slice, inspexp_data, masks_path)
+        except:
+            print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
+                                                                                       slice.scan_id,
+                                                                                       slice.slice_id))
 
         # TODO: maybe return VS and DF together
         # get visceral slide
@@ -272,34 +271,39 @@ def extract_annotated_slices(annotations_path, inspexp_path, images_path, masks_
                                                                                insp_mask)
 
         pseudo_image = get_pseudo_image(deformation_field, x, y, visceral_slide)
-
         # Save without normalization
-        input_name = SEPARATOR.join([slice.patient_id, slice.scan_id, slice.slice_id])
-        input_path = positive_path / (input_name + ".npy")
+        input_path = positive_path / (slice.full_id + ".npy")
         np.save(input_path, pseudo_image)
 
 
 # For now just visualize displacement field (and save data for all annotations for future)
-def extract_negative_samples(archive_path, output_path):
-    # now we have only 6 negative patients
-    # and sample all ASL slices
+def extract_negative_samples(annotations_type_path, inspexp_path, images_path, masks_path, output_path):
+    """
+    Extracts a pseudo image composed from the deformation field and visceral slide
+    for samples negative patients and saves to disk
+    Parameters
+    ----------
+    annotations_type_path, inspexp_path, images_path, masks_path: Path
+        Paths to annotations type metadata, inspiration/expiration metadata, images and masks
+    output_path : Path
+        A path to save the extracted presudo images
+    """
+
+    # Make a folder for negative samples in the target folder
 
     negative_path = output_path / "negative"
     negative_path.mkdir(exist_ok=True, parents=True)
-
-    images_path = archive_path / IMAGES_FOLDER
-    masks_path = archive_path / "full_segmentation" / "merged_segmentation"
-    inspexp_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load inspiration and expiration data
     with open(inspexp_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
-    negative_patients = load_negative_patients(archive_path)
+    negative_patients = load_patients_of_type(archive_path, annotations_type_path, AnnotationType.negative)
+    # Now there are only 6 negative patients, so take them all without sampling
     # Extract slices, check if the orientation is correct
     for patient in negative_patients:
         for slice in patient.cinemri_slices:
-            print("{} {} {}".format(slice.patient_id, slice.scan_id, slice.slice_id))
+            print("Slice {}".format(slice.full_id))
 
             # Check depth and orientation
             slice_path = slice.build_path(images_path)
@@ -307,33 +311,27 @@ def extract_negative_samples(archive_path, output_path):
 
             # Check that a slice is valid
             depth = slice_image.GetDepth()
-            if depth == 30 and get_image_orientation(slice_image) == "ASL":
+            if depth >= 30 and get_image_orientation(slice_image) == "ASL":
 
-                insp_index, exp_index = get_insp_exp_indices(slice, inspexp_data)
+                # Extract inspiration and expiration frames and masks for the slice
+                try:
+                    insp_frame, exp_frame = get_inspexp_frames(slice, inspexp_data, images_path)
+                    insp_mask, exp_mask = get_inspexp_frames(slice, inspexp_data, masks_path)
+                except:
+                    print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
+                                                                                               slice.scan_id,
+                                                                                               slice.slice_id))
 
-                if insp_index is None:
-                    continue
-
-                insp_frame, insp_mask, exp_frame, exp_mask = get_insp_exp_frames_and_masks(slice,
-                                                                                           insp_index,
-                                                                                           exp_index,
-                                                                                           images_path,
-                                                                                           masks_path)
-
-                # Check anatomical orientation
                 # Extract DF and visceral slide data and save to disk
-                # get visceral slide
                 x, y, visceral_slide = VisceralSlideDetector().get_visceral_slide(insp_frame, insp_mask, exp_frame,
                                                                                   exp_mask)
-                # get deformation field
                 deformation_field = VisceralSlideDetector().get_full_deformation_field(exp_frame, insp_frame, exp_mask,
                                                                                        insp_mask)
 
                 pseudo_image = get_pseudo_image(deformation_field, x, y, visceral_slide)
 
                 # Save without normalization
-                input_name = SEPARATOR.join([slice.patient_id, slice.scan_id, slice.slice_id])
-                input_path = negative_path / (input_name + ".npy")
+                input_path = negative_path / (slice.full_id + ".npy")
                 np.save(input_path, pseudo_image)
 
 
@@ -342,20 +340,29 @@ def annotations_to_yolov5(annotations_path,
                           adhesion_types=[AdhesionType.anteriorWall.value,
                                           AdhesionType.abdominalCavityContour.value,
                                           AdhesionType.inside.value]):
-
+    """
+    Convert adhesions annotations to YOLOv5 format
+    Parameters
+    ----------
+    annotations_path : Path
+       A Path to annotations
+    labels_path : Path
+       A Path where to save YOLOv5 labels
+    adhesion_types : list of AdhesionType
+       A list of adhesion types to filter annotations
+    """
     labels_path.mkdir(exist_ok=True, parents=True)
     annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
 
     for annotation in annotations:
-        print("Converting annotation {} {} {}".format(annotation.patient_id, annotation.scan_id, annotation.slice_id))
+        print("Converting annotation {}".format(annotation.full_id))
 
         # Get height and width of scans
         slice_path = annotation.build_path(images_path)
         frame = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))[0]
         frame_height, frame_width = frame.shape[0], frame.shape[1]
 
-        slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
-        labels_file_path = labels_path / (slice_id + ".txt")
+        labels_file_path = labels_path / (annotation.full_id + ".txt")
 
         annotation_strings = []
         for adhesion in annotation.adhesions:
@@ -381,9 +388,22 @@ def extract_detection_input_subset(detection_input_whole_path,
                                    adhesion_types=[AdhesionType.anteriorWall.value,
                                                    AdhesionType.abdominalCavityContour.value,
                                                    AdhesionType.inside.value]):
+    """
+    Extract a subset of detection data filtered by adhesion type
+    Parameters
+    ----------
+    detection_input_whole_path : Path
+       A path to the whole detection dataset
+    detection_input_subset_path : Path
+       A target path to save the extracted subset
+    annotations_path : Path
+       A path to metadata file with adhesions annotations
+    adhesion_types : list of AdhesionType
+       A list of adhesion types to filter data
+    """
 
-    whole_positive_path = detection_input_whole_path / "positive"
-    subset_positive_path = detection_input_subset_path / "positive"
+    whole_positive_path = detection_input_whole_path / POSITIVE_FOLDER
+    subset_positive_path = detection_input_subset_path / POSITIVE_FOLDER
     subset_positive_path.mkdir(exist_ok=True, parents=True)
 
     slices_subset = load_annotated_slices(annotations_path, adhesion_types)
@@ -401,6 +421,17 @@ def extract_detection_input_subset(detection_input_whole_path,
 def npy_to_jpg(npy_path,
                jpg_path,
                whole_data_range=True):
+    """
+    Converts .npy files containing to RGB format and saves as .jpg
+    Parameters
+    ----------
+    npy_path : Path
+       A path to .npy files
+    jpg_path : Path
+       A path to .jpg files
+    whole_data_range : bool
+       A boolean flag indicating whether use the statistics of the whole dataset for normalization or local .npy statistics
+    """
 
     jpg_path.mkdir(exist_ok=True)
 
@@ -454,29 +485,44 @@ def generate_zero_input(img_path, output_folder):
         io.imsave(str(output_file_path), new_img)
 
 
-# make train/val/test splits
-# 20 % test set
-# 20 % validation set
-# hierarchy
-# test
-#   images
-#   labels
-# train
-#   train
-#      images
-#      labels
-#   val
-#      images
-#      labels
-def double_cv_split(data_path, archive_path, annotations_path, output_path, train_proportion=0.8, folds_num=5):
+# TODO: reduce code duplication in these two methods
+def double_cv_split(data_path, archive_path, annotations_path, annotations_type_path, output_path, train_proportion=0.8, folds_num=5):
+    """
+    Makes data split for double CV and saves split in .json files. Organises the data in the following folders structure
+    - test
+      - images
+        - test
+      - labels
+        - test
+    - train
+        - fold n
+            - images
+                - train
+                - val
+            - labels
+                - train
+                - val
+    Parameters
+    ----------
+    data_path : Path
+       A path to the whole detection dataset
+    archive_path, annotations_path, annotations_type_path : Path
+       Paths to the cine-MRI archive, adhesions annotations metadata file, annotations types metadata file
+    output_path : Path
+       A path to save the data split
+    train_proportion : float
+       A proportion of data to put into the training set
+    folds_num : int
+       A number of folds to make
+    """
 
     output_path.mkdir()
 
-    image_path = data_path / "images" / "train"
-    labels_path = data_path / "labels" / "train"
+    image_path = data_path / CV_IMAGES_FOLDER / CV_TRAIN_FOLDER
+    labels_path = data_path / CV_LABELS_FOLDER / CV_TRAIN_FOLDER
 
     # Get a list of slices for negative patients
-    negative_patients = load_negative_patients(archive_path)
+    negative_patients = load_patients_of_type(archive_path, annotations_type_path, AnnotationType.negative)
     negative_ids = []
 
     # Extract slices, check if the orientation is correct
@@ -516,13 +562,13 @@ def double_cv_split(data_path, archive_path, annotations_path, output_path, trai
     test_ids = test_negative + test_positive
     split_dict["test"] = test_ids
 
-    test_set_path = output_path / "test"
+    test_set_path = output_path / CV_TEST_FOLDER
     test_set_path.mkdir()
 
-    test_images_path = test_set_path / "images"
+    test_images_path = test_set_path / CV_IMAGES_FOLDER
     test_images_path.mkdir()
 
-    test_labels_path = test_set_path / "labels"
+    test_labels_path = test_set_path / CV_LABELS_FOLDER
     test_labels_path.mkdir()
 
     for test_id in test_ids:
@@ -557,7 +603,7 @@ def double_cv_split(data_path, archive_path, annotations_path, output_path, trai
 
     # Save folds
     index = 1
-    train_set_path = output_path / "train"
+    train_set_path = output_path / CV_TRAIN_FOLDER
     train_set_path.mkdir()
     for train_ids, val_ids in zip(folds_train, folds_val):
         fold = {"train": train_ids.tolist(), "val": val_ids.tolist()}
@@ -568,18 +614,18 @@ def double_cv_split(data_path, archive_path, annotations_path, output_path, trai
         fold_dir.mkdir(exist_ok=True)
 
         # Create images folder
-        fold_images_path = fold_dir / "images"
+        fold_images_path = fold_dir / CV_IMAGES_FOLDER
         fold_images_path.mkdir()
 
         # Create labels folder
-        fold_labels_path = fold_dir / "labels"
+        fold_labels_path = fold_dir / CV_LABELS_FOLDER
         fold_labels_path.mkdir()
 
         # Create train folders
-        train_images_path = fold_images_path / "train"
+        train_images_path = fold_images_path / CV_TRAIN_FOLDER
         train_images_path.mkdir()
 
-        train_labels_path = fold_labels_path / "train"
+        train_labels_path = fold_labels_path / CV_TRAIN_FOLDER
         train_labels_path.mkdir()
 
         # Copy files
@@ -590,10 +636,10 @@ def double_cv_split(data_path, archive_path, annotations_path, output_path, trai
                 shutil.copy(label_path, train_labels_path)
 
         # Create validation folders
-        val_images_path = fold_images_path / "val"
+        val_images_path = fold_images_path / CV_VALIDATION_FOLDER
         val_images_path.mkdir()
 
-        val_labels_path = fold_labels_path / "val"
+        val_labels_path = fold_labels_path / CV_VALIDATION_FOLDER
         val_labels_path.mkdir()
 
         # Copy files
@@ -606,20 +652,44 @@ def double_cv_split(data_path, archive_path, annotations_path, output_path, trai
         index += 1
 
     split_dict["train"] = folds
-    split_file_path = output_path / "detection_split.json"
+    split_file_path = output_path / CV_SPLIT_FILE
 
     with open(split_file_path, "w") as f:
         json.dump(split_dict, f)
 
 
-def cv_split(data_path, archive_path, annotations_path, output_path, folds_num=5):
+def cv_split(data_path, archive_path, annotations_type_path, annotations_path, output_path, folds_num=5):
+    """
+    Makes data split for CV and saves split in .json files. Organises the data in the following folders structure
+    - train
+        - fold n
+            - images
+                - train
+                - val
+            - labels
+                - train
+                - val
+    Parameters
+    ----------
+    data_path : Path
+        A path to the whole detection dataset
+    archive_path, annotations_path, annotations_type_path : Path
+        Paths to the cine-MRI archive, adhesions annotations metadata file, annotations types metadata file
+    output_path : Path
+        A path to save the data split
+    train_proportion : float
+        A proportion of data to put into the training set
+    folds_num : int
+        A number of folds to make
+    """
+
     output_path.mkdir()
 
-    image_path = data_path / "images" / "train"
-    labels_path = data_path / "labels" / "train"
+    image_path = data_path / CV_IMAGES_FOLDER / CV_TRAIN_FOLDER
+    labels_path = data_path / CV_LABELS_FOLDER / CV_TRAIN_FOLDER
 
     # Get a list of slices for negative patients
-    negative_patients = load_negative_patients(archive_path)
+    negative_patients = load_patients_of_type(archive_path, annotations_type_path, AnnotationType.negative)
     negative_ids = []
 
     # Extract slices, check if the orientation is correct
@@ -669,7 +739,7 @@ def cv_split(data_path, archive_path, annotations_path, output_path, folds_num=5
 
     # Save folds
     index = 1
-    train_set_path = output_path / "train"
+    train_set_path = output_path / CV_TRAIN_FOLDER
     train_set_path.mkdir()
     for train_ids, val_ids in zip(folds_train, folds_val):
         fold = {"train": train_ids.tolist(), "val": val_ids.tolist()}
@@ -680,18 +750,18 @@ def cv_split(data_path, archive_path, annotations_path, output_path, folds_num=5
         fold_dir.mkdir(exist_ok=True)
 
         # Create images folder
-        fold_images_path = fold_dir / "images"
+        fold_images_path = fold_dir / CV_IMAGES_FOLDER
         fold_images_path.mkdir()
 
         # Create labels folder
-        fold_labels_path = fold_dir / "labels"
+        fold_labels_path = fold_dir / CV_LABELS_FOLDER
         fold_labels_path.mkdir()
 
         # Create train folders
-        train_images_path = fold_images_path / "train"
+        train_images_path = fold_images_path / CV_TRAIN_FOLDER
         train_images_path.mkdir()
 
-        train_labels_path = fold_labels_path / "train"
+        train_labels_path = fold_labels_path / CV_TRAIN_FOLDER
         train_labels_path.mkdir()
 
         # Copy files
@@ -702,10 +772,10 @@ def cv_split(data_path, archive_path, annotations_path, output_path, folds_num=5
                 shutil.copy(label_path, train_labels_path)
 
         # Create validation folders
-        val_images_path = fold_images_path / "val"
+        val_images_path = fold_images_path / CV_VALIDATION_FOLDER
         val_images_path.mkdir()
 
-        val_labels_path = fold_labels_path / "val"
+        val_labels_path = fold_labels_path / CV_VALIDATION_FOLDER
         val_labels_path.mkdir()
 
         # Copy files
@@ -717,7 +787,7 @@ def cv_split(data_path, archive_path, annotations_path, output_path, folds_num=5
 
         index += 1
 
-    split_file_path = output_path / "detection_split.json"
+    split_file_path = output_path / CV_SPLIT_FILE
 
     with open(split_file_path, "w") as f:
         json.dump(folds, f)

@@ -15,7 +15,7 @@ from cinemri.utils import CineMRISlice
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
 from utils import interval_overlap
-from visceral_slide_pipeline import load_visceral_slide, load_inspexp_frames
+from visceral_slide_pipeline import load_visceral_slide, get_inspexp_frames
 from contour import get_abdominal_contour_top
 
 # Folder to save visualized annotations
@@ -244,7 +244,7 @@ class AdhesionAnnotation:
            A path to a cine-MRI scan
 
         """
-        return slice.build_path(relative_path)
+        return slice.build_path(relative_path, extension=extension)
 
 
 def load_annotations(annotations_path,
@@ -751,7 +751,7 @@ def vis_annotation_and_saved_vs(annotations_path,
             x, y, visceral_slide = load_visceral_slide(visceral_slide_results_path)
 
             try:
-                insp_frame, _ = load_inspexp_frames(images_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
+                insp_frame, _ = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
             except:
                 print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                            annotation.scan_id,
@@ -794,8 +794,8 @@ def vis_annotation_and_computed_vs(annotations_path,
 
         # Load inspiration and expiration frames and masks
         try:
-            insp_frame, exp_frame = load_inspexp_frames(images_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
-            insp_mask, exp_mask = load_inspexp_frames(masks_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
+            insp_frame, exp_frame = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
+            insp_mask, exp_mask = get_inspexp_frames(annotation.slice, inspexp_data, masks_path)
         except:
             print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                        annotation.scan_id,
@@ -879,7 +879,7 @@ def test_cavity_part_detection(annotations_path, images_path, inspexp_file_path,
 
             # Load the inspiration frame (visceral slide is computed for the inspiration frame)
             try:
-                insp_frame, _ = load_inspexp_frames(images_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
+                insp_frame, _ = annotation.slice,(annotation.slice, inspexp_data, images_path)
             except:
                 print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                            annotation.scan_id,
