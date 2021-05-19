@@ -1,5 +1,4 @@
 import json
-import pickle
 import subprocess
 from enum import Enum, unique
 from pathlib import Path
@@ -8,7 +7,7 @@ import cv2
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, PATIENT_ANNOTATIONS_FILE_NAME, \
+from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, PATIENT_ANNOTATIONS_FILE_NAME, \
     BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import get_contour, get_abdominal_wall_coord, AbdominalContourPart
@@ -16,6 +15,8 @@ from cinemri.utils import CineMRISlice
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
 from utils import interval_overlap
+from visceral_slide_pipeline import load_visceral_slide, load_inspexp_frames
+from contour import get_abdominal_contour_top
 
 # Folder to save visualized annotations
 ANNOTATIONS_VIS_FOLDER = "vis_annotations"
@@ -35,6 +36,12 @@ class AdhesionType(Enum):
     anteriorWall = 1
     abdominalCavityContour = 2
     inside = 3
+
+@unique
+class PatientsType(Enum):
+    positive = 0
+    negative = 1
+    all = 2
 
 
 class Adhesion:
@@ -202,6 +209,25 @@ class AdhesionAnnotation:
     def full_id(self):
         return self.slice.full_id
 
+    def has_adhesion_of_types(self, types):
+        """
+        Checks whether annotation has at lest one adhesion of any type in a specified list of types
+        Parameters
+        ----------
+        types: list of AdhesionType
+           A list of adhesion to check for presence
+
+        Returns
+        -------
+           has_type : bool
+              A boolean flag indicating presence of adhesion of the specified types
+        """
+        for adhesion in self.adhesions:
+            if adhesion.type in types:
+                return True
+
+        return False
+
     def build_path(self, relative_path, extension=".mha"):
         """
         Builds path to a file containing a cine-MRI slice for which annotation is made
@@ -218,14 +244,30 @@ class AdhesionAnnotation:
            A path to a cine-MRI scan
 
         """
-        return relative_path / self.patient_id / self.scan_id / (self.slice_id + extension)
+        return slice.build_path(relative_path)
 
 
-# Assume we have expanded annotation with bb types
 def load_annotations(annotations_path,
-                     adhesion_types=[AdhesionType.anteriorWall.value,
-                                     AdhesionType.abdominalCavityContour.value,
-                                     AdhesionType.inside.value]):
+                     adhesion_types=[AdhesionType.anteriorWall,
+                                     AdhesionType.abdominalCavityContour,
+                                     AdhesionType.inside]):
+    """
+    Loads adhesion annotations from the metadata file with annotations. Handles two formats of annotations:
+    1. adhesions are specified as array of bouding boxes arrays [origin_x, origin_y, width, height]
+    2. adhesions are specified as array of dictionaries {"bb": [origin_x, origin_y, width, height], "type" : int}
+    Parameters
+    ----------
+    annotations_path : Path
+       A path to the metadata file with annotations
+    adhesion_types : list of AdhesionType
+       A list of adhesions type to filter adhesion in annotations
+
+    Returns
+    -------
+    annotations : list of Adhesion
+       A list of adhesions annotations with adhesions filtered by types specified in the adhesion_types argument
+
+    """
 
     with open(annotations_path) as annotations_file:
         annotations_dict = json.load(annotations_file)
@@ -233,14 +275,19 @@ def load_annotations(annotations_path,
     annotations = []
     for patient_id, scans_dict in annotations_dict.items():
         for scan_id, slices_dict in scans_dict.items():
-            for slice_id, bounding_box_dicts in slices_dict.items():
+            for slice_id, bounding_box_annotations in slices_dict.items():
                 # Include bounding boxes which have requested type
                 bounding_boxes = []
                 types = []
-                for bounding_box_dict in bounding_box_dicts:
-                    if bounding_box_dict["type"] in adhesion_types:
-                        bounding_boxes.append(bounding_box_dict["bb"])
-                        types.append(bounding_box_dict["type"])
+                for bounding_box_annotation in bounding_box_annotations:
+                    if type(bounding_box_annotation) is dict:
+                        adhesion_type = AdhesionType(bounding_box_annotation["type"])
+                        if adhesion_type in adhesion_types:
+                            bounding_boxes.append(bounding_box_annotation["bb"])
+                            types.append(adhesion_type)
+                    else:
+                        bounding_boxes.append(bounding_box_annotation)
+                        types.append(AdhesionType.unset)
 
                 if len(bounding_boxes) > 0:
                     annotation = AdhesionAnnotation(patient_id, scan_id, slice_id, bounding_boxes, types)
@@ -248,64 +295,90 @@ def load_annotations(annotations_path,
 
     return annotations
 
-# Assume we have expanded annotation with bb types
+
 def load_annotated_slices(annotations_path,
-                          adhesion_types=[AdhesionType.anteriorWall.value,
-                                          AdhesionType.abdominalCavityContour.value,
-                                          AdhesionType.inside.value]):
-    with open(annotations_path) as annotations_file:
-        annotations_dict = json.load(annotations_file)
+                          adhesion_types=[AdhesionType.anteriorWall,
+                                          AdhesionType.abdominalCavityContour,
+                                          AdhesionType.inside]):
+    """
+    Loads annotated slices from the metadata file with annotations. Handles two formats of annotations:
+    1. adhesions are specified as array of bouding boxes arrays [origin_x, origin_y, width, height]
+    2. adhesions are specified as array of dictionaries {"bb": [origin_x, origin_y, width, height], "type" : int}
+    Parameters
+    ----------
+    annotations_path : Path
+       A path to the metadata file with annotations
+    adhesion_types : list of AdhesionType
+       A list of adhesions type to filter slices
 
-    slices = []
-    for patient_id, scans_dict in annotations_dict.items():
-        for scan_id, slices_dict in scans_dict.items():
-            for slice_id, bounding_box_dicts in slices_dict.items():
-                if len(bounding_box_dicts) > 0:
-                    # If any of BB annotations for a slice has a requested type, include this slice
-                    has_requested_type = False
-                    for bounding_box_dict in bounding_box_dicts:
-                        if bounding_box_dict["type"] in adhesion_types:
-                            has_requested_type = True
-                            break
+    Returns
+    -------
+    slices : list of CineMRISlice
+       A list of slices which has at least one adhesion of any of types specified in the adhesion_types argument
+    """
 
-                    if has_requested_type:
-                        slice = CineMRISlice(patient_id, scan_id, slice_id)
-                        slices.append(slice)
-
+    annotations = load_annotations(annotations_path, adhesion_types)
+    slices = [annotation.slice for annotation in annotations if annotation.has_adhesion_of_types(adhesion_types)]
     return slices
 
 
 # annotations_path - path to reports with patient level annotations
-def load_negative_ids_rijnstate(annotations_path):
+def load_report_annotations(annotations_path, patients_type=PatientsType.all):
+    """
+    Loads a list of patient ids positive or negative according to the initial report
+    Parameters
+    ----------
+    annotations_path : Path
+       A path to binary patient level annotations from the original report
+    patients_type : PatientsType
+       A enum case indicating which subset of patients to include: all, positive or negative
+
+    Returns
+    -------
+    patient_ids : list of str
+       A list of ids of patients of the specified type
+
+    """
 
     with open(annotations_path) as annotations_file:
         reports = json.load(annotations_file)
 
+    if patients_type == PatientsType.all:
+        annotation_type_ids = ["0", "1"]
+    elif patients_type == PatientsType.negative:
+        annotation_type_ids = ["1"]
+    else:
+        annotation_type_ids = ["0"]
+
     patient_ids = []
     for report in reports:
-        # If patient is healthy append the id to array
-        if report["normal"] == "1":
+        if report["normal"] in annotation_type_ids:
             patient_ids.append(report["id"])
 
     return patient_ids
 
 
-# Extract ids of patients that were included into the reader study
-def load_patient_ids_reader_study(annotations_path):
+def load_patient_ids_reader_study(annotations_path, patients_type=PatientsType.all):
+    """
+    Extract ids of patients that were included into the reader study
+    Parameters
+    ----------
+    annotations_path : Path
+       A path to the metadata file with annotations from the reader study
+    patients_type : PatientsType
+       A enum case indicating which subset of patients to include: all, positive or negative
+    Returns
+    -------
+    patient_ids : list of str
+       A list of ids of patients of the specified type that were included into the reader study
+    """
     with open(annotations_path) as annotations_file:
         annotations_dict = json.load(annotations_file)
 
-    return list(annotations_dict.keys())
+    # If we want to extract all patients, just return all keys
+    if patients_type == PatientsType.all:
+        return list(annotations_dict.keys())
 
-
-# annotations_path - path to reports with patient level annotations
-def load_patients_with_bb_ids(annotations_path):
-
-    with open(annotations_path) as annotations_file:
-        annotations_dict = json.load(annotations_file)
-
-    # In the dictionary with annotations some patients have an empty array of annotations
-    # We need filter them out
     # First, calculate how many annotations a patient has
     patients = []
     for patient_id, scans_dict in annotations_dict.items():
@@ -317,40 +390,51 @@ def load_patients_with_bb_ids(annotations_path):
 
         patients.append((patient_id, annotated_slices_count))
 
-    # Then filter out patients without annotations
-    patient_ids = np.array([p for p, n in patients if n > 0])
+    # Then filter out positive or negative patients
+    if patients_type == PatientsType.positive:
+        patient_ids = [p for p, n in patients if n > 0]
+    else:
+        patient_ids = [p for p, n in patients if n == 0]
+
     return patient_ids
-
-
-# annotations_path - path to reports with patient level annotations
-def load_patients_without_bb_ids(archive_path):
-
-    all_patients = get_patients(archive_path)
-
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
-    patients_with_bb_annotations = load_patients_with_bb_ids(annotations_path)
-
-    patients = [p for p in all_patients if p.id not in patients_with_bb_annotations]
-    return patients
 
 
 # Those who was included into the reader study and do not have bounding boxes
 # And those who was not included into the reader study and is negative in the report data
-def load_negative_patients(archive_path):
-    annotations_type_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE
+def load_patients_of_type(archive_path, annotations_type_path, annotation_type):
+    """
+    Loads negative patients filtered by the most accurate annotation available
+    Parameters
+    ----------
+    archive_path : Path
+       A path to the cine-MRI archive
+    annotations_type_path : Path
+       A path to the meatadata file containing annotation type info {"patient_id":AnnotationType.value}
+    annotation_type : AnnotationType
+       An annotation type to filter by
+
+    Returns
+    -------
+    filtered_patients : list of Patient
+       A lits of patients having the most accurate annotation type annotation_type
+    """
 
     with open(annotations_type_path) as annotations_type_file:
         annotations_type = json.load(annotations_type_file)
 
-    negative_patients_ids = [patient_id for patient_id, annotation_type in annotations_type.items() if annotation_type == AnnotationType.negative.value]
     all_patients = get_patients(archive_path)
+    type_patients_ids = [patient_id for patient_id, ann_type in annotations_type.items() if
+                         AnnotationType(ann_type) == annotation_type]
 
-    negative_patients = [p for p in all_patients if p.id in negative_patients_ids]
-    return negative_patients
+    filtered_patients = [p for p in all_patients if p.id in type_patients_ids]
+    return filtered_patients
 
 
-# To quickly know which patients have bb annotations and which have binary annotations
-def extract_annotations_metadata(archive_path):
+def extract_annotations_metadata(archive_path,
+                                 bb_annotations_path,
+                                 reader_annotations_path,
+                                 metadata_folder=METADATA_FOLDER,
+                                 annotations_type_file=ANNOTATIONS_TYPE_FILE):
     """
     Extract annotation type for each patient and saves as a metadata file.
     Possible annotation types are in AnnotationType enum. A new metadata file name is ANNOTATIONS_TYPE_FILE
@@ -360,28 +444,33 @@ def extract_annotations_metadata(archive_path):
     ----------
     archive_path : Path
        A path to the full cine-MRI data archive
+    bb_annotations_path : Path
+       A path to the metadata file with bounding box annotations
+    reader_annotations_path : Path
+       A path to the metadata file with binary patient level annotations
+    metadata_folder : str
+       A name of the metadata folder inside the archive
+    annotations_type_file : str
+       A name of a new file with annotations type
     """
     all_patients = get_patients(archive_path)
     all_patient_ids = [p.id for p in all_patients]
 
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
+    # Extract ids of patients selected for reader study: all, positive and negative
+    reader_study_patient_ids = load_patient_ids_reader_study(bb_annotations_path)
+    bb_patient_ids = load_patient_ids_reader_study(bb_annotations_path, PatientsType.positive)
+    reader_study_negative = load_patient_ids_reader_study(bb_annotations_path, PatientsType.negative)
 
-    # Extract ids of patients diagnosed as positive and negative in a reader study
-    reader_study_patient_ids = load_patient_ids_reader_study(annotations_path)
-    bb_patient_ids = load_patients_with_bb_ids(annotations_path)
-    reader_study_negative = list(set(reader_study_patient_ids).difference(set(bb_patient_ids)))
-
-    # Extract patients which were not included into the reader study and are negative
-    # according to the original report
+    # Extract patients which were not included into the reader study
     report_only_patient_ids = list(set(all_patient_ids).difference(set(reader_study_patient_ids)))
-    patient_annotation_path = archive_path / METADATA_FOLDER / PATIENT_ANNOTATIONS_FILE_NAME
-    report_negative_patient_ids = load_negative_ids_rijnstate(patient_annotation_path)
+    # and are negative according to the original report
+    report_negative_patient_ids = load_report_annotations(reader_annotations_path, PatientsType.negative)
     report_only_negative = list(set(report_only_patient_ids) & set(report_negative_patient_ids))
 
     # Get list of negative patients id according to both reader study and the report
     negative_ids = reader_study_negative + report_only_negative
 
-    # For each patient id specify an annotation type
+    # For each patient id specify the most accurate available annotation type
     annotations_type_dict = {}
     for patient_id in all_patient_ids:
         if patient_id in bb_patient_ids:
@@ -394,13 +483,26 @@ def extract_annotations_metadata(archive_path):
         annotations_type_dict[patient_id] = annotation_type.value
 
     # Save as a new metadata file
-    file_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE
+    file_path = archive_path / metadata_folder / annotations_type_file
     with open(file_path, "w") as file:
         json.dump(annotations_type_dict, file)
 
 
 # To have information about adhesion type - v
-def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation_path):
+def extract_adhesions_metadata(annotations_path, full_segmentation_path, metadata_path, expanded_annotations_file):
+    """
+    Adds type of an adhesion to annotations. Possible types are listed in AdhesionType enum
+    Parameters
+    ----------
+    annotations_path : Path
+       A path to annotations metadata file
+    full_segmentation_path : Path
+       A path to a folder containing full segmentation for cine-MRI scans
+    metadata_path : Path
+       A path to a metadata folder
+    expanded_annotations_file : str
+       A file name to save annotations with the added type
+    """
     with open(annotations_path) as annotations_file:
         annotations_dict = json.load(annotations_file)
 
@@ -411,8 +513,8 @@ def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation
             slices_dict_expanded = {}
             for slice_id, bounding_boxes in slices_dict.items():
                 segmentation_path = full_segmentation_path / patient_id / scan_id / (slice_id + ".mha")
+                # Load predicted segmentation for the whole scan
                 if segmentation_path.exists():
-                    # Load predicted segmentation for the whole scan
                     slice_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(segmentation_path)))
 
                 adhesions_array = []
@@ -429,7 +531,7 @@ def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation
                             intersect_contour = True
                             break
 
-                        intersect_contour = intersect_contour or adhesion.intersects_contour(x, y)
+                        intersect_contour |=  adhesion.intersects_contour(x, y)
 
                     if intersect_anterior_wall:
                         adhesion_type = AdhesionType.anteriorWall
@@ -447,14 +549,15 @@ def extract_adhesions_metadata(archive_path, annotations_path, full_segmentation
 
         annotations_dict_expanded[patient_id] = scans_dict_expanded
 
-    annotations_expanded_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
+    annotations_expanded_path = metadata_path / expanded_annotations_file
 
     with open(annotations_expanded_path, "w") as file:
         json.dump(annotations_dict_expanded, file)
 
 
-def show_annotation(annotation, archive_path):
-    slice_path = archive_path / IMAGES_FOLDER / annotation.patient_id / annotation.scan_id / (annotation.slice_id + ".mha")
+# TODO: probably remove
+def show_annotation(annotation, images_path):
+    slice_path = annotation.build_path(images_path)
     # first just plot
     slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
 
@@ -470,11 +573,30 @@ def show_annotation(annotation, archive_path):
         plt.show()
 
 
-def show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame, title=None, save_file_name=None):
+def show_annotation_and_vs(x, y, visceral_slide, annotation, frame, title=None, file_name=None):
+    """
+    Plots absolute value of visceral slide normalized by the absolute maximum together with adhesions annotations
+    over the frame of a cine-MRI slice for which visceral slide was computed and saves to a file
+    if file_name argument is specified. Otherwise shows the plot
+    Parameters
+    ----------
+    x, y : list of int
+       Coordinates of abdominal cavity contour
+    visceral_slide
+       Visceral slide at abdominal cavity contour
+    annotation : AdhesionAnnotation
+       Annotation for a slice
+    frame : ndarrdy
+       A frame for which visceral slide was computed
+    title : str, optional
+       A title of a plot
+    save_file_name : str, optional
+       A file name to save the plot
+    """
     slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
 
     plt.figure()
-    plt.imshow(expiration_frame, cmap="gray")
+    plt.imshow(frame, cmap="gray")
     plt.scatter(x, y, s=5, c=slide_normalized, cmap="jet")
     ax = plt.gca()
     for adhesion in annotation.adhesions:
@@ -485,27 +607,38 @@ def show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame, t
     if title:
         plt.title(title)
     plt.colorbar()
-    if save_file_name:
-        plt.savefig(save_file_name, bbox_inches='tight', pad_inches=0)
+    if file_name:
+        plt.savefig(file_name, bbox_inches='tight', pad_inches=0)
         plt.close()
     else:
         plt.show()
 
 
-def annotate_mha(annotations, archive_path):
-    vis_annotations_path = archive_path / ANNOTATIONS_VIS_FOLDER
-    vis_annotations_path.mkdir(exist_ok=True)
+def annotate_mha(annotations, images_path, target_path):
+    """
+    Adds bounding box annotation to annotated cine-MRI slices and save in .mha format
+    Parameters
+    ----------
+    annotations : list of AdhesionAnnotation
+       A list of annotations to visualize
+    images_path : Path
+       A path to the image folder in cine-MRI archive
+    target_path : Path
+       A Path to save annotated slices
+    """
+
+    target_path.mkdir(exist_ok=True)
 
     for annotation in annotations:
-        # extract image
-        slice_path = archive_path / IMAGES_FOLDER / annotation.patient_id / annotation.scan_id / (
-                annotation.slice_id + ".mha")
+        # extract cine-MRI slice
+        slice_path = annotation.build_path(images_path)
         slice_image = sitk.ReadImage(str(slice_path))
         slice_series = sitk.GetArrayFromImage(slice_image)
 
-        vis_path = vis_annotations_path / annotation.patient_id / annotation.scan_id / annotation.slice_id
-        vis_path.mkdir(parents=True, exist_ok=True)
+        vis_path = annotation.build_path(target_path, extension="")
+        vis_path.mkdir(exist_ok=True)
 
+        # Display bounding box annotations on each frame
         annotated_slice_series = np.zeros(slice_series.shape)
         box_intensity = int(slice_series.max()) + 100
         for frame_id, frame in enumerate(slice_series):
@@ -515,8 +648,8 @@ def annotate_mha(annotations, archive_path):
                 cv2.rectangle(frame, (x1, y1), (x2, y2), (box_intensity, 0, 0), 1)
             annotated_slice_series[frame_id, ...] = frame
 
+        # Save cine-MRI slice image with visualized annotations and kept metadata
         annotated_slice = sitk.GetImageFromArray(annotated_slice_series)
-        # keep metadata
         annotated_slice.CopyInformation(slice_image)
         patient_id = slice_image.GetMetaData("PatientID")
         study_id = slice_image.GetMetaData("StudyInstanceUID")
@@ -529,23 +662,33 @@ def annotate_mha(annotations, archive_path):
         sitk.WriteImage(annotated_slice, str(annotated_slice_path))
 
 
-def save_annotated_gifs(annotations, archive_path):
-    vis_annotations_path = archive_path / ANNOTATIONS_VIS_FOLDER
-    vis_annotations_path.mkdir(exist_ok=True)
+def save_annotated_gifs(annotations, image_path, target_path):
+    """
+    Saves annotations visualized on the corresponding slices as separate frames in .png files and a gif
+    Parameters
+    ----------
+    annotations : list of AdhesionAnnotation
+       A list of annotations to visualize
+    images_path : Path
+       A path to the image folder in cine-MRI archive
+    target_path : Path
+       A Path to save visualized annotations
+    """
+    target_path.mkdir(exist_ok=True)
 
     for annotation in annotations:
-        # extract image
-        slice_path = archive_path / IMAGES_FOLDER / annotation.patient_id / annotation.scan_id / (
-                    annotation.slice_id + ".mha")
-
+        # extract cine-MRI slice
+        slice_path = annotation.build_path(image_path)
         slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
 
-        vis_path = vis_annotations_path / annotation.patient_id / annotation.scan_id / annotation.slice_id
-        vis_path.mkdir(parents=True, exist_ok=True)
+        vis_path = annotation.build_path(target_path, extension="")
+        vis_path.mkdir(exist_ok=True)
 
+        # Make a separate folder for .png files
         png_path = vis_path / "pngs"
         png_path.mkdir(exist_ok=True)
 
+        # Display an annotation over each frame and save as a .png file
         for frame_id, frame in enumerate(slice):
             plt.figure()
             plt.imshow(frame, cmap="gray")
@@ -562,6 +705,7 @@ def save_annotated_gifs(annotations, archive_path):
             plt.savefig(annotated_frame_file_path, bbox_inches='tight', pad_inches=0)
             plt.close()
 
+        # Combine .png files in a gif and save
         command = [
             "convert",
             "-coalesce",
@@ -575,14 +719,24 @@ def save_annotated_gifs(annotations, archive_path):
         subprocess.run(command)
 
 
-def vis_annotation_and_vs(archive_path,
-                          visceral_slide_path,
-                          output_path):
+def vis_annotation_and_saved_vs(annotations_path,
+                                images_path,
+                                inspexp_file_path,
+                                visceral_slide_path,
+                                output_path,
+                                save=True):
+    """
+    Visualises saved visceral slide for all annotated slices and saves as .png images is save flag is True
+    Parameters
+    ----------
+    annotations_path, images_path, inspexp_file_path, visceral_slide_path : Path
+       Paths to annotations, images, inspiration/expiration and saved visceral slide files
+    output_path : Path
+       A Path to save visualised annotation and visceral slide over a frame for which visceral slide is computed
+    save : bool
+       A boolean flag indicating whether to save or show visualisation
+    """
     output_path.mkdir(exist_ok=True)
-
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
-    inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
-    
     # load annotations
     annotations = load_annotations(annotations_path)
     # load inspiration and expiration data
@@ -591,43 +745,43 @@ def vis_annotation_and_vs(archive_path,
 
     # load slices with visceral slide and annotations
     for annotation in annotations:
-        visceral_slide_results_path = visceral_slide_path / annotation.patient_id / annotation.scan_id / annotation.slice_id
+        visceral_slide_results_path = annotation.build_path(visceral_slide_path, extension="")
         if visceral_slide_results_path.exists():
             # Load the computed visceral slide
-            visceral_slide_file_path = visceral_slide_results_path / "visceral_slide.pkl"
-            with open(str(visceral_slide_file_path), "r+b") as file:
-                visceral_slide_data = pickle.load(file)
-                x, y = visceral_slide_data["x"], visceral_slide_data["y"]
-                visceral_slide = visceral_slide_data["slide"]
+            x, y, visceral_slide = load_visceral_slide(visceral_slide_results_path)
 
             try:
-                patient_data = inspexp_data[annotation.patient_id]
-                scan_data = patient_data[annotation.scan_id]
-                exp_frame = scan_data[annotation.slice_id][1]
+                insp_frame, _ = load_inspexp_frames(images_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
             except:
                 print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                            annotation.scan_id,
                                                                                            annotation.slice_id))
 
-            # Load the expiration frame (visceral slide is computed for the expiration frame)
-            expiration_frame_path = archive_path / IMAGES_FOLDER / annotation.patient_id / annotation.scan_id / (annotation.slice_id + ".mha")
-            expiration_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(expiration_frame_path)))[exp_frame]
-
-            slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
-            annotated_visc_slide_path = output_path / (slice_id + ".png")
-
-            show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame, save_file_name=annotated_visc_slide_path)
+            if save:
+                annotated_visc_slide_path = output_path / (annotation.full_id + ".png")
+                show_annotation_and_vs(x, y, visceral_slide, annotation, insp_frame, file_name=annotated_visc_slide_path)
+            else:
+                show_annotation_and_vs(x, y, visceral_slide, annotation, insp_frame)
 
 
-def vis_annotation_and_vs1(archive_path,
-                           output_path):
+def vis_annotation_and_computed_vs(annotations_path,
+                                   images_path,
+                                   masks_path,
+                                   inspexp_file_path,
+                                   output_path,
+                                   save=True):
+    """
+    Computes and visualise visceral slide for all annotated slices and saves as .png images is save flag is True
+    Parameters
+    ----------
+    annotations_path, images_path, masks_path, inspexp_file_path : Path
+        Paths to annotations, images, masks and inspiration/expiration files
+    output_path : Path
+        A Path to save visualised annotation and visceral slide over a frame for which visceral slide is computed
+    save : bool
+        A boolean flag indicating whether to save or show visualisation
+    """
     output_path.mkdir(exist_ok=True)
-
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
-    inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
-
-    images_path = archive_path / IMAGES_FOLDER
-    masks_path = archive_path / "full_segmentation" / "merged_segmentation"
 
     # load annotations
     annotations = load_annotations(annotations_path)
@@ -638,148 +792,77 @@ def vis_annotation_and_vs1(archive_path,
     # load slices with visceral slide and annotations
     for annotation in annotations:
 
+        # Load inspiration and expiration frames and masks
         try:
-            patient_data = inspexp_data[annotation.patient_id]
-            scan_data = patient_data[annotation.scan_id]
-            inspexp_frames = scan_data[annotation.slice_id]
+            insp_frame, exp_frame = load_inspexp_frames(images_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
+            insp_mask, exp_mask = load_inspexp_frames(masks_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
         except:
             print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                        annotation.scan_id,
                                                                                        annotation.slice_id))
 
-        # load images
-        slice_path = annotation.build_path(images_path)
-        slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
-        insp_frame = slice_array[inspexp_frames[0]].astype(np.uint32)
-        exp_frame = slice_array[inspexp_frames[1]].astype(np.uint32)
-
-        # load masks
-        mask_path = annotation.build_path(masks_path)
-        mask_array = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
-        insp_mask = mask_array[inspexp_frames[0]]
-        exp_mask = mask_array[inspexp_frames[1]]
-
-        # registration
+        # Compute visceral slide
         x, y, visceral_slide = VisceralSlideDetector().get_visceral_slide(insp_frame, insp_mask, exp_frame, exp_mask)
 
-        slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
-        annotated_visc_slide_path = output_path / (slice_id + ".png")
-
-        show_annotation_and_vs(x, y, visceral_slide, annotation, insp_frame, save_file_name=annotated_visc_slide_path)
-
-
-def load_visceral_slide(visceral_slide_file_path):
-    # Load the computed visceral slide
-    with open(str(visceral_slide_file_path), "r+b") as file:
-        visceral_slide_data = pickle.load(file)
-        x, y = visceral_slide_data["x"], visceral_slide_data["y"]
-        visceral_slide = visceral_slide_data["slide"]
-
-    return x, y, visceral_slide
+        if save:
+            annotated_visc_slide_path = output_path / (annotation.full_id + ".png")
+            show_annotation_and_vs(x, y, visceral_slide, annotation, insp_frame, file_name=annotated_visc_slide_path)
+        else:
+            show_annotation_and_vs(x, y, visceral_slide, annotation, insp_frame)
 
 
-def load_expiration_frame(archive_path, inspexp_data, patient_id, scan_id, slice_id):
-    patient_data = inspexp_data[patient_id]
-    scan_data = patient_data[scan_id]
-    exp_frame = scan_data[slice_id][1]
-
-    # Load the expiration frame (visceral slide is computed for the expiration frame)
-    expiration_frame_path = archive_path / IMAGES_FOLDER / patient_id / scan_id / (slice_id + ".mha")
-    expiration_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(expiration_frame_path)))[exp_frame]
-
-    return expiration_frame
-
-
-def annotations_statistics(archive_path,
-                           full_segmentation_path,
-                           visceral_slide_path):
-
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_FILE
-    inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
+def annotations_statistics(expanded_annotations_path):
+    """
+    Prints statistics of annotations with bounding boxes
+    Parameters
+    ----------
+    expanded_annotations_path : Path
+       A path to a metadata file with bounding boxes annotations and added adhesion type
+    """
 
     # load annotations
-    annotations = load_annotations(annotations_path)
-    # load inspiration and expiration data
-    with open(inspexp_file_path) as inspexp_file:
-        inspexp_data = json.load(inspexp_file)
+    annotations = load_annotations(expanded_annotations_path)
+    annotations_num = len(annotations)
+    print("Number of annotations: {}".format(annotations_num))
 
     # load slices with visceral slide and annotations
     annotations_to_front_wall = 0
     annotations_to_contour = 0
+    annotations_inside = 0
     adhesions_num = 0
-    annotations_num = 0
-    annotated_num = 0
-    annotated_vs_num = 0
+
     for annotation in annotations:
-        annotated_num += len(annotation.adhesions)
-        print("Annotation {}".format(annotations_num))
-        segmentation_path = full_segmentation_path / annotation.patient_id / annotation.scan_id / (annotation.slice_id + ".mha")
-        if segmentation_path.exists():
-            visceral_slide_file_path = visceral_slide_path / annotation.patient_id / annotation.scan_id / annotation.slice_id / "visceral_slide.pkl"
-            if visceral_slide_file_path.exists():
-                x, y, visceral_slide = load_visceral_slide(visceral_slide_file_path)
+        adhesions_num += len(annotation.adhesions)
+
+        for adhesion in annotation.adhesions:
+            if adhesion.type == AdhesionType.anteriorWall:
+                annotations_to_front_wall += 1
+            elif adhesion.type == AdhesionType.abdominalCavityContour:
+                annotations_to_contour += 1
             else:
-                visceral_slide = None
-                print("No visceral slide data for patient {}, scan {}, slice {}".format(annotation.patient_id,
-                                                                                        annotation.scan_id,
-                                                                                        annotation.slice_id))
+                annotations_inside += 1
 
-            try:
-                expiration_frame = load_expiration_frame(archive_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
-            except:
-                expiration_frame = None
-                print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
-                                                                                           annotation.scan_id,
-                                                                                           annotation.slice_id))
+    print("Number of adhesions in annotations: {}".format(adhesions_num))
 
-            # To visually evaluate of intersection detection is correct
-            if visceral_slide is not None and expiration_frame is not None:
-                if annotations_num == 50:
-                    show_annotation_and_vs(x, y, visceral_slide, annotation, expiration_frame,
-                                           title="Annotation {}".format(annotations_num))
-
-            # Load predicted segmentation for the whole scan
-            slice_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(segmentation_path)))
-            # For each adhesion in this annotation check if it is adjacent to the front abdominal wall
-            for adhesion in annotation.adhesions:
-                intersect_anterior_wall = False
-                intersect_contour = False
-                # For all frames in the slice check if any intersects with adhesion annotation
-                for mask in slice_mask:
-                    x, y, _, _ = get_contour(mask)
-                    x_anterior, y_anterior = get_abdominal_wall_coord(x, y)
-                    intersect_anterior_wall = adhesion.intersects_contour(x_anterior, y_anterior)
-                    if intersect_anterior_wall:
-                        intersect_contour = True
-                        break
-
-                    intersect_contour = intersect_contour or adhesion.intersects_contour(x, y)
-
-                if intersect_anterior_wall:
-                    print("This adhesion annotation is adjacent to the front abdominal wall")
-                    annotations_to_front_wall += 1
-                    annotations_to_contour += 1
-                elif intersect_contour:
-                    print("This adhesion annotation is adjacent to the abdominal cavity contour")
-                    annotations_to_contour += 1
-
-                adhesions_num += 1
-            annotated_vs_num += 1
-        annotations_num += 1
-
-    print("{} of {} annotated adhesions have information about contour".format(adhesions_num, annotated_num))
     print("{} of {} are adjacent to the front abdominal wall".format(annotations_to_front_wall, adhesions_num))
     print("{} of {} are adjacent to the abdominal cavity contour".format(annotations_to_contour, adhesions_num))
+    print("{} of {} are inside the abdominal cavity".format(annotations_inside, adhesions_num))
 
 
-# A function to examine the detected front wall for all annotation for each
-# abdominal cavity contour is available at the moment
-def test_abdominal_wall_detection(archive_path, visceral_slide_path, target_path, type=AbdominalContourPart.anterior_wall):
+def test_cavity_part_detection(annotations_path, images_path, inspexp_file_path, visceral_slide_path, target_path, type=AbdominalContourPart.anterior_wall):
+    """
+    Visualises detection of the specified abdominal cavity part for all annotated slices
+    Parameters
+    ----------
+    annotations_path, images_path, inspexp_file_path, visceral_slide_path : Path
+       Paths to annotations, images, inspiration/expiration data and the computed visceral slide
+    target_path : Path
+       A path where to save visualisation
+    type : AbdominalContourPart
+       A type of abdominal cavity part to detect
+    """
 
     target_path.mkdir(exist_ok=True)
-
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
-    inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
 
     # load annotations
     annotations = load_annotations(annotations_path)
@@ -789,154 +872,53 @@ def test_abdominal_wall_detection(archive_path, visceral_slide_path, target_path
 
     # load slices with visceral slide and annotations
     for annotation in annotations:
-        visceral_slide_results_path = visceral_slide_path / annotation.patient_id / annotation.scan_id / annotation.slice_id
+        visceral_slide_results_path = annotation.build_path(visceral_slide_path, extension="")
         if visceral_slide_results_path.exists():
-            # Load the computed visceral slide
-            visceral_slide_file_path = visceral_slide_results_path / "visceral_slide.pkl"
-            with open(str(visceral_slide_file_path), "r+b") as file:
-                visceral_slide_data = pickle.load(file)
-                x, y = visceral_slide_data["x"], visceral_slide_data["y"]
+            # Load the abdominal cavity contour from the computed visxeral slide info
+            x, y, _ = load_visceral_slide(visceral_slide_results_path)
 
+            # Load the inspiration frame (visceral slide is computed for the inspiration frame)
             try:
-                patient_data = inspexp_data[annotation.patient_id]
-                scan_data = patient_data[annotation.scan_id]
-                insp_frame = scan_data[annotation.slice_id][0]
+                insp_frame, _ = load_inspexp_frames(images_path, inspexp_data, annotation.patient_id, annotation.scan_id, annotation.slice_id)
             except:
                 print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                            annotation.scan_id,
                                                                                            annotation.slice_id))
 
-            # Load the inspiration frame (visceral slide is computed for the inspiration frame)
-            inspiration_frame_path = archive_path / IMAGES_FOLDER / annotation.patient_id / annotation.scan_id / (
-                    annotation.slice_id + ".mha")
-            insp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(inspiration_frame_path)))[insp_frame]
-
-            slice_id = SEPARATOR.join([annotation.patient_id, annotation.scan_id, annotation.slice_id])
-            verify_abdominal_wall(x, y, insp_frame, slice_id, target_path, type)
+            verify_abdominal_wall(x, y, insp_frame, annotation.full_id, target_path, type)
 
 
-
-def get_connected_regions(contour_subset_coords, connectivity_threshold=5):
+def verify_abdominal_wall(x, y, frame, slice_id, target_path, type=AbdominalContourPart.anterior_wall):
     """
-    Given a subset of contour coordinates returns a list of connected regions
-    considering the specified connectivity threshold
-
-    Parameters
-    ----------
-    contour_subset_coords : list of list
-       A list containing a subset of coordinates of a contour
-    connectivity_threshold : int, default=5
-       Threshold which indicates the maximum difference in x component allowed between
-       the subsequent coordinates of a contour to be considered connected
-
-    Returns
-    -------
-    regions : list of list
-       A list of start and end coordinates of all connected regions
-
-    """
-
-    regions = []
-    region_start = contour_subset_coords[0]
-    coord_prev = region_start
-    coords_num = contour_subset_coords.shape[0]
-    for index in range(1, coords_num):
-        coord_curr = contour_subset_coords[index]
-        if abs(coord_curr[1] - coord_prev[1]) > connectivity_threshold:
-            regions.append([region_start, coord_prev])
-            region_start = coord_curr
-        coord_prev = coord_curr
-
-    regions.append([region_start, contour_subset_coords[-1]])
-
-    return regions
-
-
-def get_abdominal_contour_top(x, y, connectivity_threshold=5):
-    """
-    Extracts coordinates of the abdominal wall of the specified type from abdominal cavity contour
-
+    Allows to visually evaluate the detection of the specified abdominal cavity part by plotting
+    abdominal cavity contour over the frame and the detected cavity part over the frame next to each other
     Parameters
     ----------
     x, y : list of int
-       x-axis and y-axis components of abdominal cavity contour
+       Coordinates of abdominal cavity contour
+    frame : ndarray
+       Frame for which the abdominal cavity contour is computed
+    slice_id : str
+       A full id of the slice
+    target_path : Path
+       A path where to save the images
     type : AbdominalContourPart
-       indicates which abdominal wall to detect, anterior or posterior
-
-    connectivity_threshold : int, default=5
-       Threshold which indicates the maximum difference in x component allowed between
-       the subsequent coordinates of a contour to be considered connected
-
-    Returns
-    -------
-    x_wall, y_wall : ndarray of int
-       x-axis and y-axis components of abdominal wall
+       A type of the abdominal cavity contour to verify
     """
-
-    coords = np.column_stack((x, y))
-    # Get unique x coordinates
-    x_unique = np.unique(x)
-
-    # For each unique y find the x on the specified side of abdominal cavity contour
-    y_top = []
-    for x_current in x_unique:
-        # Get all x values of coordinates which have y = y_current
-        ys = [coord[1] for coord in coords if coord[0] == x_current]
-        y_top.append(sorted(ys)[0])
-
-    # Unique y coordinates and the corresponding x coordinates
-    # should give good approximation of the abdominal wall
-    y_top = np.array(y_top)
-    top_contour_coords = np.column_stack((x_unique, y_top))
-
-    regions = get_connected_regions(top_contour_coords, connectivity_threshold)
-
-    # Discard regions below the middle y
-    y = np.array(y)
-    middle_y = (y.max() - y.min()) / 2
-    top_regions = []
-    for region in regions:
-        # Check that min and max y of a region is above middle_y
-        if region[0][1] < middle_y and region[1][1] < middle_y:
-            top_regions.append(region)
-
-    # Find and return the longest region
-    top_regions_len = np.array([(region[1][0] - region[0][0] + 1) for region in top_regions])
-    longest_region_ind = np.argmax(top_regions_len)
-    longest_region = top_regions[longest_region_ind]
-
-    longest_region_start = longest_region[0]
-    longest_region_end = longest_region[1]
-
-    # The contour returned by cinemri.contour.get_contour() always starts from
-    # the lowest-left point of the contour, so when we determine the top part
-    # we can safely expect that by using the start and end point
-    # of the longest top region we will get a connected area from the contour coordinates
-
-    longest_region_start_ind = np.where((coords == longest_region_start).all(axis=1))[0][0]
-    longest_region_end_ind = np.where((coords == longest_region_end).all(axis=1))[0][0]
-    top_coords = coords[longest_region_start_ind:longest_region_end_ind]
-
-    return top_coords[:, 0], top_coords[:, 1]
-
-
-
-# Allows to visually evaluate quality of the detection of front abdominal wall
-# By plotting abdominal cavity contour over the frame and the detected front wall over the frame
-# next to each other
-def verify_abdominal_wall(x, y, exp_frame, slice_id, target_path, type=AbdominalContourPart.anterior_wall):
 
     fig = plt.figure()
     ax = fig.add_subplot(121)
-    plt.imshow(exp_frame, cmap="gray")
+    plt.imshow(frame, cmap="gray")
     plt.axis('off')
     ax.scatter(x, y, s=4, color="r")
 
-    x_abdominal_wall, y_abdominal_wall = get_abdominal_contour_top(x, y)
-    #x_abdominal_wall, y_abdominal_wall = get_abdominal_wall_coord(x, y, type)
+    if type == AbdominalContourPart.top:
+        x_abdominal_wall, y_abdominal_wall = get_abdominal_contour_top(x, y)
+    else:
+        x_abdominal_wall, y_abdominal_wall = get_abdominal_wall_coord(x, y, type)
 
     ax = fig.add_subplot(122)
-    plt.imshow(exp_frame, cmap="gray")
+    plt.imshow(frame, cmap="gray")
     plt.axis('off')
     ax.scatter(x_abdominal_wall, y_abdominal_wall, s=4, color="r")
     plt.axis('off')
@@ -951,38 +933,9 @@ def test():
     output_path = archive_path / "visceral_slide" / "new_insp_exp"
     full_segmentation_path = archive_path / "full_segmentation" / "merged_segmentation"
     bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE
-
+    images_path = archive_path / IMAGES_FOLDER
+    ie_file = metadata_path / INSPEXP_FILE_NAME
     bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
-
-    #annotations = load_annotations(bb_annotation_path)
-    #save_annotated_gifs(annotations, archive_path)
-    #vis_annotation_and_vs(archive_path, visceral_slide_path, output_path)
-    #vis_annotation_and_vs1(archive_path, output_path)
-
-    test_abdominal_wall_detection(archive_path, visceral_slide_path, Path("contour_top_results_disc_filled"))
-    #test_abdominal_wall_detection(archive_path, visceral_slide_path, Path("anterior_wall_results"))
-    #test_abdominal_wall_detection(archive_path, visceral_slide_path, Path("posterior_wall_results"), AbdominalContourPart.posterior_wall)
-    #annotations_statistics(archive_path, full_segmentation_path, visceral_slide_path)
-
-    #annotations = load_annotations(bb_expanded_annotation_path, adhesion_types=[3])
-    #print(len(annotations))
-
-    #extract_adhesions_metadata(archive_path, bb_annotation_path, full_segmentation_path)
-    #extract_annotations_metadata(archive_path)
-
-    """
-    negative_patients = load_negative_patients(archive_path)
-    print("Certainly negative patients")
-    print([p.id for p in negative_patients])
-    """
-
-    
-    # Show randomly sampled annotation
-    #annotation = random.choice(annotations)
-    #show_annotation(annotation, archive_path)
-    #save_annotated_gifs(annotations, archive_path)
-    #annotate_mha(annotations, archive_path)
-
     
 
 if __name__ == '__main__':
