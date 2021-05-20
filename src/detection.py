@@ -22,7 +22,7 @@ from cinemri.utils import get_image_orientation
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from skimage import io
 from sklearn.model_selection import KFold
-from visceral_slide_pipeline import get_insp_exp_indices, get_inspexp_frames, get_insp_exp_frames_and_masks
+from visceral_slide_pipeline import get_inspexp_frames
 
 POSITIVE_FOLDER = "positive"
 

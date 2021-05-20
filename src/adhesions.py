@@ -244,7 +244,7 @@ class AdhesionAnnotation:
            A path to a cine-MRI scan
 
         """
-        return slice.build_path(relative_path, extension=extension)
+        return self.slice.build_path(relative_path, extension=extension)
 
 
 def load_annotations(annotations_path,
@@ -879,7 +879,7 @@ def test_cavity_part_detection(annotations_path, images_path, inspexp_file_path,
 
             # Load the inspiration frame (visceral slide is computed for the inspiration frame)
             try:
-                insp_frame, _ = annotation.slice,(annotation.slice, inspexp_data, images_path)
+                insp_frame, _ = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
             except:
                 print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
                                                                                            annotation.scan_id,
@@ -936,6 +936,8 @@ def test():
     images_path = archive_path / IMAGES_FOLDER
     ie_file = metadata_path / INSPEXP_FILE_NAME
     bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
+    
+    test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path, Path("test"), AbdominalContourPart.top)
     
 
 if __name__ == '__main__':

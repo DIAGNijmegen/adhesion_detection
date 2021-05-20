@@ -2,14 +2,19 @@ import numpy as np
 import SimpleITK as sitk
 import pickle
 import json
+import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
+from pathlib import Path
 from adhesions import AdhesionType, Adhesion, load_annotations, get_abdominal_contour_top
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, BB_ANNOTATIONS_EXPANDED_FILE
-from pathlib import Path
 from cinemri.config import ARCHIVE_PATH
-import matplotlib.pyplot as plt
+from utils import average_bb_size
+from contour import get_connected_regions
+from visceral_slide_pipeline import get_inspexp_frames
+from froc.deploy_FROC import y_to_FROC
 
 VISCERAL_SLIDE_PATH = "../../data/visceral_slide_all/visceral_slide"
+PREDICTION_COLOR = (0, 0.8, 0.2)
 
 # thresholding method
 # map
@@ -23,7 +28,8 @@ VISCERAL_SLIDE_PATH = "../../data/visceral_slide_all/visceral_slide"
 # method to load visceral slide for annotations
 # output dict by full id
 
-def load_visceral_slide(annotations, visceral_slide_path):
+# TODO: rename
+def extract_visceral_slide_dict(annotations, visceral_slide_path):
     visceral_slide_dict = {}
     for annotation in annotations:
         visceral_slide_results_path = annotation.build_path(visceral_slide_path, extension="")
@@ -35,116 +41,6 @@ def load_visceral_slide(annotations, visceral_slide_path):
                 visceral_slide_dict[annotation.full_id] = visceral_slide_data
 
     return visceral_slide_dict
-
-
-def annotations_stat(annotations):
-    """
-    Reports statistics of bounding box annotations
-
-    Parameters
-    ----------
-    annotations : list of AdhesionAnnotation
-        List of annotations for which statistics should be computed
-    """
-
-    widths = []
-    heights = []
-    largest_bb = annotations[0].adhesions[0]
-    smallest_bb = annotations[0].adhesions[0]
-
-    for annotation in annotations:
-        for adhesion in annotation.adhesions:
-            widths.append(adhesion.width)
-            heights.append(adhesion.height)
-
-            curr_perim = adhesion.width + adhesion.height
-
-            if curr_perim > largest_bb.width + largest_bb.height:
-                largest_bb = adhesion
-
-            if curr_perim < smallest_bb.width + smallest_bb.height:
-                smallest_bb = adhesion
-
-    print("Minimum width: {}".format(np.min(widths)))
-    print("Minimum height: {}".format(np.min(heights)))
-
-    print("Maximum width: {}".format(np.max(widths)))
-    print("Maximum height: {}".format(np.max(heights)))
-
-    print("Mean width: {}".format(np.mean(widths)))
-    print("Mean height: {}".format(np.mean(heights)))
-
-    print("Median width: {}".format(np.median(widths)))
-    print("Median height: {}".format(np.median(heights)))
-
-    print("Smallest annotation, x_o: {}, y_o: {}, width: {}, height: {}".format(smallest_bb.origin_x, smallest_bb.origin_y, smallest_bb.width, smallest_bb.height))
-    print("Largest annotation, width: {}, height: {}".format(largest_bb.width, largest_bb.height))
-
-
-# TODO: training set
-def average_bb_size(annotations):
-    """
-    Computes an average adhesion boundig box size
-
-    Parameters
-    ----------
-    annotations : list of AdhesionAnnotation
-       List of annotations for which an average size of a bounding box should be determined
-
-    Returns
-    -------
-    width, height : int
-       A tuple of average width and height in adhesion annotations with bounding boxes
-    """
-
-    widths = []
-    heights = []
-
-    for annotation in annotations:
-        for adhesion in annotation.adhesions:
-            widths.append(adhesion.width)
-            heights.append(adhesion.height)
-
-    return np.mean(widths), np.mean(heights)
-
-
-# need to get all coordinates in regions
-def get_connected_regions(contour_subset_coords, connectivity_threshold=5):
-    """
-    Given a subset of contour coordinates returns a list of connected regions
-    considering the specified connectivity threshold
-
-    Parameters
-    ----------
-    contour_subset_coords : list of list
-       A list containing a subset of coordinates of a contour
-    connectivity_threshold : int, default=5
-       Threshold which indicates the maximum difference in x component allowed between
-       the subsequent coordinates of a contour to be considered connected
-
-    Returns
-    -------
-    regions : list of list
-       A list of lists of coordinates that belong to connected regions. Length of regions might vary
-
-    """
-
-    regions = []
-    coord_prev = contour_subset_coords[0]
-    coords_num = contour_subset_coords.shape[0]
-    current_region = [coord_prev]
-    for index in range(1, coords_num):
-        coord_curr = contour_subset_coords[index]
-        distance = np.sqrt((coord_curr[0] - coord_prev[0])**2 + (coord_curr[1] - coord_prev[1])**2)
-        if distance > connectivity_threshold:
-            regions.append(current_region)
-            current_region = []
-        coord_prev = coord_curr
-        current_region.append(coord_prev)
-
-    regions.append(current_region)
-
-    return regions
 
 
 def bb_from_region(region, mean_width, mean_height):
@@ -163,8 +59,7 @@ def bb_from_region(region, mean_width, mean_height):
     Returns
     -------
     adhesion : Adhesion
-       An annotation corresponding to the region
-
+       A bounding box corresponding to the region
     """
     region_centre = region[round(len(region) / 2) - 1]
 
@@ -231,24 +126,39 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
 
     low_slide_threshold = slide_normalized_sorted[threshold_ind]
 
+    lowest_slide = slide_normalized_sorted.min()
+    norm_const = low_slide_threshold / (low_slide_threshold - lowest_slide)
+
     # Coordinates and values of low slide
     low_slide_regions = slide_normalized <= low_slide_threshold
     low_slide_x = x[low_slide_regions]
     low_slide_y = y[low_slide_regions]
+    low_slide_values = slide_normalized[low_slide_regions]
 
-    low_slide_coords = np.column_stack((low_slide_x, low_slide_y))
+    low_slide_coords = np.column_stack((low_slide_x, low_slide_y, low_slide_values))
     low_slide_regions = get_connected_regions(low_slide_coords)
+    # Add threshold to regions
 
     # Filter regions by min length
+    # Need a set of points with len
     low_slide_regions = [region for region in low_slide_regions if len(region) >= min_region_len]
 
     # Get central point of each region to generate a bounding box
     bounding_boxes = [bb_from_region(region, mean_width, mean_height) for region in low_slide_regions]
 
-    return bounding_boxes
+    # Compute confidence for each prediction based on the region average index
+    mean_slides = []
+    for region in low_slide_regions:
+        region_slides = [comp[2] for comp in region]
+        mean_region_slide = np.mean(region_slides)
+        mean_slides.append(mean_region_slide)
+    confidence = [norm_const * (1 - mean_slide / low_slide_threshold) for mean_slide in mean_slides]
+
+    prediction = [(bb, conf) for bb, conf in zip(bounding_boxes, confidence) ]
+    return prediction
 
 
-def visualize_gt_vs_prediction(annotation, bounding_boxes, x, y, slide_normalized, insp_frame, file_path=None):
+def visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, insp_frame, file_path=None):
     """
     Visualises ground truth annotations vs prediction together with visceral slide
     on the inspiration frame
@@ -257,8 +167,8 @@ def visualize_gt_vs_prediction(annotation, bounding_boxes, x, y, slide_normalize
     ----------
     annotation : AdhesionAnnotation
         A ground truth annotation for a slice
-    bounding_boxes : list of Adhesion
-       A list of predicted bounding boxes
+    prediction : list of (Adhesion, float)
+       A list of predicted bounding boxes and the corresponding confidence scores
     x, y : ndarray of int
        x-axis and y-axis components of abdominal cavity contour
     slide_normalized : ndarray of float
@@ -281,10 +191,11 @@ def visualize_gt_vs_prediction(annotation, bounding_boxes, x, y, slide_normalize
                                   linewidth=1.5, edgecolor='r', facecolor='none')
         ax.add_patch(adhesion_rect)
 
-    for adhesion in bounding_boxes:
+    for adhesion, confidence in prediction:
         adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
-                                  linewidth=1.5, edgecolor='g', facecolor='none')
+                                  linewidth=1.5, edgecolor=PREDICTION_COLOR, facecolor='none')
         ax.add_patch(adhesion_rect)
+        plt.text(adhesion.origin_x, adhesion.origin_y - 3, "{:.3f}".format(confidence), c=PREDICTION_COLOR, fontweight='semibold')
     plt.axis("off")
 
     if file_path is not None:
@@ -300,7 +211,7 @@ def predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp
 
     output_path.mkdir(exist_ok=True)
 
-    visceral_slide_dict = load_visceral_slide(annotations, visceral_slide_path)
+    visceral_slide_dict = extract_visceral_slide_dict(annotations, visceral_slide_path)
     # Average bounding box size
     mean_width, mean_height = average_bb_size(annotations)
 
@@ -310,26 +221,18 @@ def predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp
         visceral_slide = visceral_slide_data["slide"]
         slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
 
-        bounding_boxes = bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold, min_region_len)
+        prediction = bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold, min_region_len)
 
         # Extract inspiration frame
         try:
-            patient_data = inspexp_data[annotation.patient_id]
-            scan_data = patient_data[annotation.scan_id]
-            inspexp_frames = scan_data[annotation.slice_id]
+            insp_frame, _ = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
         except:
-            print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
-                                                                                       annotation.scan_id,
-                                                                                       annotation.slice_id))
-
-        # load images
-        slice_path = annotation.build_path(images_path)
-        slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
-        insp_frame = slice_array[inspexp_frames[0]].astype(np.uint32)
+            print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
+                                                                                       slice.scan_id,
+                                                                                       slice.slice_id))
 
         file_path = output_path / (annotation.full_id + ".png")
-
-        visualize_gt_vs_prediction(annotation, bounding_boxes, x, y, slide_normalized, insp_frame, file_path)
+        visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, insp_frame, file_path)
 
 
 # TODO: should we also output confidence here?
@@ -359,8 +262,11 @@ def predict(full_ids, visceral_slide_dict, mean_width, mean_height, threshold=0.
         visceral_slide = visceral_slide_data["slide"]
         slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
 
-        bounding_boxes = bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold, min_region_len)
-        predictions[full_id] = bounding_boxes
+        prediction = bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold, min_region_len)
+        #bounding_boxes = [bb for bb, _ in prediction]
+        predictions[full_id] = prediction
+
+        #confidences = [conf for _, conf in prediction]
 
     return predictions
 
@@ -373,16 +279,18 @@ def predict(full_ids, visceral_slide_dict, mean_width, mean_height, threshold=0.
 # Maybe confidence - inverse of length? Ask supervisors about it
 def evaluate(annotations, predictions, iou_threshold=0.1, visceral_slide_dict=None, images_path=None, inspexp_data=None):
 
-    found_tp = []
+    tps = []
     tp_num = 0
     fps = []
     fns = []
     prediction_num = 0
     for annotation in annotations:
         prediction = predictions[annotation.full_id]
+        # Tracks which predictions has been assigned to a TP
         hit_predictions_inds = []
         tp_num += len(annotation.adhesions)
         prediction_num += len(prediction)
+        # Loop over TPs
         for adhesion in annotation.adhesions:
             adhesion.adjust_size()
 
@@ -391,22 +299,28 @@ def evaluate(annotations, predictions, iou_threshold=0.1, visceral_slide_dict=No
             # For simplicity for now one predicted bb can correspond to only one TP
             for ind, bounding_box in enumerate(prediction):
                 curr_iou = adhesion.iou(bounding_box)
+                # Do not use predictions that have already been assigned to a TP
                 if curr_iou > max_iou and ind not in hit_predictions_inds:
                     max_iou = curr_iou
                     max_iou_ind = ind
 
+            # If a maximum IoU is greater than the threshold, consider a TP as found
             if max_iou >= iou_threshold:
-                found_tp.append((adhesion, bounding_box))
+                matching_pred = prediction[max_iou_ind]
+                tps.append((adhesion, matching_pred))
                 hit_predictions_inds.append(max_iou_ind)
+            # Otherwise add it as a false negative
             else:
                 fns.append(adhesion)
 
-        # get false positive
+        # Get false positive
+        # Predictions that was not matched with a TP are FPs
         tp_mask = np.full(len(prediction), True, dtype=bool)
         tp_mask[hit_predictions_inds] = False
         fps_left = np.array(prediction)[tp_mask]
         fps.append(fps_left)
 
+        # Optionally visualise
         if visceral_slide_dict is not None:
             visceral_slide_data = visceral_slide_dict[annotation.full_id]
             x, y = visceral_slide_data["x"], visceral_slide_data["y"]
@@ -433,17 +347,100 @@ def evaluate(annotations, predictions, iou_threshold=0.1, visceral_slide_dict=No
 
 
     # How many of predicted bbs are TP
-    precision = len(found_tp) / prediction_num
+    precision = len(tps) / prediction_num
     print("Precision {}".format(precision))
 
     # How many of TP are found
-    recall = len(found_tp) / tp_num
+    recall = len(tps) / tp_num
     print("Recall {}".format(recall))
 
     f1_score = 2 * precision * recall / (precision + recall)
     print("F1 score {}".format(f1_score))
 
     return precision, recall, f1_score
+
+
+def get_prediction_outcome(annotations, predictions, iou_threshold=0.1):
+    """
+    Determines TPs, FPS and FNs based on the GT annotations, predictions and IoU threshold
+    Parameters
+    ----------
+    annotations : list of AdhesionAnnotation
+    predictions : list of list
+       Bounding boxes and confidences
+    iou_threshold : float
+
+    Returns
+    -------
+    tps, fps, fns : list
+
+    """
+    tps = []
+    fps = []
+    fns = []
+    for annotation in annotations:
+        prediction = predictions[annotation.full_id]
+        # Tracks which predictions has been assigned to a TP
+        hit_predictions_inds = []
+        # Loop over TPs
+        for adhesion in annotation.adhesions:
+            adhesion.adjust_size()
+
+            max_iou = 0
+            max_iou_ind = -1
+            # For simplicity for now one predicted bb can correspond to only one TP
+            for ind, (bounding_box, confidence) in enumerate(prediction):
+                curr_iou = adhesion.iou(bounding_box)
+                # Do not use predictions that have already been assigned to a TP
+                if curr_iou > max_iou and ind not in hit_predictions_inds:
+                    max_iou = curr_iou
+                    max_iou_ind = ind
+
+            # If a maximum IoU is greater than the threshold, consider a TP as found
+            if max_iou >= iou_threshold:
+                matching_pred = prediction[max_iou_ind]
+                tps.append(matching_pred)
+                hit_predictions_inds.append(max_iou_ind)
+            # Otherwise add it as a false negative
+            else:
+                fns.append(adhesion)
+
+        # Get false positive
+        # Predictions that was not matched with a TP are FPs
+        tp_mask = np.full(len(prediction), True, dtype=bool)
+        tp_mask[hit_predictions_inds] = False
+        fps_left = np.array(prediction)[tp_mask]
+        fps += fps_left.tolist()
+    
+    return tps, fps, fns
+
+
+def get_confidence_outcome(tps, fps, fns):
+    """
+    Determines whether prediction with a given confidence is true or false based on the TPs and FPs lists
+    Parameters
+    ----------
+    tps : list
+       A list of true positives
+    fps : list
+       A list of false positives
+
+    Returns
+    -------
+    outcomes : list
+       A list of tuple of confidence and whether its prediction is true
+    """
+    outcomes = []
+    for _, confidence in tps:
+        outcomes.append((1, confidence))
+        
+    for _, confidence in fps:
+        outcomes.append((0, confidence))
+
+    for _ in fns:
+        outcomes.append((1, 0))
+        
+    return outcomes
 
 
 def prediction_by_threshold(annotations, visceral_slide_path):
@@ -457,12 +454,11 @@ def prediction_by_threshold(annotations, visceral_slide_path):
 
     Returns
     -------
-    metric : float
+    metric :
        Evaluation metric
-
     """
 
-    visceral_slide_dict = load_visceral_slide(annotations, visceral_slide_path)
+    visceral_slide_dict = extract_visceral_slide_dict(annotations, visceral_slide_path)
 
     # Average bounding box size
     mean_width, mean_height = average_bb_size(annotations)
@@ -480,13 +476,46 @@ def prediction_by_threshold(annotations, visceral_slide_path):
         inspexp_data = json.load(inspexp_file)
 
     #evaluate(annotations, predictions, 0.01, visceral_slide_dict, images_path, inspexp_data)
-    evaluate(annotations, predictions, 0.01)
+    #evaluate(annotations, predictions, 0.01)
+
+    tps, fps, fns = get_prediction_outcome(annotations, predictions, 0.01)
+    outcomes = get_confidence_outcome(tps, fps, fns)
+
+    total_patients = len(annotations)
+
+    adhesions_num = 0
+    for annotation in annotations:
+        adhesions_num += len(annotation.adhesions)
+
+    FP_per_image, FP_per_normal_image, sensitivity, thresholds = y_to_FROC(outcomes, [], total_patients, 0)
+
+    plt.figure()
+    plt.plot(FP_per_image, sensitivity)
+    plt.show()
+
+
+    tp_conf = [tp[1] for tp in tps]
+    mean_tp_conf = np.mean(tp_conf)
+    print("Mean TP conf {}".format(mean_tp_conf))
+    var_tp_conf = np.var(tp_conf)
+
+    fp_conf = [fp[1] for fp in fps]
+    mean_fp_conf = np.mean(fp_conf)
+    print("Mean FP conf {}".format(mean_fp_conf))
+    var_fp_conf = np.var(fp_conf)
+
+    mean_diff = mean_tp_conf - mean_fp_conf
+    mean_se = np.sqrt(var_tp_conf/len(tp_conf) + var_fp_conf/len(fp_conf))
+
+    t = mean_diff / mean_se
+    print("T-score {}".format(t))
+    pass
+
 
 
 # determine bounding box as rect with origin in min x, min y and bottom right angle max x, max y
 # for this setup min number of points in the cluster and connectivity threshold
 # also IoU - 0.1?
-
 
 def test():
     archive_path = Path(ARCHIVE_PATH)
@@ -499,13 +528,13 @@ def test():
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
-    adhesion_types = [AdhesionType.anteriorWall.value, AdhesionType.abdominalCavityContour.value]
+    adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
     annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
     
     output = Path("threshold_prediction")
     
     #annotations_stat(annotations)
-    predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output)
+    #predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output, min_region_len=5)
     prediction_by_threshold(annotations, visceral_slide_path)
 
     #bb_with_threshold(annotations, visceral_slide_path, inspexp_data, images_path)

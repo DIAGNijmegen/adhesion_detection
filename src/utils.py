@@ -152,6 +152,76 @@ def select_segmentation_patients_subset(archive_path, target_path, n=10):
             scan_dir.mkdir()
 
 
+def average_bb_size(annotations):
+    """
+    Computes an average adhesion boundig box size
+
+    Parameters
+    ----------
+    annotations : list of AdhesionAnnotation
+       List of annotations for which an average size of a bounding box should be determined
+
+    Returns
+    -------
+    width, height : int
+       A tuple of average width and height in adhesion annotations with bounding boxes
+    """
+
+    widths = []
+    heights = []
+
+    for annotation in annotations:
+        for adhesion in annotation.adhesions:
+            widths.append(adhesion.width)
+            heights.append(adhesion.height)
+
+    return np.mean(widths), np.mean(heights)
+
+
+def adhesions_stat(annotations):
+    """
+    Reports statistics of bounding box annotations
+
+    Parameters
+    ----------
+    annotations : list of AdhesionAnnotation
+        List of annotations for which statistics should be computed
+    """
+
+    widths = []
+    heights = []
+    largest_bb = annotations[0].adhesions[0]
+    smallest_bb = annotations[0].adhesions[0]
+
+    for annotation in annotations:
+        for adhesion in annotation.adhesions:
+            widths.append(adhesion.width)
+            heights.append(adhesion.height)
+
+            curr_perim = adhesion.width + adhesion.height
+
+            if curr_perim > largest_bb.width + largest_bb.height:
+                largest_bb = adhesion
+
+            if curr_perim < smallest_bb.width + smallest_bb.height:
+                smallest_bb = adhesion
+
+    print("Minimum width: {}".format(np.min(widths)))
+    print("Minimum height: {}".format(np.min(heights)))
+
+    print("Maximum width: {}".format(np.max(widths)))
+    print("Maximum height: {}".format(np.max(heights)))
+
+    print("Mean width: {}".format(np.mean(widths)))
+    print("Mean height: {}".format(np.mean(heights)))
+
+    print("Median width: {}".format(np.median(widths)))
+    print("Median height: {}".format(np.median(heights)))
+
+    print("Smallest annotation, x_o: {}, y_o: {}, width: {}, height: {}".format(smallest_bb.origin_x, smallest_bb.origin_y, smallest_bb.width, smallest_bb.height))
+    print("Largest annotation, width: {}, height: {}".format(largest_bb.width, largest_bb.height))
+
+
 def test():
     archive_path = Path("../../data/cinemri_mha/rijnstate")
     subset_path = Path("../../data/cinemri_mha/segmentation_subset")
