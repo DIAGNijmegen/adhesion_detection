@@ -12,6 +12,7 @@ from utils import average_bb_size
 from contour import get_connected_regions
 from visceral_slide_pipeline import get_inspexp_frames
 from froc.deploy_FROC import y_to_FROC
+from scipy import stats
 
 VISCERAL_SLIDE_PATH = "../../data/visceral_slide_all/visceral_slide"
 PREDICTION_COLOR = (0, 0.8, 0.2)
@@ -263,10 +264,7 @@ def predict(full_ids, visceral_slide_dict, mean_width, mean_height, threshold=0.
         slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
 
         prediction = bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold, min_region_len)
-        #bounding_boxes = [bb for bb, _ in prediction]
         predictions[full_id] = prediction
-
-        #confidences = [conf for _, conf in prediction]
 
     return predictions
 
@@ -466,7 +464,7 @@ def prediction_by_threshold(annotations, visceral_slide_path):
 
     # vary threshold level
     # Get predictions by visceral slide level threshold
-    predictions = predict(full_ids, visceral_slide_dict, mean_width, mean_height, 0.2, 5)
+    predictions = predict(full_ids, visceral_slide_dict, mean_width, mean_height, 0.3, 5)
 
     archive_path = Path(ARCHIVE_PATH)
     images_path = archive_path / IMAGES_FOLDER
@@ -474,9 +472,6 @@ def prediction_by_threshold(annotations, visceral_slide_path):
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
-
-    #evaluate(annotations, predictions, 0.01, visceral_slide_dict, images_path, inspexp_data)
-    #evaluate(annotations, predictions, 0.01)
 
     tps, fps, fns = get_prediction_outcome(annotations, predictions, 0.01)
     outcomes = get_confidence_outcome(tps, fps, fns)
@@ -487,31 +482,113 @@ def prediction_by_threshold(annotations, visceral_slide_path):
     for annotation in annotations:
         adhesions_num += len(annotation.adhesions)
 
-    FP_per_image, FP_per_normal_image, sensitivity, thresholds = y_to_FROC(outcomes, [], total_patients, 0)
+    FP_per_image, FP_per_normal_image, sensitivity, thresholds = y_to_FROC(outcomes, [], total_patients, 1)
 
-    plt.figure()
-    plt.plot(FP_per_image, sensitivity)
-    plt.show()
+    plot_FROC(FP_per_image, sensitivity)
 
+    recall, precision, thresholds = compute_pr_curves(outcomes)
+    ap, precision1, recall1 = compute_ap(recall, precision)
+
+    plot_precision_recall(recall, thresholds, "Recall")
+    plot_precision_recall(precision, thresholds)
+
+    print("Average precision {}".format(ap))
 
     tp_conf = [tp[1] for tp in tps]
     mean_tp_conf = np.mean(tp_conf)
     print("Mean TP conf {}".format(mean_tp_conf))
-    var_tp_conf = np.var(tp_conf)
 
     fp_conf = [fp[1] for fp in fps]
     mean_fp_conf = np.mean(fp_conf)
     print("Mean FP conf {}".format(mean_fp_conf))
-    var_fp_conf = np.var(fp_conf)
 
-    mean_diff = mean_tp_conf - mean_fp_conf
-    mean_se = np.sqrt(var_tp_conf/len(tp_conf) + var_fp_conf/len(fp_conf))
-
-    t = mean_diff / mean_se
-    print("T-score {}".format(t))
-    pass
+    t_test = stats.ttest_ind(tp_conf, fp_conf, equal_var=False)
+    print("T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
 
 
+def compute_pr_curves(outcomes):
+    # Compute precision and recall curves from list of predictions and confidence
+    # Sort Predictions
+    outcomes.sort()
+    labels = []
+    predictions = []
+
+    recall = []
+    precision = []
+
+    for label, prediction in outcomes:
+        labels.append(label)
+        predictions.append(prediction)
+
+    # Total Number of Lesions
+    y_true_all = np.array(labels)
+    y_pred_all = np.array(predictions)
+    total_lesions = y_true_all.sum()
+
+    thresholds = np.unique(y_pred_all)
+    thresholds.sort()
+    thresholds = thresholds[::-1]
+
+    for th in thresholds:
+        if th > 0:
+            y_pred_all_thresholded                  = np.zeros_like(y_pred_all)
+            y_pred_all_thresholded[y_pred_all > th] = 1
+            tp     = np.sum(y_true_all * y_pred_all_thresholded)
+            fp     = np.sum(y_pred_all_thresholded - y_true_all*y_pred_all_thresholded)
+
+            # Add the corresponding precision and recall values
+            curr_precision = 0 if (tp + fp) == 0 else tp / (tp + fp)
+            recall.append(tp / total_lesions)
+            precision.append(curr_precision)
+        else:
+            # Extend precision and recall curves
+            if (len(recall)>0):
+                recall.append(recall[-1])
+                precision.append(precision[-1])
+
+    return recall, precision, thresholds
+
+
+def compute_ap(recall, precision):
+    """ Compute the average precision, given the recall and precision curves
+    Taken from https://github.com/ultralytics/yolov5/blob/master/utils/metrics.py
+    # Arguments
+        recall:    The recall curve (list)
+        precision: The precision curve (list)
+    # Returns
+        Average precision, precision curve, recall curve
+    """
+
+    # Append sentinel values to beginning and end
+    mrec = np.concatenate(([0.], recall, [recall[-1] + 0.01]))
+    mpre = np.concatenate(([1.], precision, [0.]))
+
+    # Compute the precision envelope
+    mpre = np.flip(np.maximum.accumulate(np.flip(mpre)))
+
+    # Integrate area under curve
+    x = np.linspace(0, 1, 101)  # 101-point interp (COCO)
+    ap = np.trapz(np.interp(x, mrec, mpre), x)  # integrate
+
+    return ap, mpre, mrec
+
+
+def plot_FROC(FP_per_image, sensitivity):
+
+    plt.figure()
+    plt.plot(FP_per_image, sensitivity)
+    plt.xlabel("Mean number of FPs per image")
+    plt.ylabel("TPs fraction")
+    plt.show()
+
+
+def plot_precision_recall(values, confidence, metric="Precision"):
+
+    plt.figure()
+    plt.plot(confidence, values)
+    plt.xlabel("Confidence")
+    plt.ylabel(metric)
+    plt.show()
 
 # determine bounding box as rect with origin in min x, min y and bottom right angle max x, max y
 # for this setup min number of points in the cluster and connectivity threshold
@@ -534,7 +611,7 @@ def test():
     output = Path("threshold_prediction")
     
     #annotations_stat(annotations)
-    #predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output, min_region_len=5)
+    predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output, threshold=0.2)
     prediction_by_threshold(annotations, visceral_slide_path)
 
     #bb_with_threshold(annotations, visceral_slide_path, inspexp_data, images_path)

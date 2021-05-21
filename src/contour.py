@@ -43,51 +43,6 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
     return regions
 
 
-
-# TODO: pass axis index
-def get_connected_regions1(contour_subset_coords, connectivity_threshold=5, axis=-1):
-    """
-    Given a subset of contour coordinates returns a list of connected regions
-    considering the specified connectivity threshold
-
-    Parameters
-    ----------
-    contour_subset_coords : list of list
-       A list containing a subset of coordinates of a contour
-    connectivity_threshold : int, default=5
-       Threshold which indicates the maximum difference in the specified axis component allowed between
-       the subsequent coordinates of a contour to be considered connected
-    axis : int, default=0
-       An axis to verify connectivity. -1 - euclidean distance, 0 - x, 1 - y
-
-    Returns
-    -------
-    regions : list of list
-       A list of start and end coordinates of all connected regions
-
-    """
-
-    regions = []
-    region_start = contour_subset_coords[0]
-    coord_prev = region_start
-    coords_num = contour_subset_coords.shape[0]
-    for index in range(1, coords_num):
-        coord_curr = contour_subset_coords[index]
-        if axis == -1:
-            distance = np.sqrt((coord_curr[0] - coord_prev[0])**2 + (coord_curr[1] - coord_prev[1])**2)
-        else:
-            distance = abs(coord_curr[axis] - coord_prev[axis])
-
-        if distance > connectivity_threshold:
-            regions.append([region_start, coord_prev])
-            region_start = coord_curr
-        coord_prev = coord_curr
-
-    regions.append([region_start, contour_subset_coords[-1]])
-
-    return regions
-
-
 def get_abdominal_contour_top(x, y, connectivity_threshold=5):
     """
     Extracts coordinates of the abdominal wall of the specified type from abdominal cavity contour

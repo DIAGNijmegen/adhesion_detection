@@ -259,7 +259,7 @@ def compute_pred_vector(softmax, label, min_dice=0.10, pre_threshold=0.10, min_v
 
 # Calculate FROC Metrics (FP Rate, Sensitivity)
 def y_to_FROC(y_list_all, y_list_pnp,  total_patients,    total_normal_patients,
-              threshold_mode='unique', num_thresholds=50, single_threshold=None, total_lesions=None):
+              threshold_mode='unique', num_thresholds=50, single_threshold=None):
 
     # Sort Predictions
     y_list_all.sort()
@@ -281,8 +281,7 @@ def y_to_FROC(y_list_all, y_list_pnp,  total_patients,    total_normal_patients,
     y_true_all    = np.array(y_true_all)
     y_pred_all    = np.array(y_pred_all)
     y_pred_pnp    = np.array(y_pred_pnp)
-    if total_lesions is None:
-        total_lesions = y_true_all.sum()
+    total_lesions = y_true_all.sum()
 
     # Compute Thresholds for FROC Analysis
     if (threshold_mode=='unique'):
