@@ -5,11 +5,11 @@ import json
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from pathlib import Path
-from adhesions import AdhesionType, Adhesion, load_annotations, get_abdominal_contour_top
+from adhesions import AdhesionType, Adhesion, load_annotations
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, BB_ANNOTATIONS_EXPANDED_FILE
 from cinemri.config import ARCHIVE_PATH
 from utils import average_bb_size
-from contour import get_connected_regions
+from contour import get_connected_regions, get_adhesions_prior_coords, get_abdominal_contour_top
 from visceral_slide_pipeline import get_inspexp_frames
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
@@ -110,6 +110,7 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
     """
 
     # Extract top coordinates
+
     x_top, y_top = get_abdominal_contour_top(x, y)
 
     coords = np.column_stack((x, y)).tolist()
@@ -120,6 +121,17 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
     x = x[top_excluded_inds]
     y = y[top_excluded_inds]
     slide_normalized = slide_normalized[top_excluded_inds]
+    """
+    x_prior, y_prior = get_adhesions_prior_coords(x, y)
+
+    coords = np.column_stack((x, y)).tolist()
+    prior_coords = np.column_stack((x_prior, y_prior)).tolist()
+    prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
+
+    x = x[prior_inds]
+    y = y[prior_inds]
+    slide_normalized = slide_normalized[prior_inds]
+    """
 
     # Find lowest threshold % in normalized slide
     slide_normalized_sorted = np.sort(slide_normalized)
@@ -200,7 +212,7 @@ def visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, i
     plt.axis("off")
 
     if file_path is not None:
-        plt.savefig(file_path)
+        plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
     else:
         plt.show()
     
@@ -441,7 +453,7 @@ def get_confidence_outcome(tps, fps, fns):
     return outcomes
 
 
-def prediction_by_threshold(annotations, visceral_slide_path):
+def prediction_by_threshold(annotations, visceral_slide_path, threshold=0.2):
     """
     Performs prediction by visceral slide threshold and evaluates it
 
@@ -464,7 +476,7 @@ def prediction_by_threshold(annotations, visceral_slide_path):
 
     # vary threshold level
     # Get predictions by visceral slide level threshold
-    predictions = predict(full_ids, visceral_slide_dict, mean_width, mean_height, 0.3, 5)
+    predictions = predict(full_ids, visceral_slide_dict, mean_width, mean_height, threshold, 5)
 
     archive_path = Path(ARCHIVE_PATH)
     images_path = archive_path / IMAGES_FOLDER
@@ -579,7 +591,8 @@ def plot_FROC(FP_per_image, sensitivity):
     plt.plot(FP_per_image, sensitivity)
     plt.xlabel("Mean number of FPs per image")
     plt.ylabel("TPs fraction")
-    plt.show()
+    plt.savefig("FROC.png", bbox_inches='tight', pad_inches=0)
+    #plt.show()
 
 
 def plot_precision_recall(values, confidence, metric="Precision"):
@@ -588,6 +601,7 @@ def plot_precision_recall(values, confidence, metric="Precision"):
     plt.plot(confidence, values)
     plt.xlabel("Confidence")
     plt.ylabel(metric)
+    plt.savefig("{}.png".format(metric), bbox_inches='tight', pad_inches=0)
     plt.show()
 
 # determine bounding box as rect with origin in min x, min y and bottom right angle max x, max y
@@ -608,11 +622,11 @@ def test():
     adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
     annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
     
-    output = Path("threshold_prediction")
+    output = Path("threshold_prediction_top")
     
     #annotations_stat(annotations)
     predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output, threshold=0.2)
-    prediction_by_threshold(annotations, visceral_slide_path)
+    prediction_by_threshold(annotations, visceral_slide_path, threshold=0.2)
 
     #bb_with_threshold(annotations, visceral_slide_path, inspexp_data, images_path)
 

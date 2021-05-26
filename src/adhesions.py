@@ -10,19 +10,16 @@ from matplotlib.patches import Rectangle
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, PATIENT_ANNOTATIONS_FILE_NAME, \
     BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from cinemri.config import ARCHIVE_PATH
-from cinemri.contour import get_contour, get_abdominal_wall_coord, AbdominalContourPart
+from cinemri.contour import AbdominalContourPart, get_contour, get_abdominal_contour_top
 from cinemri.utils import CineMRISlice
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
 from utils import interval_overlap
 from visceral_slide_pipeline import load_visceral_slide, get_inspexp_frames
-from contour import get_abdominal_contour_top
+from contour import get_abdominal_wall_coord, get_adhesions_prior_coords
 
 # Folder to save visualized annotations
 ANNOTATIONS_VIS_FOLDER = "vis_annotations"
-
-# TODO: clean up the code for detection of negative patients and statistics of reader study/ report
-# TODO: this file requires serious clean up
 
 @unique
 class AnnotationType(Enum):
@@ -428,6 +425,17 @@ def load_patients_of_type(archive_path, annotations_type_path, annotation_type):
 
     filtered_patients = [p for p in all_patients if p.id in type_patients_ids]
     return filtered_patients
+
+
+# TODO: add documentation
+def bb_annotations_to_full_ids_file(bb_annotations_path, output_file_path):
+    annotations = load_annotations(bb_annotations_path)
+    full_ids = [annotation.full_id for annotation in annotations]
+
+    with open(output_file_path, "w") as file:
+        for full_id in full_ids:
+            file.write(full_id + "\n")
+
 
 
 def extract_annotations_metadata(archive_path,
@@ -849,7 +857,7 @@ def annotations_statistics(expanded_annotations_path):
     print("{} of {} are inside the abdominal cavity".format(annotations_inside, adhesions_num))
 
 
-def test_cavity_part_detection(annotations_path, images_path, inspexp_file_path, visceral_slide_path, target_path, type=AbdominalContourPart.anterior_wall):
+def  test_cavity_part_detection(annotations_path, images_path, inspexp_file_path, visceral_slide_path, target_path, type=AbdominalContourPart.anterior_wall):
     """
     Visualises detection of the specified abdominal cavity part for all annotated slices
     Parameters
@@ -885,6 +893,9 @@ def test_cavity_part_detection(annotations_path, images_path, inspexp_file_path,
                                                                                            annotation.scan_id,
                                                                                            annotation.slice_id))
 
+            if annotation.full_id == "ANON4SV2RE1ET_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311155223544425245.0.0.0":
+                print("a")
+
             verify_abdominal_wall(x, y, insp_frame, annotation.full_id, target_path, type)
 
 
@@ -905,23 +916,30 @@ def verify_abdominal_wall(x, y, frame, slice_id, target_path, type=AbdominalCont
     type : AbdominalContourPart
        A type of the abdominal cavity contour to verify
     """
-
+    x_abdominal_wall, y_abdominal_wall = get_adhesions_prior_coords(x, y)
     fig = plt.figure()
-    ax = fig.add_subplot(121)
+    ax = fig.add_subplot(111)
     plt.imshow(frame, cmap="gray")
+    ax.scatter(x_abdominal_wall, y_abdominal_wall, s=4, color="r")
     plt.axis('off')
-    ax.scatter(x, y, s=4, color="r")
+    #ax.scatter(x, y, s=4, color="r")
 
-    if type == AbdominalContourPart.top:
+
+    """
+        if type == AbdominalContourPart.top:
         x_abdominal_wall, y_abdominal_wall = get_abdominal_contour_top(x, y)
     else:
         x_abdominal_wall, y_abdominal_wall = get_abdominal_wall_coord(x, y, type)
+    """
 
+    """
     ax = fig.add_subplot(122)
     plt.imshow(frame, cmap="gray")
     plt.axis('off')
     ax.scatter(x_abdominal_wall, y_abdominal_wall, s=4, color="r")
     plt.axis('off')
+    """
+
     plt.savefig(target_path / (slice_id + ".png"), bbox_inches='tight', pad_inches=0)
     plt.close()
 
@@ -936,9 +954,15 @@ def test():
     images_path = archive_path / IMAGES_FOLDER
     ie_file = metadata_path / INSPEXP_FILE_NAME
     bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
-    
-    test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path, Path("test"), AbdominalContourPart.top)
-    
+
+    #bb_annotations_to_full_ids_file(bb_expanded_annotation_path, metadata_path / "bb_annotations_full_ids.txt")
+
+    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path, Path("posterior"), AbdominalContourPart.posterior_wall)
+    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
+     #                          Path("anterior"), AbdominalContourPart.anterior_wall)
+    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
+     #                          Path("prior"), AbdominalContourPart.posterior_wall)
+
 
 if __name__ == '__main__':
     test()
