@@ -9,11 +9,16 @@ from pathlib import Path
 import SimpleITK as sitk
 from cinemri.utils import get_patients, Patient
 from data_conversion import convert_2d_image_to_pseudo_3d
-from visceral_slide import VisceralSlideDetector
+from visceral_slide import VisceralSlideDetector, CumulativeVisceralSlideDetector
 import matplotlib.pyplot as plt
+from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY
 from segmentation import segment_abdominal_cavity
+from utils import slices_from_full_ids_file
+
+# TODO: maybe in future rewrite the pipeline to extract the full segmentation needed for cumulative visceral slide
+
 
 # TODO: How do we evaluate registration?
 NNUNET_INPUT_FOLDER = "nnUNet_input"
@@ -462,14 +467,88 @@ def pipeline(argv):
     run_pileline(data_path, nnUNet_results_path, output_path, mode, task)
 
 
+def compute_cumulative_visceral_slide(images_path, masks_path, slices, output_path, series_stat=False, rest_def=False):
+    """
+    Computes and save cumulative visceral slide for the specified subset of slices
+    Parameters
+    ----------
+    images_path : Path
+       A path to image folder in the cine-MRI archive
+    masks_path : Path
+       A path to segmentation masks of the whole slices
+    slices : list of CineMRISlice
+       A list of CineMRISlice instances to compute visceral slice for
+    output_path : Path
+       A path where to save computed visceral slide
+    """
+
+    output_path.mkdir()
+    visceral_slide_detector = CumulativeVisceralSlideDetector()
+
+    for slice in slices:
+        print("Computing cumulative visceral slide for the slice {}".format(slice.full_id))
+
+        slice_output_path = slice.build_path(output_path, extension="")
+        slice_output_path.mkdir(parents=True)
+
+        slice_path = slice.build_path(images_path)
+        slice_image = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+
+        mask_path = slice.build_path(masks_path)
+        mask_image = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
+
+        x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(slice_image, mask_image, series_stat, rest_def)
+
+        pickle_path = slice_output_path / VISCERAL_SLIDE_FILE
+        slide_dict = {"x": x, "y": y, "slide": visceral_slide}
+        with open(pickle_path, "w+b") as file:
+            pickle.dump(slide_dict, file)
+
+
+def cumulative_visceral_slide(argv):
+    """A command line wrapper of compute_cumulative_visceral_slide
+
+    Parameters
+    ----------
+    argv: list of str
+        Command line arguments
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--images', type=str, required=True, help="a path to image folder in the cine-MRI archive")
+    parser.add_argument('--masks', type=str, required=True, help="a path to segmentation masks of the whole slices")
+    parser.add_argument('--slices_file', type=str, required=True, help="a path to a folder to save visceral slide")
+    parser.add_argument('--output', type=str, required=True, help="a path to a folder to save visceral slide")
+    # Boolean flags
+    parser.add_argument('--series_stat', dest='series_stat', action='store_true')
+    parser.add_argument('--no-series_stat', dest='series_stat', action='store_false')
+    parser.set_defaults(series_stat=False)
+    parser.add_argument('--rest_def', dest='rest_def', action='store_true')
+    parser.add_argument('--no-rest_def', dest='rest_def', action='store_false')
+    parser.set_defaults(rest_def=False)
+
+    args = parser.parse_args(argv)
+
+    images_path = Path(args.images)
+    masks_path = Path(args.masks)
+    slices_file_path = Path(args.slices_file)
+    output_path = Path(args.output)
+    series_stat = args.series_stat
+    print(series_stat)
+    rest_def = args.rest_def
+    print(rest_def)
+
+    slices = slices_from_full_ids_file(slices_file_path)
+    compute_cumulative_visceral_slide(images_path, masks_path, slices, output_path, series_stat, rest_def)
+
 
 if __name__ == '__main__':
-
     # Very first argument determines action
     actions = {
         "extract_frames": extract_insp_exp,
         "compute": compute,
-        "pipeline": pipeline
+        "pipeline": pipeline,
+        "cumulative_vs": cumulative_visceral_slide
     }
 
     try:
@@ -478,3 +557,4 @@ if __name__ == '__main__':
         print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
+

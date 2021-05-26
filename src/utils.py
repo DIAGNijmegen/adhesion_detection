@@ -4,7 +4,7 @@ import json
 from pathlib import Path
 import SimpleITK as sitk
 from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY
-from cinemri.utils import get_patients
+from cinemri.utils import get_patients, CineMRISlice
 
 
 def get_patients_without_slices(archive_path,
@@ -220,6 +220,15 @@ def adhesions_stat(annotations):
 
     print("Smallest annotation, x_o: {}, y_o: {}, width: {}, height: {}".format(smallest_bb.origin_x, smallest_bb.origin_y, smallest_bb.width, smallest_bb.height))
     print("Largest annotation, width: {}, height: {}".format(largest_bb.width, largest_bb.height))
+
+
+def slices_from_full_ids_file(slices_full_ids_file_path):
+    with open(slices_full_ids_file_path) as file:
+        lines = file.readlines()
+        slices_full_ids = [line.strip() for line in lines]
+
+    slices = [CineMRISlice.from_full_id(full_id) for full_id in slices_full_ids]
+    return slices
 
 
 def test():
