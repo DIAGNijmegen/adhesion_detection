@@ -581,7 +581,7 @@ def show_annotation(annotation, images_path):
         plt.show()
 
 
-def show_annotation_and_vs(x, y, visceral_slide, annotation, frame, title=None, file_name=None):
+def show_annotation_and_vs(x, y, visceral_slide, annotation, frame, normalize=True, title=None, file_name=None):
     """
     Plots absolute value of visceral slide normalized by the absolute maximum together with adhesions annotations
     over the frame of a cine-MRI slice for which visceral slide was computed and saves to a file
@@ -601,11 +601,11 @@ def show_annotation_and_vs(x, y, visceral_slide, annotation, frame, title=None, 
     save_file_name : str, optional
        A file name to save the plot
     """
-    slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
+    slide_vis = visceral_slide / np.max(visceral_slide) if normalize else visceral_slide
 
     plt.figure()
     plt.imshow(frame, cmap="gray")
-    plt.scatter(x, y, s=5, c=slide_normalized, cmap="jet")
+    plt.scatter(x, y, s=5, c=slide_vis, cmap="jet")
     ax = plt.gca()
     for adhesion in annotation.adhesions:
         adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
@@ -819,6 +819,46 @@ def vis_annotation_and_computed_vs(annotations_path,
             show_annotation_and_vs(x, y, visceral_slide, annotation, insp_frame)
 
 
+def vis_annotation_and_cumulative_vs(annotations_path,
+                                     visceral_slide_path,
+                                     images_path,
+                                     output_path,
+                                     save=True):
+    """
+    Visualises computed cumulative visceral slide for all annotated slices and saves as .png images is save flag is True
+    Parameters
+    ----------
+    annotations_path, visceral_slide_path, images_path : Path
+        Paths to annotations, saved visceral slide and cine-MRI scans
+    output_path : Path
+        A Path to save visualised annotation and visceral slide over a frame for which visceral slide is computed
+    save : bool
+        A boolean flag indicating whether to save or show visualisation
+    """
+    output_path.mkdir(exist_ok=True)
+    # load annotations
+    annotations = load_annotations(annotations_path)
+
+    # load slices with visceral slide and annotations
+    for annotation in annotations:
+        visceral_slide_results_path = annotation.build_path(visceral_slide_path, extension="")
+        if visceral_slide_results_path.exists():
+            # Load the computed visceral slide
+            x, y, visceral_slide = load_visceral_slide(visceral_slide_results_path)
+
+            slice_path = annotation.build_path(images_path)
+            slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+            # Cumulative VS corresponds to the one before the last one frame
+            frame = slice[-2]
+
+            if save:
+                annotated_visc_slide_path = output_path / (annotation.full_id + ".png")
+                show_annotation_and_vs(x, y, visceral_slide, annotation, frame, normalize=False,
+                                       file_name=annotated_visc_slide_path)
+            else:
+                show_annotation_and_vs(x, y, visceral_slide, annotation, frame, normalize=False)
+
+
 def annotations_statistics(expanded_annotations_path):
     """
     Prints statistics of annotations with bounding boxes
@@ -948,12 +988,16 @@ def test():
     archive_path = Path(ARCHIVE_PATH)
     metadata_path = archive_path / METADATA_FOLDER
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
-    output_path = archive_path / "visceral_slide" / "new_insp_exp"
+    output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_rest_reg")
     full_segmentation_path = archive_path / "full_segmentation" / "merged_segmentation"
     bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE
     images_path = archive_path / IMAGES_FOLDER
     ie_file = metadata_path / INSPEXP_FILE_NAME
     bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
+
+    cumulative_vs_path = Path("../../data/cumulative_vs_rest_reg")
+
+    vis_annotation_and_cumulative_vs(bb_expanded_annotation_path, cumulative_vs_path, images_path, output_path, save=True)
 
     #bb_annotations_to_full_ids_file(bb_expanded_annotation_path, metadata_path / "bb_annotations_full_ids.txt")
 

@@ -433,10 +433,10 @@ def extract_frames(slice_path,
                     "SeriesInstanceUID": img.GetMetaData("SeriesInstanceUID")
                     }
 
-        if metadata.HasMetaDataKey("Sex"):
+        if img.HasMetaDataKey("Sex"):
             metadata["Sex"] = img.GetMetaData("Sex")
 
-        if metadata.HasMetaDataKey("Age"):
+        if img.HasMetaDataKey("Age"):
             metadata["Age"] = img.GetMetaData("Age")
 
         metadata_file_path = target_path_metadata / (slice_id + ".json")
@@ -488,8 +488,6 @@ def merge_frames(slice_full_id,
         image.append(sitk.GetArrayFromImage(frame)[0])
 
     image = np.array(image).astype(np.uint8)
-    slice_id = slice_full_id.split(SEPARATOR)
-    image_path = target_folder / (slice_id + ".mha")
     sitk_image = sitk.GetImageFromArray(image)
 
     # Extract and assign metadata
@@ -507,6 +505,11 @@ def merge_frames(slice_full_id,
         sitk_image.SetMetaData("Age", metadata["Age"])
     except:
         pass
+
+    # Save image
+    slice_id = slice_full_id.split(SEPARATOR)
+    image_path = target_folder / (slice_id[-1] + ".mha")
+    sitk.WriteImage(sitk_image, str(image_path))
 
 
 def save_visualised_prediction(images_path, predictions_path, target_path, save_gif=True):

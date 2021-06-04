@@ -18,8 +18,6 @@ from segmentation import segment_abdominal_cavity
 from utils import slices_from_full_ids_file
 
 # TODO: maybe in future rewrite the pipeline to extract the full segmentation needed for cumulative visceral slide
-
-
 # TODO: How do we evaluate registration?
 NNUNET_INPUT_FOLDER = "nnUNet_input"
 PREDICTED_MASKS_FOLDER = "nnUNet_masks"
@@ -517,7 +515,7 @@ def cumulative_visceral_slide(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--images', type=str, required=True, help="a path to image folder in the cine-MRI archive")
     parser.add_argument('--masks', type=str, required=True, help="a path to segmentation masks of the whole slices")
-    parser.add_argument('--slices_file', type=str, required=True, help="a path to a folder to save visceral slide")
+    parser.add_argument('--slices_file', type=str, required=True, help="a path to a file with fill ids of slices to compute visceral slide for")
     parser.add_argument('--output', type=str, required=True, help="a path to a folder to save visceral slide")
     # Boolean flags
     parser.add_argument('--series_stat', dest='series_stat', action='store_true')

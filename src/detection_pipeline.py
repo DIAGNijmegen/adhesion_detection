@@ -111,6 +111,7 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
 
     # Extract top coordinates
 
+    """
     x_top, y_top = get_abdominal_contour_top(x, y)
 
     coords = np.column_stack((x, y)).tolist()
@@ -122,6 +123,7 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
     y = y[top_excluded_inds]
     slide_normalized = slide_normalized[top_excluded_inds]
     """
+
     x_prior, y_prior = get_adhesions_prior_coords(x, y)
 
     coords = np.column_stack((x, y)).tolist()
@@ -131,7 +133,6 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
     x = x[prior_inds]
     y = y[prior_inds]
     slide_normalized = slide_normalized[prior_inds]
-    """
 
     # Find lowest threshold % in normalized slide
     slide_normalized_sorted = np.sort(slide_normalized)
@@ -159,6 +160,15 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
     # Get central point of each region to generate a bounding box
     bounding_boxes = [bb_from_region(region, mean_width, mean_height) for region in low_slide_regions]
 
+    vs_min = np.min(slide_normalized)
+    vs_max = np.max(slide_normalized)
+
+    """
+    adhesion_likelihoods = [adhesion_likelihood(region, vs_min, vs_max, low_slide_threshold) for region in low_slide_regions]
+    confidence = adhesion_likelihoods.copy()
+    #confidence = [np.power(like, 1. / len(region)) for like, region in zip(adhesion_likelihoods, low_slide_regions)]
+    """
+
     # Compute confidence for each prediction based on the region average index
     mean_slides = []
     for region in low_slide_regions:
@@ -167,8 +177,28 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
         mean_slides.append(mean_region_slide)
     confidence = [norm_const * (1 - mean_slide / low_slide_threshold) for mean_slide in mean_slides]
 
-    prediction = [(bb, conf) for bb, conf in zip(bounding_boxes, confidence) ]
+    prediction = [(bb, conf) for bb, conf in zip(bounding_boxes, confidence)]
     return prediction
+
+
+# TODO: refactor or move to a more appropriate place
+def adhesion_likelihood(region, vs_min, vs_max, vs_threshold):
+    # Average
+
+    """
+    region_slides = [comp[2] for comp in region]
+    # or median?
+    mean_region_slide = np.median(region_slides)
+    likelihood = (vs_threshold - mean_region_slide) / (vs_threshold - vs_min)
+    """
+
+    # Region likelihood
+
+    likelihood = 1
+    for point in region:
+        likelihood *= (vs_max - point[2]) / (vs_max - vs_min)
+
+    return likelihood
 
 
 def visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, insp_frame, file_path=None):
@@ -219,7 +249,7 @@ def visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, i
     plt.close()
 
 
-def predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output_path,
+def predict_and_visualize(annotations, visceral_slide_path, images_path, output_path, inspexp_data=None,
                           threshold=0.2, min_region_len=5):
 
     output_path.mkdir(exist_ok=True)
@@ -236,16 +266,22 @@ def predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp
 
         prediction = bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold, min_region_len)
 
-        # Extract inspiration frame
-        try:
-            insp_frame, _ = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
-        except:
-            print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
-                                                                                       slice.scan_id,
-                                                                                       slice.slice_id))
+        if inspexp_data is None:
+            # Assume it is cumulative VS and take the one before the last one frame
+            slice_path = annotation.build_path(images_path)
+            slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+            frame = slice[-2]
+        else:
+            # Extract inspiration frame
+            try:
+                frame, _ = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
+            except:
+                print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
+                                                                                           slice.scan_id,
+                                                                                           slice.slice_id))
 
         file_path = output_path / (annotation.full_id + ".png")
-        visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, insp_frame, file_path)
+        visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, frame, file_path)
 
 
 # TODO: should we also output confidence here?
@@ -453,7 +489,7 @@ def get_confidence_outcome(tps, fps, fns):
     return outcomes
 
 
-def prediction_by_threshold(annotations, visceral_slide_path, threshold=0.2):
+def prediction_by_threshold(annotations, visceral_slide_path, output_path, threshold=0.2):
     """
     Performs prediction by visceral slide threshold and evaluates it
 
@@ -496,13 +532,13 @@ def prediction_by_threshold(annotations, visceral_slide_path, threshold=0.2):
 
     FP_per_image, FP_per_normal_image, sensitivity, thresholds = y_to_FROC(outcomes, [], total_patients, 1)
 
-    plot_FROC(FP_per_image, sensitivity)
+    plot_FROC(FP_per_image, sensitivity, output_path)
 
     recall, precision, thresholds = compute_pr_curves(outcomes)
     ap, precision1, recall1 = compute_ap(recall, precision)
 
-    plot_precision_recall(recall, thresholds, "Recall")
-    plot_precision_recall(precision, thresholds)
+    plot_precision_recall(recall, thresholds, output_path, "Recall")
+    plot_precision_recall(precision, thresholds, output_path)
 
     print("Average precision {}".format(ap))
 
@@ -585,28 +621,77 @@ def compute_ap(recall, precision):
     return ap, mpre, mrec
 
 
-def plot_FROC(FP_per_image, sensitivity):
+def plot_FROC(FP_per_image, sensitivity, output_path):
 
     plt.figure()
     plt.plot(FP_per_image, sensitivity)
     plt.xlabel("Mean number of FPs per image")
     plt.ylabel("TPs fraction")
-    plt.savefig("FROC.png", bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / "FROC.png", bbox_inches='tight', pad_inches=0)
     #plt.show()
 
 
-def plot_precision_recall(values, confidence, metric="Precision"):
+def plot_precision_recall(values, confidence, output_path, metric="Precision"):
 
     plt.figure()
     plt.plot(confidence, values)
     plt.xlabel("Confidence")
     plt.ylabel(metric)
-    plt.savefig("{}.png".format(metric), bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / "{}.png".format(metric), bbox_inches='tight', pad_inches=0)
     plt.show()
 
 # determine bounding box as rect with origin in min x, min y and bottom right angle max x, max y
 # for this setup min number of points in the cluster and connectivity threshold
 # also IoU - 0.1?
+
+# TODO: document
+# Plots normalized visceral slide values against adhesion frequency
+def vs_intensity_stat(visceral_slide_path, annotations_path, intervals_num=1000):
+    adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
+    annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
+
+    visceral_slide_dict = extract_visceral_slide_dict(annotations, visceral_slide_path)
+    # Binning
+    intervals = np.linspace(0, 1, intervals_num + 1)
+    reference_vals = []
+    freq_dict = {}
+    for i in range(intervals_num):
+        interval_start = intervals[i]
+        interval_end = intervals[i + 1]
+        interval_middle = (interval_start + interval_end) / 2
+        reference_vals.append(interval_middle)
+        freq_dict[i] = 0
+
+    reference_vals = np.array(reference_vals)
+
+    for annotation in annotations:
+        visceral_slide_data = visceral_slide_dict[annotation.full_id]
+        contour_x, contour_y = visceral_slide_data["x"], visceral_slide_data["y"]
+        visceral_slide = visceral_slide_data["slide"]
+        slide_normalized = visceral_slide / np.max(visceral_slide)
+
+        for adhesion in annotation.adhesions:
+            # For each point check if it intersects an adhesion
+            for x, y, vs in zip(contour_x, contour_y, slide_normalized):
+                intersects = adhesion.contains_point(x, y)
+                if intersects:
+                    # Find the reference value closest to VS and increase the counter
+                    diff = reference_vals - vs
+                    index = np.argmin(np.abs(diff))
+                    freq_dict[index] = freq_dict[index] + 1
+
+    # Now extract ordered frequencies
+    frequencies = []
+    for i in range(intervals_num):
+        frequencies.append(freq_dict[i])
+
+    plt.figure()
+    plt.plot(reference_vals, frequencies)
+    plt.xlabel("Normalised visceral slide")
+    plt.ylabel("Adhesion frequency")
+    plt.savefig("adh_freq_int_{}".format(intervals_num), bbox_inches='tight', pad_inches=0)
+    plt.show()
+
 
 def test():
     archive_path = Path(ARCHIVE_PATH)
@@ -622,11 +707,17 @@ def test():
     adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
     annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
     
-    output = Path("threshold_prediction_top")
+    output = Path("threshold_prediction_cumulative_contour_reg_th20_mean")
+    #cumulative_vs_path = Path("../../data/cumulative_vs_rest_reg")
+    cumulative_vs_path = Path("../../data/cumulative_vs_contour_reg")
+
+    int_nums = [100, 200, 300, 400, 500, 600, 653, 700, 800, 900, 1000, 1500, 2000]
+    for int_num in int_nums:
+        vs_intensity_stat(cumulative_vs_path, annotations_path, int_num)
     
-    #annotations_stat(annotations)
-    predict_and_visualize(annotations, visceral_slide_path, images_path, inspexp_data, output, threshold=0.2)
-    prediction_by_threshold(annotations, visceral_slide_path, threshold=0.2)
+    # annotations_stat(annotations)
+    # predict_and_visualize(annotations, cumulative_vs_path, images_path, output, threshold=0.2)
+    # prediction_by_threshold(annotations, cumulative_vs_path, output, threshold=0.2)
 
     #bb_with_threshold(annotations, visceral_slide_path, inspexp_data, images_path)
 

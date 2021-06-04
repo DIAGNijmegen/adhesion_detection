@@ -1,11 +1,22 @@
+#!/usr/local/bin/python3
+
+# TDOD: create separate module with functions for dataset stats
+
+import sys
 import random
 import numpy as np
 import json
+import argparse
 from pathlib import Path
 import SimpleITK as sitk
-from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY
-from cinemri.utils import get_patients, CineMRISlice
+from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY, METADATA_FOLDER,\
+    NEGATIVE_PATIENTS_FILE_NAME, PATIENT_ANNOTATIONS_NEW_FILE_NAME, NEGATIVE_SLICES_FILE_NAME, IMAGES_FOLDER
+from cinemri.config import ARCHIVE_PATH
+from cinemri.utils import get_patients, CineMRISlice, get_image_orientation
+from cinemri.contour import get_contour
+import shutil
 
+ADHESIONS_KEY_NEW = "adhesion"
 
 def get_patients_without_slices(archive_path,
                                 images_folder="images"):
@@ -152,6 +163,94 @@ def select_segmentation_patients_subset(archive_path, target_path, n=10):
             scan_dir.mkdir()
 
 
+# TODO: document
+def sample_negative_patients(annotations_path, metadata_path, N):
+
+    with open(annotations_path) as annotations_file:
+        annotations_data = json.load(annotations_file)
+
+    old_nums = range(1,65)
+    old_ids = ["R{:0>3d}".format(num) for num in old_nums]
+
+    negative_patients_ids = []
+    for patient_id, report in annotations_data.items():
+        if report[ADHESIONS_KEY_NEW] == 0 and patient_id not in old_ids:
+            negative_patients_ids.append(patient_id)
+
+    sample = np.random.choice(negative_patients_ids, N, replace=False)
+    ids_string = "\n".join(sample)
+
+    negative_patients_file_path = metadata_path / NEGATIVE_PATIENTS_FILE_NAME
+    with open(negative_patients_file_path, "w") as file:
+        file.write(ids_string)
+
+    return sample
+
+
+def load_patients_ids(ids_file_path):
+
+    with open(ids_file_path) as file:
+        lines = file.readlines()
+        patients_ids = [line.strip() for line in lines]
+
+    return patients_ids
+
+
+# Save as metadata file
+def sample_slices(archive_folder, negative_patients_ids, metadata_path):
+
+    patients = get_patients(archive_folder)
+    # Filter out patients in negative sample for adhesions detection
+    negative_sample = [patient for patient in patients if patient.id in negative_patients_ids]
+
+    # Sample one CineMRI slice per patient
+    negative_slices = []
+    for patient in negative_sample:
+        found = False
+        attempts = 0
+        while not found and attempts <= len(patient.cinemri_slices):
+            attempts += 1
+            slice = np.random.choice(patient.cinemri_slices, 1)[0]
+            slice_path = slice.build_path(archive_folder / IMAGES_FOLDER)
+            slice_image = sitk.ReadImage(str(slice_path))
+            depth = slice_image.GetDepth()
+            orientation = get_image_orientation(slice_image)
+            print("Slice {}".format(slice.full_id))
+            print("Slice depth {}".format(depth))
+            print("Slice orientation {}".format(orientation))
+            # Check that a slice is valid
+            if depth >= 30 and orientation == "ASL":
+                print("Accepted")
+                found = True
+                negative_slices.append(slice)
+
+    # Write full ids of sampled slices to file
+    negative_slices_full_ids = [slice.full_id for slice in negative_slices]
+    output_file_path = metadata_path / NEGATIVE_SLICES_FILE_NAME
+    with open(output_file_path, "w") as file:
+        for full_id in negative_slices_full_ids:
+            file.write(full_id + "\n")
+
+    return negative_slices
+
+
+def sample_slices_detection(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--patients_file', type=str, required=True,
+                        help="a path to a file with patients ids to sample slices from")
+    parser.add_argument('--archive', type=str, required=True, help="a path to the cine-MRI archive")
+    parser.add_argument('--metadata_path', type=str, required=True,
+                        help="a path to the metadata folder of the cine-MRI archive")
+
+    args = parser.parse_args(argv)
+    patients_file_path = Path(args.patients_file)
+    archive_path = Path(args.archive)
+    metadata_path = Path(args.metadata_path)
+
+    patients_ids = load_patients_ids(patients_file_path)
+    sample_slices(archive_path, patients_ids, metadata_path)
+
+
 def average_bb_size(annotations):
     """
     Computes an average adhesion boundig box size
@@ -231,9 +330,70 @@ def slices_from_full_ids_file(slices_full_ids_file_path):
     return slices
 
 
+def extract_detection_dataset(slices, images_folder, target_folder):
+
+    # Copy slices to a new location
+    for slice in slices:
+        scan_dir = target_folder / slice.patient_id / slice.scan_id
+        scan_dir.mkdir(exist_ok=True, parents=True)
+        slice_path = slice.build_path(images_folder)
+        slice_target_path = slice.build_path(target_folder)
+        shutil.copyfile(slice_path, slice_target_path)
+
+
+def extract_detection_data(argv):
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--positive_file', type=str, required=True, help="a path to a file with fill ids of positive slices")
+    parser.add_argument('--negative_file', type=str, required=True, help="a path to a file with fill ids of negative slices")
+    parser.add_argument('--images', type=str, required=True, help="a path to image folder in the cine-MRI archive")
+    parser.add_argument('--target_folder', type=str, required=True, help="a path to a folder to place the detection subset")
+
+    args = parser.parse_args(argv)
+
+    positive_file_path = Path(args.positive_file)
+    negative_file_path = Path(args.negative_file)
+    images_path = Path(args.images)
+    target_path = Path(args.target_folder) / IMAGES_FOLDER
+    target_path.mkdir(parents=True)
+
+    positive_slices = slices_from_full_ids_file(positive_file_path)
+    negative_slices = slices_from_full_ids_file(negative_file_path)
+    slices = positive_slices + negative_slices
+    extract_detection_dataset(slices, images_path, target_path)
+
+
+def contour_stat(full_segmentation_path):
+    images_folder = "merged_segmentation"
+    patients = get_patients(full_segmentation_path, images_folder=images_folder)
+
+    lengths = []
+    for patient in patients:
+        for slice in patient.cinemri_slices:
+            slice_path = slice.build_path(full_segmentation_path / images_folder)
+            # Expect that contour does not change much across series, so taking the first frame
+            slice_image = sitk.ReadImage(str(slice_path))
+            depth = slice_image.GetDepth()
+            orientation = get_image_orientation(slice_image)
+            if depth >= 30 and orientation == "ASL":
+                frame = sitk.GetArrayFromImage(slice_image)[0]
+                x, y, _, _ = get_contour(frame)
+                lengths.append(len(x))
+
+    mean_length = np.mean(lengths)
+    print("Average contour length {}".format(mean_length))
+    return mean_length
+
+
 def test():
-    archive_path = Path("../../data/cinemri_mha/rijnstate")
-    subset_path = Path("../../data/cinemri_mha/segmentation_subset")
+    archive_path = Path(ARCHIVE_PATH)
+
+    metadata_path = archive_path / METADATA_FOLDER
+    annotations_path = metadata_path / PATIENT_ANNOTATIONS_NEW_FILE_NAME
+    negative_patients_file = metadata_path / NEGATIVE_PATIENTS_FILE_NAME
+
+    full_segmentation_path = archive_path / "full_segmentation"
+    contour_stat(full_segmentation_path)
+
 
     #train_test_split(archive_path, subset_path, train_proportion=1)
     """
@@ -256,6 +416,20 @@ def test():
 if __name__ == '__main__':
     np.random.seed(99)
     random.seed(99)
+
     test()
 
+    """
+    # Very first argument determines action
+    actions = {
+        "extract_detection_data": extract_detection_data,
+        "sample_slices": sample_slices_detection
+    }
 
+    try:
+        action = actions[sys.argv[1]]
+    except (IndexError, KeyError):
+        print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
+    else:
+        action(sys.argv[2:])
+    """
