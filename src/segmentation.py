@@ -21,26 +21,23 @@ container_input_dir = Path("/tmp/nnunet/input")
 container_output_dir = Path("/tmp/nnunet/output")
 
 
-def extract_segmentation_data(archive_path,
+def extract_segmentation_data(images_path,
                               target_path,
                               target_frames_folder=FRAMES_FOLDER,
-                              target_metadata_folder=METADATA_FOLDER,
-                              images_folder=IMAGES_FOLDER):
+                              target_metadata_folder=METADATA_FOLDER):
 
     """
     Extracts frames for segmentation and the corresponding metadata from all slices in the archive
     Parameters
     ----------
-    archive_path : Path
-       A path to the cine-MRI data archive
+    images_path : Path
+       A path to a folder with cine-MRI images
     target_path : Path
        A path where to save the extracted frames and metadata
     target_frames_folder : Path, default=FRAMES_FOLDER
        A subfolder of target_path to save the extracted frames
     target_metadata_folder : Path, default=METADATA_FOLDER
        A subfolder of target_path to save the metadata
-    images_folder : Path, default=IMAGES_FOLDER
-       A subfolder in archive that contains cine-MRI scans
     """
 
     target_path.mkdir()
@@ -51,10 +48,10 @@ def extract_segmentation_data(archive_path,
     target_metadata_path = target_path / target_metadata_folder
     target_metadata_path.mkdir()
 
-    patients = get_patients(archive_path, images_folder=images_folder)
+    patients = get_patients(images_path)
     for patient in patients:
         for cinemri_slice in patient.cinemri_slices:
-            slice_path = cinemri_slice.build_path(archive_path / images_folder)
+            slice_path = cinemri_slice.build_path(images_path)
             extract_frames(slice_path, cinemri_slice.full_id, target_images_path, target_metadata_path)
 
 

@@ -7,10 +7,12 @@ import random
 import numpy as np
 import json
 import argparse
+import pickle
 from pathlib import Path
 import SimpleITK as sitk
 from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY, METADATA_FOLDER,\
-    NEGATIVE_PATIENTS_FILE_NAME, PATIENT_ANNOTATIONS_NEW_FILE_NAME, NEGATIVE_SLICES_FILE_NAME, IMAGES_FOLDER
+    NEGATIVE_PATIENTS_FILE_NAME, PATIENT_ANNOTATIONS_NEW_FILE_NAME, NEGATIVE_SLICES_FILE_NAME, IMAGES_FOLDER, \
+    SEPARATOR, VISCERAL_SLIDE_FILE
 from cinemri.config import ARCHIVE_PATH
 from cinemri.utils import get_patients, CineMRISlice, get_image_orientation
 from cinemri.contour import get_contour
@@ -18,16 +20,13 @@ import shutil
 
 ADHESIONS_KEY_NEW = "adhesion"
 
-def get_patients_without_slices(archive_path,
-                                images_folder="images"):
+def get_patients_without_slices(images_path):
     """Finds patients who do not have any slices
 
     Parameters
     ----------
-    archive_path : Path
-       A path to the full cine-MRI data archive
-    images_folder : str, default="images"
-       A name of the images folder in the archive
+    images_path : Path
+       A path to a folder with cine-MRI images
 
     Returns
     -------
@@ -36,7 +35,7 @@ def get_patients_without_slices(archive_path,
 
     """
 
-    patients = get_patients(archive_path, images_folder=images_folder, with_scans_only=False)
+    patients = get_patients(images_path, with_scans_only=False)
     patients_without_slices = []
     for patient in patients:
         if len(patient.slices()) == 0:
@@ -45,20 +44,17 @@ def get_patients_without_slices(archive_path,
     return patients_without_slices
 
 
-def train_test_split(archive_path,
+def train_test_split(images_path,
                      split_destination,
-                     images_folder="cavity_segmentations",
                      train_proportion=0.8):
     """Creates training/test split by patients
 
     Parameters
     ----------
-    archive_path : Path
-       A path to the full cine-MRI data archive
+    images_path : Path
+       A path to a folder with cine-MRI images
     split_destination : Path
        A path to save a json file with training/test split
-    images_folder : str, default=="cavity_segmentations"
-       A name of the images folder in the archive
     train_proportion : float, default=0.8
        A share of the data to use for training
 
@@ -68,7 +64,7 @@ def train_test_split(archive_path,
        A tuple with a list of patients ids to use for training and a list of patients ids to use for testing
     """
 
-    patients = get_patients(archive_path, images_folder=images_folder)
+    patients = get_patients(images_path)
     random.shuffle(patients)
     train_size = round(len(patients) * train_proportion)
 
@@ -87,23 +83,21 @@ def train_test_split(archive_path,
     return train_patients, test_patients
 
 
-def find_unique_shapes(archive_path, images_folder="images"):
+def find_unique_shapes(images_path):
     """Finds unique shapes of slices in the archive
 
     Parameters
     ----------
-    archive_path : Path
-       A path to a full archive
-    images_folder : str, default="images"
-       A list of unique slices shapes
+    images_path : Path
+       A path to a folder with cine-MRI images
     """
     shapes = []
 
-    patients = get_patients(archive_path, images_folder=images_folder)
+    patients = get_patients(images_path)
     for patient in patients:
 
         for cinemri_slice in patient.cinemri_slices:
-            slice_image_path = cinemri_slice.build_path(archive_path / images_folder)
+            slice_image_path = cinemri_slice.build_path(images_path)
             image = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_image_path)))[0]
 
             if not (image.shape in shapes):
@@ -133,13 +127,13 @@ def interval_overlap(interval_a, interval_b):
         return 0 if a_x_max < b_x_min else min(a_x_max, b_x_max) - b_x_min
 
 
-def select_segmentation_patients_subset(archive_path, target_path, n=10):
+def select_segmentation_patients_subset(images_path, target_path, n=10):
     """
     Randomly samples a subset of patient for which to perform abdominal cavity segmentation
     Parameters
     ----------
-    archive_path : Path
-       A path to the full cine-MRI data archive
+    images_path : Path
+       A path to a folder with cine-MRI images
     target_path : Path
        A path where to create folders for selected patients
     n : int, default=10
@@ -148,7 +142,7 @@ def select_segmentation_patients_subset(archive_path, target_path, n=10):
 
     target_path.mkdir(parents=True, exist_ok=True)
 
-    patients = get_patients(archive_path)
+    patients = get_patients(images_path)
     patients_ids = [patient.id for patient in patients]
 
     ids_to_segm = random.sample(patients_ids, n)
@@ -197,9 +191,9 @@ def load_patients_ids(ids_file_path):
 
 
 # Save as metadata file
-def sample_slices(archive_folder, negative_patients_ids, metadata_path):
+def sample_slices(images_path, negative_patients_ids, metadata_path):
 
-    patients = get_patients(archive_folder)
+    patients = get_patients(images_path)
     # Filter out patients in negative sample for adhesions detection
     negative_sample = [patient for patient in patients if patient.id in negative_patients_ids]
 
@@ -211,7 +205,7 @@ def sample_slices(archive_folder, negative_patients_ids, metadata_path):
         while not found and attempts <= len(patient.cinemri_slices):
             attempts += 1
             slice = np.random.choice(patient.cinemri_slices, 1)[0]
-            slice_path = slice.build_path(archive_folder / IMAGES_FOLDER)
+            slice_path = slice.build_path(images_path)
             slice_image = sitk.ReadImage(str(slice_path))
             depth = slice_image.GetDepth()
             orientation = get_image_orientation(slice_image)
@@ -238,17 +232,17 @@ def sample_slices_detection(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--patients_file', type=str, required=True,
                         help="a path to a file with patients ids to sample slices from")
-    parser.add_argument('--archive', type=str, required=True, help="a path to the cine-MRI archive")
+    parser.add_argument('--images_path', type=str, required=True, help="a path to the cine-MRI archive")
     parser.add_argument('--metadata_path', type=str, required=True,
                         help="a path to the metadata folder of the cine-MRI archive")
 
     args = parser.parse_args(argv)
     patients_file_path = Path(args.patients_file)
-    archive_path = Path(args.archive)
+    images_path = Path(args.images_path)
     metadata_path = Path(args.metadata_path)
 
     patients_ids = load_patients_ids(patients_file_path)
-    sample_slices(archive_path, patients_ids, metadata_path)
+    sample_slices(images_path, patients_ids, metadata_path)
 
 
 def average_bb_size(annotations):
@@ -362,14 +356,13 @@ def extract_detection_data(argv):
     extract_detection_dataset(slices, images_path, target_path)
 
 
-def contour_stat(full_segmentation_path):
-    images_folder = "merged_segmentation"
-    patients = get_patients(full_segmentation_path, images_folder=images_folder)
+def contour_stat(images_path):
+    patients = get_patients(images_path)
 
     lengths = []
     for patient in patients:
         for slice in patient.cinemri_slices:
-            slice_path = slice.build_path(full_segmentation_path / images_folder)
+            slice_path = slice.build_path(images_path)
             # Expect that contour does not change much across series, so taking the first frame
             slice_image = sitk.ReadImage(str(slice_path))
             depth = slice_image.GetDepth()
@@ -384,6 +377,47 @@ def contour_stat(full_segmentation_path):
     return mean_length
 
 
+# TODO: move
+class VisceralSlide:
+    """An object representing visceral slide for a Cine-MRI slice
+    """
+    def __init__(self, patient_id, scan_id, slice_id, visceral_slide_data):
+        self.patient_id = patient_id
+        self.scan_id = scan_id
+        self.slice_id = slice_id
+        self.full_id = SEPARATOR.join([patient_id, scan_id, slice_id])
+        self.x = visceral_slide_data["x"]
+        self.y = visceral_slide_data["y"]
+        self.values = visceral_slide_data["slide"]
+
+    def build_path(self, relative_path, extension=".mha"):
+        return Path(relative_path) / self.patient_id / self.scan_id / (self.slice_id + extension)
+
+
+def load_visceral_slides(visceral_slide_path):
+    patient_ids = [f.name for f in visceral_slide_path.iterdir() if f.is_dir()]
+
+    visceral_slides = []
+    for patient_id in patient_ids:
+        patient_path = visceral_slide_path / patient_id
+        scans = [f.name for f in patient_path.iterdir() if f.is_dir()]
+
+        for scan_id in scans:
+            scan_path = patient_path / scan_id
+            slices = [f.name for f in scan_path.iterdir() if f.is_dir()]
+
+            for slice_id in slices:
+                visceral_slide_data_path = scan_path / slice_id / VISCERAL_SLIDE_FILE
+                with open(str(visceral_slide_data_path), "r+b") as file:
+                    visceral_slide_data = pickle.load(file)
+
+                visceral_slide = VisceralSlide(patient_id, scan_id, slice_id, visceral_slide_data)
+                visceral_slides.append(visceral_slide)
+
+    return visceral_slides
+
+
+
 def test():
     archive_path = Path(ARCHIVE_PATH)
 
@@ -396,21 +430,6 @@ def test():
 
 
     #train_test_split(archive_path, subset_path, train_proportion=1)
-    """
-    unique_shapes = find_unique_shapes(archive_path, "images")
-    print("Unique scan dimensions in the dataset")
-    print(unique_shapes)
-    """
-
-    """
-    patients_without_slices = get_patients_without_slices(archive_path)
-    print("Patients without slices")
-    print(patients_without_slices)
-
-    patients_without_segmented_slices = get_patients_without_slices(archive_path, images_folder="cavity_segmentations")
-    print("Patients without segmented slices")
-    print(patients_without_segmented_slices)
-    """
 
 
 if __name__ == '__main__':

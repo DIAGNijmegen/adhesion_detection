@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from pathlib import Path
 from adhesions import AdhesionType, Adhesion, load_annotations
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, BB_ANNOTATIONS_EXPANDED_FILE
+from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, BB_ANNOTATIONS_EXPANDED_FILE, VISCERAL_SLIDE_FILE
 from cinemri.config import ARCHIVE_PATH
 from utils import average_bb_size
 from contour import get_connected_regions, get_adhesions_prior_coords, get_abdominal_contour_top
@@ -36,7 +36,7 @@ def extract_visceral_slide_dict(annotations, visceral_slide_path):
         visceral_slide_results_path = annotation.build_path(visceral_slide_path, extension="")
         if visceral_slide_results_path.exists():
             # Load the computed visceral slide
-            visceral_slide_file_path = visceral_slide_results_path / "visceral_slide.pkl"
+            visceral_slide_file_path = visceral_slide_results_path / VISCERAL_SLIDE_FILE
             with open(str(visceral_slide_file_path), "r+b") as file:
                 visceral_slide_data = pickle.load(file)
                 visceral_slide_dict[annotation.full_id] = visceral_slide_data
@@ -713,7 +713,7 @@ def test():
 
     int_nums = [100, 200, 300, 400, 500, 600, 653, 700, 800, 900, 1000, 1500, 2000]
     for int_num in int_nums:
-        vs_intensity_stat(cumulative_vs_path, annotations_path, int_num)
+        vs_intensity_stat(cumulative_vs_path, annotations_path, int_num, prior=True)
     
     # annotations_stat(annotations)
     # predict_and_visualize(annotations, cumulative_vs_path, images_path, output, threshold=0.2)

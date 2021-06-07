@@ -13,7 +13,7 @@ from visceral_slide import VisceralSlideDetector, CumulativeVisceralSlideDetecto
 import matplotlib.pyplot as plt
 from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
-    TEST_PATIENTS_KEY
+    TEST_PATIENTS_KEY, VISCERAL_SLIDE_FILE
 from segmentation import segment_abdominal_cavity
 from utils import slices_from_full_ids_file
 
@@ -22,7 +22,6 @@ from utils import slices_from_full_ids_file
 NNUNET_INPUT_FOLDER = "nnUNet_input"
 PREDICTED_MASKS_FOLDER = "nnUNet_masks"
 RESULTS_FOLDER = "visceral_slide"
-VISCERAL_SLIDE_FILE = "visceral_slide.pkl"
 
 
 # TODO: probably also add an option to load saved segmentation since it I run it for the whole dataset
@@ -164,7 +163,7 @@ def get_insp_exp_frames_and_masks(slice, insp_ind, exp_ind, images_path, masks_p
     return insp_frame, insp_mask, exp_frame, exp_mask
 
 
-def extract_insp_exp_frames(archive_path,
+def extract_insp_exp_frames(images_path,
                             patients_ids,
                             inspexp_file_path,
                             destination_path):
@@ -176,8 +175,8 @@ def extract_insp_exp_frames(archive_path,
 
     Parameters
     ----------
-    archive_path : Path
-       A path to the full cine-MRI data archive
+    images_path : Path
+       A path to a folder with cine-MRI images
     patients_ids : list of str
        A list of the patients ids for which frames will be extracted
     inspexp_file_path : Path
@@ -197,10 +196,8 @@ def extract_insp_exp_frames(archive_path,
         inspexp_data = json.load(inspexp_file)
 
     # Extract the subset of patients
-    patients = get_patients(archive_path)
+    patients = get_patients(images_path)
     patients = [patient for patient in patients if patient.id in patients_ids]
-
-    images_path = archive_path / IMAGES_FOLDER
 
     for patient in patients:
         print("Extracting frames for slices of a patient {}".format(patient.id))
@@ -422,11 +419,12 @@ def run_pileline(data_path,
 
     patients_ids = get_patients_ids(train_test_split, mode)
 
+    images_folder = data_path / IMAGES_FOLDER
     inspexp_file_path = data_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     nnUNet_input_path = output_path / NNUNET_INPUT_FOLDER
 
     # Extract inspiration and expiration frames and save in nnU-Net input format
-    extract_insp_exp_frames(data_path, patients_ids, inspexp_file_path, nnUNet_input_path)
+    extract_insp_exp_frames(images_folder, patients_ids, inspexp_file_path, nnUNet_input_path)
 
     # Run inference with nnU-Net
     nnUNet_output_path = output_path / PREDICTED_MASKS_FOLDER

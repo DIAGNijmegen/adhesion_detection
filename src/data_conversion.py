@@ -78,7 +78,9 @@ def extract_segmentation_data(archive_path,
     target_segmentations_path = destination_path / target_segmentations_folder
     target_segmentations_path.mkdir(exist_ok=True)
 
-    patients = get_patients(archive_path, images_folder=segmentations_folder)
+    images_path = archive_path / images_folder
+    segmentation_path = archive_path / segmentations_folder
+    patients = get_patients(segmentation_path)
     # Now get all scans for each patient and create an array of Patients
     for patient in patients:
         # Create patient folder in both images and masks target directories
@@ -103,11 +105,11 @@ def extract_segmentation_data(archive_path,
             for slice_id in slices:
                 cinemri_slice = CineMRISlice(patient.id, scan_id, slice_id)
                 # read an image and extract the first frame
-                slice_path = cinemri_slice.build_path(Path(archive_path) / images_folder)
+                slice_path = cinemri_slice.build_path(images_path)
                 save_frame(slice_path, scan_images_path)
 
                 # read a segmentation mask and extract the first frame
-                segmentation_path = cinemri_slice.build_path(Path(archive_path) / segmentations_folder)
+                segmentation_path = cinemri_slice.build_path(segmentation_path)
                 save_frame(segmentation_path, scan_segmentations_path)
 
 
