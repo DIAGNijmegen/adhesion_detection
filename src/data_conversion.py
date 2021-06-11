@@ -7,6 +7,7 @@ from pathlib import Path
 import numpy as np
 import json
 import random
+import shutil
 from skimage import io
 import SimpleITK as sitk
 from cinemri.config import ARCHIVE_PATH
@@ -548,7 +549,7 @@ def save_visualised_prediction(images_path, predictions_path, target_path, save_
         plt.imshow(masked, cmap='autumn', alpha=0.2)
         plt.axis("off")
         overlayed_mask_file_path = png_path / (frame_id + ".png")
-        plt.savefig(overlayed_mask_file_path)
+        plt.savefig(overlayed_mask_file_path, bbox_inches='tight', pad_inches=0)
         plt.close()
 
     if save_gif:
@@ -565,10 +566,108 @@ def save_visualised_prediction(images_path, predictions_path, target_path, save_
         subprocess.run(command)
 
 
+def save_visualised_full_prediction(images_path, predictions_path, target_path, save_gif=True):
+    """
+    Visualises the predicted masks as overlays on the frames and saves as a png file
+    Parameters
+    ----------
+    images_path : Path
+       A path to a folder that contains cine-MRI slices
+    predictions_path : Path
+       A path to a folder that contains predicted segmentation masks
+    target_path : Path
+       A path to a folder to save visualized prediction
+    save_gif : bool, default=True
+       A boolean flag indicating whether visualized prediction should be merged into a gif and saved
+    """
+
+    target_path.mkdir(exist_ok=True)
+
+    # get frames ids
+    patients = get_patients(images_path)
+    for patient in patients:
+        patient_path = target_path / patient.id
+        patient_path.mkdir()
+
+        for scan_id in patient.scan_ids:
+            scan_path = patient_path / scan_id
+            scan_path.mkdir()
+
+            slices = patient.scans[scan_id]
+            for slice_id in slices:
+                # extract cine-MRI slice
+                slice_path = images_path / patient.id / scan_id / (slice_id + ".mha")
+                slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+                # extract predicted mask
+                mask_path = predictions_path / patient.id / scan_id / (slice_id + ".mha")
+                mask = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
+
+                vis_path = scan_path / slice_id
+                vis_path.mkdir()
+
+                # Make a separate folder for .png files
+                png_path = vis_path / "pngs"
+                png_path.mkdir()
+
+                for ind, frame in enumerate(slice):
+                    frame_mask = mask[ind]
+
+                    plt.figure()
+                    plt.imshow(frame, cmap="gray")
+                    masked = np.ma.masked_where(frame_mask == 0, frame_mask)
+                    plt.imshow(masked, cmap='autumn', alpha=0.2)
+                    plt.axis("off")
+                    overlayed_mask_file_path = png_path / "{}_{}.png".format(slice_id, ind)
+                    plt.savefig(overlayed_mask_file_path, bbox_inches='tight', pad_inches=0)
+                    plt.close()
+
+                if save_gif:
+                    command = [
+                        "convert",
+                        "-coalesce",
+                        "-delay",
+                        "20",
+                        "-loop",
+                        "0",
+                        str(png_path) + "/*png",
+                        str(vis_path) + "/" + slice_id + ".gif",
+                    ]
+                    subprocess.run(command)
+
+
+def extract_detection_gifs(source_path, target_path):
+
+    target_path.mkdir(exist_ok=True)
+
+    patient_ids = [f.name for f in source_path.iterdir() if f.is_dir()]
+    for patient_id in patient_ids:
+        patient_path = source_path / patient_id
+        scans = [f.name for f in patient_path.iterdir() if f.is_dir()]
+
+        for scan_id in scans:
+            scan_path = patient_path / scan_id
+            slices = [f.name for f in scan_path.iterdir() if f.is_dir()]
+
+            for slice_id in slices:
+                gif_source_path = scan_path / slice_id / (slice_id + ".gif")
+                gif_target_path = target_path / (SEPARATOR.join((patient_id, scan_id, slice_id)) + ".gif")
+
+                shutil.copy(gif_source_path, gif_target_path)
+
+
+
 def test():
     archive_path = Path(ARCHIVE_PATH)
     subset_path = Path("segmentation_subset")
     diag_nnUNet_path = Path("../../data/cinemri_mha/diag_nnunet")
+
+    images_path = Path("../../data/cinemri_mha/detection/images")
+    prediction_path = Path("../../data/cinemri_mha/detection/full_segmentation/merged_masks")
+    target_path = Path("../../experiments/detection_vis")
+    target_path1 = Path("../../experiments/detection_gifs")
+
+    save_visualised_full_prediction(images_path, prediction_path, target_path)
+    extract_detection_gifs(target_path, target_path1)
 
     #extract_frames(subset_path, diag_nnUNet_path)
 
@@ -578,7 +677,7 @@ def test():
     print(unique_shapes)
     """
 
-    extract_segmentation_data(archive_path, subset_path)
+    #extract_segmentation_data(archive_path, subset_path)
 
     # extract_frames(Path("1.3.12.2.1107.5.2.30.26380.2019031314281933334670409.0.0.0.mha"), Path("frames"))
     # merge_frames(Path("../full_pred_test/prediction"), Path("merged_prediction"), Path("frames/metadata.json"))
@@ -586,8 +685,9 @@ def test():
 
 
 if __name__ == '__main__':
-    #test()
+    test()
 
+    """
     np.random.seed(99)
     random.seed(99)
 
@@ -603,3 +703,4 @@ if __name__ == '__main__':
         print('Usage: data_conversion ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
+    """

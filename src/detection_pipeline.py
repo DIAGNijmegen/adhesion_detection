@@ -8,7 +8,7 @@ from pathlib import Path
 from adhesions import AdhesionType, Adhesion, load_annotations
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, BB_ANNOTATIONS_EXPANDED_FILE, VISCERAL_SLIDE_FILE
 from cinemri.config import ARCHIVE_PATH
-from utils import average_bb_size
+from utils import average_bb_size, load_visceral_slides, binning_intervals
 from contour import get_connected_regions, get_adhesions_prior_coords, get_abdominal_contour_top
 from visceral_slide_pipeline import get_inspexp_frames
 from froc.deploy_FROC import y_to_FROC
@@ -44,7 +44,7 @@ def extract_visceral_slide_dict(annotations, visceral_slide_path):
     return visceral_slide_dict
 
 
-def bb_from_region(region, mean_width, mean_height):
+def bb_from_region(region, mean_size):
     """
     Calculates bounding box based on the coordinates of the points in the region
     and mean annotations width and height
@@ -54,38 +54,36 @@ def bb_from_region(region, mean_width, mean_height):
     region : list of list
        A list of contour points represented as 2d arrays
 
-    mean_width, mean_height : float
-       Mean wide and height of adhesions bounding boxes in annotations
+    mean_size : tuple of float
+       Mean size of adhesions bounding boxes in annotations. The first values is width and the second is height
 
     Returns
     -------
     adhesion : Adhesion
        A bounding box corresponding to the region
     """
-    region_centre = region[round(len(region) / 2) - 1]
 
-    x_min = np.min([coord[0] for coord in region])
-    x_max = np.max([coord[0] for coord in region])
-    width = x_max - x_min + 1
-    if width < mean_width:
-        origin_x = region_centre[0] - round(mean_width / 2)
-        width = mean_width
-    else:
-        origin_x = x_min
+    # axis=0: x, axis=1: y
+    def compute_origin_and_len(region, mean_size, axis=0):
+        region_centre = region[round(len(region) / 2) - 1]
 
-    y_min = np.min([coord[1] for coord in region])
-    y_max = np.max([coord[1] for coord in region])
-    height = y_max - y_min + 1
-    if height < mean_height:
-        origin_y = region_centre[1] - round(mean_height / 2)
-        height = mean_height
-    else:
-        origin_y = y_min
-    
+        axis_min = np.min([coord[axis] for coord in region])
+        axis_max = np.max([coord[axis] for coord in region])
+        length = axis_max - axis_min + 1
+        if length < mean_size[axis]:
+            origin = region_centre[axis] - round(mean_size[axis] / 2)
+            length = mean_size[axis]
+        else:
+            origin= axis_min
+
+        return origin, length
+
+    origin_x, width = compute_origin_and_len(region, mean_size, axis=0)
+    origin_y, height = compute_origin_and_len(region, mean_size, axis=1)
     return Adhesion([origin_x, origin_y, width, height])
 
 
-def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold=0.2, min_region_len=3):
+def bb_with_threshold(x, y, slide_normalized, mean_size, likelihood_data, adhesion_prior=0.7, threshold=0.2, min_region_len=3):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
     specified threshold level
@@ -96,8 +94,8 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
        x-axis and y-axis components of abdominal cavity contour
     slide_normalized : ndarray of float
        Normalized values of visceral slide corresponding to the coordinates of abdominal cavity contour
-    mean_width, mean_height : float
-       Mean wide and height of adhesions bounding boxes in annotations
+    mean_size : tuple of float
+       Mean size of adhesions bounding boxes in annotations. The first values is width and the second is height
     threshold : float
        A percentile of a low slide
     min_region_len : int
@@ -124,6 +122,7 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
     slide_normalized = slide_normalized[top_excluded_inds]
     """
 
+    # Filter out the region in which no adhesions can be present
     x_prior, y_prior = get_adhesions_prior_coords(x, y)
 
     coords = np.column_stack((x, y)).tolist()
@@ -158,7 +157,7 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
     low_slide_regions = [region for region in low_slide_regions if len(region) >= min_region_len]
 
     # Get central point of each region to generate a bounding box
-    bounding_boxes = [bb_from_region(region, mean_width, mean_height) for region in low_slide_regions]
+    bounding_boxes = [bb_from_region(region, mean_size) for region in low_slide_regions]
 
     vs_min = np.min(slide_normalized)
     vs_max = np.max(slide_normalized)
@@ -170,14 +169,44 @@ def bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold
     """
 
     # Compute confidence for each prediction based on the region average index
+    """
     mean_slides = []
     for region in low_slide_regions:
         region_slides = [comp[2] for comp in region]
         mean_region_slide = np.mean(region_slides)
         mean_slides.append(mean_region_slide)
     confidence = [norm_const * (1 - mean_slide / low_slide_threshold) for mean_slide in mean_slides]
+    """
 
-    prediction = [(bb, conf) for bb, conf in zip(bounding_boxes, confidence)]
+    # Unpack likelihood data
+    reference_values = likelihood_data["values"]
+    adh_likelihoods = likelihood_data["adh_like"]
+    not_adh_likelihoods = likelihood_data["not_adh_like"]
+
+    # Calculate the likelihood
+    coefficients = []
+    eps = 10**(-9)
+    for region in low_slide_regions:
+        ahd_ll = np.log(adhesion_prior)
+        not_ahd_ll = np.log(1 - adhesion_prior)
+        for comp in region:
+            vs_value = comp[2]
+            diff = reference_values - vs_value
+            index = np.argmin(np.abs(diff))
+            adh_likelihood = adh_likelihoods[index]
+            not_adh_likelihood = not_adh_likelihoods[index]
+
+            # for numerical stability since our likelihood functions are not smooth
+            ahd_ll += np.log(adh_likelihood + eps)
+            not_ahd_ll += np.log(not_adh_likelihood + eps)
+
+        posterior_prob = 1 / (1 + np.exp(not_ahd_ll - ahd_ll))
+        coefficients.append(posterior_prob)
+
+    # TODO: change this and then handle confidence properly
+    confidence = coefficients
+    confidence_th = 0
+    prediction = [(bb, conf) for bb, conf in zip(bounding_boxes, confidence) if conf > confidence_th]
     return prediction
 
 
@@ -249,14 +278,14 @@ def visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, i
     plt.close()
 
 
-def predict_and_visualize(annotations, visceral_slide_path, images_path, output_path, inspexp_data=None,
+def predict_and_visualize(annotations, visceral_slide_path, images_path, output_path, likelihood_data, adhesion_prior=0.7, inspexp_data=None,
                           threshold=0.2, min_region_len=5):
 
     output_path.mkdir(exist_ok=True)
 
     visceral_slide_dict = extract_visceral_slide_dict(annotations, visceral_slide_path)
     # Average bounding box size
-    mean_width, mean_height = average_bb_size(annotations)
+    mean_size = average_bb_size(annotations)
 
     for annotation in annotations:
         visceral_slide_data = visceral_slide_dict[annotation.full_id]
@@ -264,7 +293,7 @@ def predict_and_visualize(annotations, visceral_slide_path, images_path, output_
         visceral_slide = visceral_slide_data["slide"]
         slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
 
-        prediction = bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold, min_region_len)
+        prediction = bb_with_threshold(x, y, slide_normalized, mean_size, likelihood_data, adhesion_prior, threshold, min_region_len)
 
         if inspexp_data is None:
             # Assume it is cumulative VS and take the one before the last one frame
@@ -285,7 +314,7 @@ def predict_and_visualize(annotations, visceral_slide_path, images_path, output_
 
 
 # TODO: should we also output confidence here?
-def predict(full_ids, visceral_slide_dict, mean_width, mean_height, threshold=0.2, min_region_len=3):
+def predict(full_ids, visceral_slide_dict, mean_size, likelihood_data, adhesion_prior=0.7, threshold=0.2, min_region_len=3):
     """
     Predicts adhesions based on visceral slide values for the provided full ids of slices
 
@@ -296,6 +325,8 @@ def predict(full_ids, visceral_slide_dict, mean_width, mean_height, threshold=0.
     visceral_slide_dict : dict
        A dictionary that contains the coordinates of abdominal cavity contour and
        the corresponding visceral slide
+    mean_size : tuple of float
+       Mean size of adhesions bounding boxes in annotations. The first values is width and the second is height
 
     Returns
     -------
@@ -311,7 +342,7 @@ def predict(full_ids, visceral_slide_dict, mean_width, mean_height, threshold=0.
         visceral_slide = visceral_slide_data["slide"]
         slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
 
-        prediction = bb_with_threshold(x, y, slide_normalized, mean_width, mean_height, threshold, min_region_len)
+        prediction = bb_with_threshold(x, y, slide_normalized, mean_size, likelihood_data, adhesion_prior, threshold, min_region_len)
         predictions[full_id] = prediction
 
     return predictions
@@ -489,7 +520,7 @@ def get_confidence_outcome(tps, fps, fns):
     return outcomes
 
 
-def prediction_by_threshold(annotations, visceral_slide_path, output_path, threshold=0.2):
+def prediction_by_threshold(annotations, visceral_slide_path, output_path, likelihood_data, adhesion_prior=0.7, threshold=0.2):
     """
     Performs prediction by visceral slide threshold and evaluates it
 
@@ -503,23 +534,18 @@ def prediction_by_threshold(annotations, visceral_slide_path, output_path, thres
     metric :
        Evaluation metric
     """
+    output_path.mkdir(exist_ok=True)
 
     visceral_slide_dict = extract_visceral_slide_dict(annotations, visceral_slide_path)
 
     # Average bounding box size
-    mean_width, mean_height = average_bb_size(annotations)
+    mean_size = average_bb_size(annotations)
     full_ids = [annotation.full_id for annotation in annotations]
 
     # vary threshold level
     # Get predictions by visceral slide level threshold
-    predictions = predict(full_ids, visceral_slide_dict, mean_width, mean_height, threshold, 5)
-
-    archive_path = Path(ARCHIVE_PATH)
-    images_path = archive_path / IMAGES_FOLDER
-    inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
-    # load inspiration and expiration data
-    with open(inspexp_file_path) as inspexp_file:
-        inspexp_data = json.load(inspexp_file)
+    min_region_len = 5
+    predictions = predict(full_ids, visceral_slide_dict, mean_size, likelihood_data, adhesion_prior, threshold, min_region_len)
 
     tps, fps, fns = get_prediction_outcome(annotations, predictions, 0.01)
     outcomes = get_confidence_outcome(tps, fps, fns)
@@ -579,14 +605,14 @@ def compute_pr_curves(outcomes):
 
     for th in thresholds:
         if th > 0:
-            y_pred_all_thresholded                  = np.zeros_like(y_pred_all)
+            y_pred_all_thresholded = np.zeros_like(y_pred_all)
             y_pred_all_thresholded[y_pred_all > th] = 1
-            tp     = np.sum(y_true_all * y_pred_all_thresholded)
-            fp     = np.sum(y_pred_all_thresholded - y_true_all*y_pred_all_thresholded)
+            tp = np.sum(y_true_all * y_pred_all_thresholded)
+            fp = np.sum(y_pred_all_thresholded - y_true_all*y_pred_all_thresholded)
 
             # Add the corresponding precision and recall values
-            curr_precision = 0 if (tp + fp) == 0 else tp / (tp + fp)
             recall.append(tp / total_lesions)
+            curr_precision = 1 if (tp + fp) == 0 else tp / (tp + fp)
             precision.append(curr_precision)
         else:
             # Extend precision and recall curves
@@ -646,24 +672,29 @@ def plot_precision_recall(values, confidence, output_path, metric="Precision"):
 
 # TODO: document
 # Plots normalized visceral slide values against adhesion frequency
-def vs_intensity_stat(visceral_slide_path, annotations_path, intervals_num=1000):
-    adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
-    annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
+def vs_adhesion_likelihood(visceral_slide_path,
+                           annotations_path,
+                           intervals_num=1000,
+                           adhesion_types=[AdhesionType.anteriorWall,
+                                           AdhesionType.abdominalCavityContour],
+                           plot=False):
 
+    annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
     visceral_slide_dict = extract_visceral_slide_dict(annotations, visceral_slide_path)
-    # Binning
-    intervals = np.linspace(0, 1, intervals_num + 1)
-    reference_vals = []
-    freq_dict = {}
+
+    # Initialize frequencies
+    freq_adh_dict = {}
+    freq_not_adh_dict = {}
     for i in range(intervals_num):
-        interval_start = intervals[i]
-        interval_end = intervals[i + 1]
-        interval_middle = (interval_start + interval_end) / 2
-        reference_vals.append(interval_middle)
-        freq_dict[i] = 0
+        freq_adh_dict[i] = 0
+        freq_not_adh_dict[i] = 0
+
+    # Binning
+    reference_vals = binning_intervals(n=intervals_num)
 
     reference_vals = np.array(reference_vals)
-
+    points_in_annotations = 0
+    points_not_in_annotations = 0
     for annotation in annotations:
         visceral_slide_data = visceral_slide_dict[annotation.full_id]
         contour_x, contour_y = visceral_slide_data["x"], visceral_slide_data["y"]
@@ -673,24 +704,88 @@ def vs_intensity_stat(visceral_slide_path, annotations_path, intervals_num=1000)
         for adhesion in annotation.adhesions:
             # For each point check if it intersects an adhesion
             for x, y, vs in zip(contour_x, contour_y, slide_normalized):
+                # Find the reference value closest to VS and increase the counter
+                diff = reference_vals - vs
+                index = np.argmin(np.abs(diff))
                 intersects = adhesion.contains_point(x, y)
                 if intersects:
-                    # Find the reference value closest to VS and increase the counter
-                    diff = reference_vals - vs
-                    index = np.argmin(np.abs(diff))
-                    freq_dict[index] = freq_dict[index] + 1
+                    freq_adh_dict[index] = freq_adh_dict[index] + 1
+                    points_in_annotations += 1
+                else:
+                    freq_not_adh_dict[index] = freq_not_adh_dict[index] + 1
+                    points_not_in_annotations += 1
 
     # Now extract ordered frequencies
+    adh_frequencies = []
+    not_adh_frequencies = []
+    for i in range(intervals_num):
+        adh_frequencies.append(freq_adh_dict[i])
+        not_adh_frequencies.append(freq_not_adh_dict[i])
+
+    # Divide frequencies to number of points to represent a likelihood
+    adh_frequencies = np.array(adh_frequencies)
+    adh_likelihood = adh_frequencies / points_in_annotations
+
+    not_adh_frequencies = np.array(not_adh_frequencies)
+    not_adh_likelihood = not_adh_frequencies / points_not_in_annotations
+
+    if plot:
+        max_y = max(adh_likelihood.max(), not_adh_likelihood.max()) * 1.1
+
+        plt.figure()
+        plt.plot(reference_vals, adh_likelihood)
+        plt.axhline(y=0.001, color='r', linestyle='--')
+        plt.ylim([0, max_y])
+        plt.title("Adhesion")
+        plt.xlabel("Normalised visceral slide")
+        plt.ylabel("Likelihood")
+        plt.savefig("adh_freq_int_{}".format(intervals_num), bbox_inches='tight', pad_inches=0)
+        plt.show()
+
+        plt.figure()
+        plt.plot(reference_vals, not_adh_likelihood)
+        plt.axhline(y=0.001, color='r', linestyle='--')
+        plt.ylim([0, max_y])
+        plt.title("Not Adhesion")
+        plt.xlabel("Normalised visceral slide")
+        plt.ylabel("Likelihood")
+        plt.savefig("not_adh_freq_int_{}".format(intervals_num), bbox_inches='tight', pad_inches=0)
+        plt.show()
+
+    return reference_vals, adh_likelihood, not_adh_likelihood
+
+
+def vs_value_distr(visceral_slide_path,
+                   intervals_num=1000):
+    # Binning
+    reference_vals = binning_intervals(n=intervals_num)
+
+    # Initialize frequencies
+    freq_dict = {}
+    for i in range(intervals_num):
+        freq_dict[i] = 0
+
+    # Calculate frequencies in 
+    visceral_slides = load_visceral_slides(visceral_slide_path)
+    for visceral_slide in visceral_slides:
+        slide_normalized = visceral_slide.values / np.max(visceral_slide.values)
+        for value in slide_normalized:
+            diff = reference_vals - value
+            index = np.argmin(np.abs(diff))
+            freq_dict[index] = freq_dict[index] + 1
+
     frequencies = []
     for i in range(intervals_num):
         frequencies.append(freq_dict[i])
 
     plt.figure()
     plt.plot(reference_vals, frequencies)
+    plt.title("VS values frequencies")
     plt.xlabel("Normalised visceral slide")
-    plt.ylabel("Adhesion frequency")
-    plt.savefig("adh_freq_int_{}".format(intervals_num), bbox_inches='tight', pad_inches=0)
+    plt.ylabel("Frequency")
+    plt.savefig("vs_freq_int_{}".format(intervals_num), bbox_inches='tight', pad_inches=0)
     plt.show()
+
 
 
 def test():
@@ -707,17 +802,25 @@ def test():
     adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
     annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
     
-    output = Path("threshold_prediction_cumulative_contour_reg_th20_mean")
-    #cumulative_vs_path = Path("../../data/cumulative_vs_rest_reg")
-    cumulative_vs_path = Path("../../data/cumulative_vs_contour_reg")
+    output = Path("threshold_prediction_cumulative_contour_reg_3")
+    #cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_rest_reg_pos")
+    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_pos")
 
     int_nums = [100, 200, 300, 400, 500, 600, 653, 700, 800, 900, 1000, 1500, 2000]
     for int_num in int_nums:
-        vs_intensity_stat(cumulative_vs_path, annotations_path, int_num, prior=True)
-    
-    # annotations_stat(annotations)
-    # predict_and_visualize(annotations, cumulative_vs_path, images_path, output, threshold=0.2)
-    # prediction_by_threshold(annotations, cumulative_vs_path, output, threshold=0.2)
+        vs_value_distr(cumulative_vs_path, int_num)
+        values, adh_likelihood, not_adh_likelihood = vs_adhesion_likelihood(cumulative_vs_path, annotations_path, int_num, plot=True)
+        #print(adh_likelihood.sum())
+        #print(not_adh_likelihood.sum())
+
+    """
+    int_num = 653
+    values, adh_likelihood, not_adh_likelihood = vs_adhesion_likelihood(cumulative_vs_path, annotations_path, int_num)
+    likelihood_data = {"values": values, "adh_like": adh_likelihood, "not_adh_like": not_adh_likelihood}
+
+    predict_and_visualize(annotations, cumulative_vs_path, images_path, output, likelihood_data, 0.5, threshold=0.2)
+    prediction_by_threshold(annotations, cumulative_vs_path, output, likelihood_data, 0.5, threshold=0.2)
+    """
 
     #bb_with_threshold(annotations, visceral_slide_path, inspexp_data, images_path)
 

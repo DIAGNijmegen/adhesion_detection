@@ -417,6 +417,13 @@ def load_visceral_slides(visceral_slide_path):
     return visceral_slides
 
 
+# Splits the (start, end) range into n intervals and return the middle value of each interval
+def binning_intervals(start=0, end=1, n=1000):
+
+    intervals = np.linspace(start, end, n + 1)
+    reference_vals = [(intervals[i] + intervals[i + 1]) / 2 for i in range(n)]
+    return reference_vals
+
 
 def test():
     archive_path = Path(ARCHIVE_PATH)
