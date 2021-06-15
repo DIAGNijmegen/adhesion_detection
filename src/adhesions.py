@@ -7,11 +7,11 @@ import cv2
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, PATIENT_ANNOTATIONS_FILE_NAME, \
+from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, REPORT_FILE_NAME, \
     BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import AbdominalContourPart, get_contour, get_abdominal_contour_top
-from cinemri.utils import CineMRISlice
+from cinemri.definitions import CineMRISlice
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
 from utils import interval_overlap, load_visceral_slides
@@ -174,18 +174,18 @@ class AdhesionAnnotation:
             A list of adhesions specified in the annotation
     """
 
-    def __init__(self, patient_id, scan_id, slice_id, bounding_boxes, types=None):
+    def __init__(self, patient_id, study_id, slice_id, bounding_boxes, types=None):
         """
         Parameters
         ----------
-        patient_id, scan_id, slice_id : str
-           IDs of a patient, scan and slices of an annotation
+        patient_id, study_id, slice_id : str
+           IDs of a patient, study and slices of an annotation
         bounding_boxes : list of float
            A list of bounding boxes of annotated adhesions
         types : list of AdhesionType, optional
            A list of adhesion types corresponding to bouding boxes
         """
-        self.slice = CineMRISlice(patient_id, scan_id, slice_id)
+        self.slice = CineMRISlice(slice_id, patient_id, study_id)
         if types is None:
             types = [AdhesionType.unset for _ in bounding_boxes]
         self.adhesions = [Adhesion(bounding_box, type) for bounding_box, type in zip(bounding_boxes, types)]
@@ -195,12 +195,12 @@ class AdhesionAnnotation:
         return self.slice.patient_id
 
     @property
-    def scan_id(self):
-        return self.slice.scan_id
+    def study_id(self):
+        return self.slice.study_id
 
     @property
     def slice_id(self):
-        return self.slice.slice_id
+        return self.slice.id
 
     @property
     def full_id(self):
@@ -238,7 +238,7 @@ class AdhesionAnnotation:
         Returns
         -------
         path : Path
-           A path to a cine-MRI scan
+           A path to a cine-MRI study
 
         """
         return self.slice.build_path(relative_path, extension=extension)
@@ -270,8 +270,8 @@ def load_annotations(annotations_path,
         annotations_dict = json.load(annotations_file)
 
     annotations = []
-    for patient_id, scans_dict in annotations_dict.items():
-        for scan_id, slices_dict in scans_dict.items():
+    for patient_id, studies_dict in annotations_dict.items():
+        for study_id, slices_dict in studies_dict.items():
             for slice_id, bounding_box_annotations in slices_dict.items():
                 # Include bounding boxes which have requested type
                 bounding_boxes = []
@@ -287,7 +287,7 @@ def load_annotations(annotations_path,
                         types.append(AdhesionType.unset)
 
                 if len(bounding_boxes) > 0:
-                    annotation = AdhesionAnnotation(patient_id, scan_id, slice_id, bounding_boxes, types)
+                    annotation = AdhesionAnnotation(patient_id, study_id, slice_id, bounding_boxes, types)
                     annotations.append(annotation)
 
     return annotations
@@ -392,9 +392,9 @@ def load_patient_ids_reader_study(annotations_path, patients_type=PatientsType.a
 
     # First, calculate how many annotations a patient has
     patients = []
-    for patient_id, scans_dict in annotations_dict.items():
+    for patient_id, studies_dict in annotations_dict.items():
         annotated_slices_count = 0
-        for scan_id, slices_dict in scans_dict.items():
+        for study_id, slices_dict in studies_dict.items():
             for slice_id, bounding_boxes in slices_dict.items():
                 if len(bounding_boxes) > 0:
                     annotated_slices_count += 1
@@ -519,7 +519,7 @@ def extract_adhesions_metadata(annotations_path, full_segmentation_path, metadat
     annotations_path : Path
        A path to annotations metadata file
     full_segmentation_path : Path
-       A path to a folder containing full segmentation for cine-MRI scans
+       A path to a folder containing full segmentation for cine-MRI studies
     metadata_path : Path
        A path to a metadata folder
     expanded_annotations_file : str
@@ -529,13 +529,13 @@ def extract_adhesions_metadata(annotations_path, full_segmentation_path, metadat
         annotations_dict = json.load(annotations_file)
 
     annotations_dict_expanded = {}
-    for patient_id, scans_dict in annotations_dict.items():
-        scans_dict_expanded = {}
-        for scan_id, slices_dict in scans_dict.items():
+    for patient_id, studies_dict in annotations_dict.items():
+        studies_dict_expanded = {}
+        for study_id, slices_dict in studies_dict.items():
             slices_dict_expanded = {}
             for slice_id, bounding_boxes in slices_dict.items():
-                segmentation_path = full_segmentation_path / patient_id / scan_id / (slice_id + ".mha")
-                # Load predicted segmentation for the whole scan
+                segmentation_path = full_segmentation_path / patient_id / study_id / (slice_id + ".mha")
+                # Load predicted segmentation for the whole study
                 if segmentation_path.exists():
                     slice_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(segmentation_path)))
 
@@ -567,9 +567,9 @@ def extract_adhesions_metadata(annotations_path, full_segmentation_path, metadat
 
                 slices_dict_expanded[slice_id] = adhesions_array
 
-            scans_dict_expanded[scan_id] = slices_dict_expanded
+            studies_dict_expanded[study_id] = slices_dict_expanded
 
-        annotations_dict_expanded[patient_id] = scans_dict_expanded
+        annotations_dict_expanded[patient_id] = studies_dict_expanded
 
     annotations_expanded_path = metadata_path / expanded_annotations_file
 
@@ -776,8 +776,8 @@ def vis_annotation_and_saved_vs(annotations_path,
             try:
                 insp_frame, _ = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
             except:
-                print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
-                                                                                           annotation.scan_id,
+                print("Missing insp/exp data for the patient {}, study {}, slice {}".format(annotation.patient_id,
+                                                                                           annotation.study_id,
                                                                                            annotation.slice_id))
 
             # Visualise
@@ -818,8 +818,8 @@ def vis_annotation_and_computed_vs(annotations_path,
             insp_frame, exp_frame = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
             insp_mask, exp_mask = get_inspexp_frames(annotation.slice, inspexp_data, masks_path)
         except:
-            print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
-                                                                                       annotation.scan_id,
+            print("Missing insp/exp data for the patient {}, study {}, slice {}".format(annotation.patient_id,
+                                                                                       annotation.study_id,
                                                                                        annotation.slice_id))
 
         # Compute visceral slide
@@ -845,7 +845,7 @@ def vis_annotation_on_cumulative_vs(visceral_slide_path,
     Parameters
     ----------
     visceral_slide_path, images_path, annotations_path : Path
-        Paths to saved visceral slide, cine-MRI scans and annotations
+        Paths to saved visceral slide, cine-MRI studies and annotations
     output_path : Path
         A Path to save visualised annotation and visceral slide over a frame for which visceral slide is computed
     save : bool
@@ -943,8 +943,8 @@ def test_cavity_part_detection(annotations_path, images_path, inspexp_file_path,
             try:
                 insp_frame, _ = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
             except:
-                print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
-                                                                                           annotation.scan_id,
+                print("Missing insp/exp data for the patient {}, study {}, slice {}".format(annotation.patient_id,
+                                                                                           annotation.study_id,
                                                                                            annotation.slice_id))
 
             if annotation.full_id == "ANON4SV2RE1ET_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311155223544425245.0.0.0":

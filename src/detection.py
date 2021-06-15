@@ -1,5 +1,5 @@
 # Tasks
-# 1. Extract the subset of scans with annotations and visceral slide information
+# 1. Extract the subset of studies with annotations and visceral slide information
 # 2. Visualize displacement field as RGB with B = 0, see if it brings any insight
 # 3. Obtain data for detection as registration between expiration and inspiration frames and visceral slide detection.
 # Visualize example. Add negative examples
@@ -37,7 +37,7 @@ CV_SPLIT_FILE = "detection_split.json"
 # detection_input_whole folder contains adhesions of all types
 # detection_input_contour folder contains adhesions along the abdominal cavity contour
 
-# add possibility to extract scans adjacent to front abdominal wall or abdominal cavity contour (enum)
+# add possibility to extract studies adjacent to front abdominal wall or abdominal cavity contour (enum)
 # save as metadata?
 def get_pseudo_image(deformation_field, x, y, visceral_slide):
 
@@ -98,7 +98,7 @@ def visualize_deformation_field(slice,
     with open(inspexp_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
-    print("Patient {}, slice {}".format(slice.patient_id, slice.slice_id))
+    print("Patient {}, slice {}".format(slice.patient_id, slice.id))
 
     if output_path is not None:
         target_folder = slice.build_path(output_path, extension="")
@@ -111,9 +111,9 @@ def visualize_deformation_field(slice,
         insp_frame, exp_frame = get_inspexp_frames(slice, inspexp_data, images_path)
         insp_mask, exp_mask = get_inspexp_frames(slice, inspexp_data, masks_path)
     except:
-        print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
-                                                                                   slice.scan_id,
-                                                                                   slice.slice_id))
+        print("Missing insp/exp data for the patient {}, study {}, slice {}".format(slice.patient_id,
+                                                                                   slice.study_id,
+                                                                                   slice.id))
 
     # Save or show masked inspiration and expiration frames
     plt.figure()
@@ -259,9 +259,9 @@ def extract_annotated_slices(annotations_path, inspexp_path, images_path, masks_
             insp_frame, exp_frame = get_inspexp_frames(slice, inspexp_data, images_path)
             insp_mask, exp_mask = get_inspexp_frames(slice, inspexp_data, masks_path)
         except:
-            print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
-                                                                                       slice.scan_id,
-                                                                                       slice.slice_id))
+            print("Missing insp/exp data for the patient {}, study {}, slice {}".format(slice.patient_id,
+                                                                                       slice.study_id,
+                                                                                       slice.id))
 
         # TODO: maybe return VS and DF together
         # get visceral slide
@@ -318,9 +318,9 @@ def extract_negative_samples(annotations_type_path, inspexp_path, images_path, m
                     insp_frame, exp_frame = get_inspexp_frames(slice, inspexp_data, images_path)
                     insp_mask, exp_mask = get_inspexp_frames(slice, inspexp_data, masks_path)
                 except:
-                    print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
-                                                                                               slice.scan_id,
-                                                                                               slice.slice_id))
+                    print("Missing insp/exp data for the patient {}, study {}, slice {}".format(slice.patient_id,
+                                                                                               slice.study_id,
+                                                                                               slice.id))
 
                 # Extract DF and visceral slide data and save to disk
                 x, y, visceral_slide = VisceralSlideDetector().get_visceral_slide(insp_frame, insp_mask, exp_frame,
@@ -357,7 +357,7 @@ def annotations_to_yolov5(annotations_path,
     for annotation in annotations:
         print("Converting annotation {}".format(annotation.full_id))
 
-        # Get height and width of scans
+        # Get height and width of studies
         slice_path = annotation.build_path(images_path)
         frame = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))[0]
         frame_height, frame_width = frame.shape[0], frame.shape[1]
@@ -439,7 +439,7 @@ def npy_to_jpg(npy_path,
     npy_file_paths = [file_path for file_path in npy_files_glob]
 
     if whole_data_range:
-        # First get min and max across the whole dataset (to highlight scans with low motion)
+        # First get min and max across the whole dataset (to highlight studies with low motion)
         global_min = np.inf
         global_max = -np.inf
 

@@ -1,7 +1,7 @@
 from pathlib import Path
 import numpy as np
 from torch.utils.data import Dataset
-from cinemri.utils import CineMRISlice
+from cinemri.definitions import CineMRISlice
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 
@@ -47,18 +47,18 @@ class SegmentationDatasetFull(Dataset):
         # Patient ids
         self.patient_ids = [f.name for f in self.segmentations_path.iterdir() if f.is_dir()]
 
-        # Now get all scans for each patient and create an array of Patients
+        # Now get all studies for each patient and create an array of Patients
         self.slices = []
         for patient_id in self.patient_ids:
             patient_segmentations_path = self.segmentations_path / patient_id
-            scans = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
+            studies = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
 
-            for scan_id in scans:
-                scan_path = patient_segmentations_path / scan_id
-                slices = [f.name for f in scan_path.iterdir() if f.is_file()]
+            for study_id in studies:
+                study_path = patient_segmentations_path / study_id
+                slices = [f.name for f in study_path.iterdir() if f.is_file()]
 
                 for slice in slices:
-                    self.slices.append(CineMRISlice(patient_id, scan_id, slice.stem))
+                    self.slices.append(CineMRISlice(slice.stem, patient_id, study_id))
 
 
 class SegmentationDataset(Dataset):
@@ -102,18 +102,18 @@ class SegmentationDataset(Dataset):
         # Patient ids
         self.patient_ids = [f.name for f in self.segmentations_path.iterdir() if f.is_dir()]
 
-        # Now get all scans for each patient and create an array of Patients
+        # Now get all studies for each patient and create an array of Patients
         self.slices = []
         for patient_id in self.patient_ids:
             patient_segmentations_path = self.segmentations_path / patient_id
-            scans = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
+            studies = [f.name for f in patient_segmentations_path.iterdir() if f.is_dir()]
 
-            for scan_id in scans:
-                scan_path = patient_segmentations_path / scan_id
-                slice_ids = [f.stem for f in scan_path.iterdir() if f.suffix == ".npy"]
+            for study_id in studies:
+                study_path = patient_segmentations_path / study_id
+                slice_ids = [f.stem for f in study_path.iterdir() if f.suffix == ".npy"]
 
                 for slice_id in slice_ids:
-                    self.slices.append(CineMRISlice(patient_id, scan_id, slice_id))
+                    self.slices.append(CineMRISlice(slice_id, patient_id, study_id))
 
 
 def test():

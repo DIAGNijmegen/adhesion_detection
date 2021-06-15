@@ -7,7 +7,8 @@ import json
 import numpy as np
 from pathlib import Path
 import SimpleITK as sitk
-from cinemri.utils import get_patients, Patient
+from cinemri.definitions import Patient, Study, CineMRISlice
+from cinemri.utils import get_patients
 from data_conversion import convert_2d_image_to_pseudo_3d
 from visceral_slide import VisceralSlideDetector, CumulativeVisceralSlideDetector
 import matplotlib.pyplot as plt
@@ -95,8 +96,8 @@ def get_insp_exp_indices(slice, inspexp_data):
     """
 
     patient_data = inspexp_data[slice.patient_id]
-    scan_data = patient_data[slice.scan_id]
-    inspexp_frames = scan_data[slice.slice_id]
+    study_data = patient_data[slice.study_id]
+    inspexp_frames = study_data[slice.id]
     insp_ind = inspexp_frames[0]
     exp_ind = inspexp_frames[1]
     return insp_ind, exp_ind
@@ -170,7 +171,7 @@ def extract_insp_exp_frames(images_path,
     """Extracts inspiration and expiration frames and saves them to nn-UNet input format.
 
     The file names of the extracted frames have the following structure:
-    patientId_scanId_sliceId_[insp/exp]_0000.nii.gz
+    patientId_studyId_sliceId_[insp/exp]_0000.nii.gz
     This helps to recover folders hierarchy when the calculated visceral slide for each slice is being saved.
 
     Parameters
@@ -208,16 +209,16 @@ def extract_insp_exp_frames(images_path,
             continue
 
         for cinemri_slice in patient.cinemri_slices:
-            if cinemri_slice.scan_id in patient_data:
-                scan_data = patient_data[cinemri_slice.scan_id]
+            if cinemri_slice.study_id in patient_data:
+                study_data = patient_data[cinemri_slice.study_id]
 
-                if cinemri_slice.slice_id in scan_data:
-                    inspexp_frames = scan_data[cinemri_slice.slice_id]
+                if cinemri_slice.id in study_data:
+                    inspexp_frames = study_data[cinemri_slice.id]
                 else:
-                    print("No data about inspiration and expiration frames for a slice {}".format(cinemri_slice.slice_id))
+                    print("No data about inspiration and expiration frames for a slice {}".format(cinemri_slice.id))
                     continue
             else:
-                print("No data about inspiration and expiration frames for a scan {}".format(cinemri_slice.scan_id))
+                print("No data about inspiration and expiration frames for a study {}".format(cinemri_slice.study_id))
                 continue
 
             slice_path = cinemri_slice.build_path(images_path)
@@ -304,35 +305,41 @@ def compute_visceral_slide(images_path,
     patients = []
     for patient_id in patient_ids:
         patient = Patient(patient_id)
-        slices = slices_id_chunks[slices_id_chunks[:, 0] == patient_id]
-        for _, scan_id, slice_id in slices:
-            patient.add_slice(slice_id, scan_id)
+        patient_records = slices_id_chunks[slices_id_chunks[:, 0] == patient_id]
+        studies_ids = np.unique(patient_records[:, 1])
+
+        for study_id in studies_ids:
+            study = Study(study_id, patient_id=patient_id)
+            study_records = patient_records[patient_records[:, 1] == study_id]
+
+            for _, _, slice_id in study_records:
+                study.add_slice(CineMRISlice(slice_id, patient_id, study_id))
+
+            patient.add_study(study)
 
         patients.append(patient)
 
-    for patient in patients:
-        patient_path = target_path / patient.id
-        patient_path.mkdir()
-        for scan_id in patient.scan_ids:
-            scan_path = patient_path / scan_id
-            scan_path.mkdir()
 
-            for slice_id in patient.scans[scan_id]:
-                slice_path = scan_path / slice_id
+    for patient in patients:
+        patient.build_path(target_path).mkdir()
+
+        for study in patient.studies:
+            study.build_path(target_path).mkdir()
+
+            for slice in study.slices:
+                slice_path = slice.build_path(target_path)
                 slice_path.mkdir()
 
-                separator = "_"
-                slice_name = separator.join([patient.id, scan_id, slice_id])
-                print("Processing a slice {}".format(slice_name))
+                print("Processing a slice {}".format(slice.full_id))
 
-                insp_path = images_path / (slice_name + "_insp_0000.nii.gz")
+                insp_path = images_path / (slice.full_id + "_insp_0000.nii.gz")
                 insp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(insp_path)))[0].astype(np.uint32)
-                insp_mask_path = masks_path / (slice_name + "_insp.nii.gz")
+                insp_mask_path = masks_path / (slice.full_id + "_insp.nii.gz")
                 insp_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(insp_mask_path)))[0]
 
-                exp_path = images_path / (slice_name + "_exp_0000.nii.gz")
+                exp_path = images_path / (slice.full_id + "_exp_0000.nii.gz")
                 exp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(exp_path)))[0].astype(np.uint32)
-                exp_mask_path = masks_path / (slice_name + "_exp.nii.gz")
+                exp_mask_path = masks_path / (slice.full_id + "_exp.nii.gz")
                 exp_mask = sitk.GetArrayFromImage(sitk.ReadImage(str(exp_mask_path)))[0]
 
                 x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(insp_frame, insp_mask, exp_frame, exp_mask)
@@ -388,7 +395,7 @@ def run_pileline(data_path,
                  output_path,
                  mode,
                  task_id="Task101_AbdomenSegmentation"):
-    """Runs the pipeline to compute visceral slide for all scans of the specified set of the patients.
+    """Runs the pipeline to compute visceral slide for all studies of the specified set of the patients.
 
     The pipeline consists of the following steps:
     - Extraction of inspiration and expiration frames

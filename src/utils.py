@@ -11,14 +11,40 @@ import pickle
 from pathlib import Path
 import SimpleITK as sitk
 from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY, METADATA_FOLDER,\
-    NEGATIVE_PATIENTS_FILE_NAME, PATIENT_ANNOTATIONS_NEW_FILE_NAME, NEGATIVE_SLICES_FILE_NAME, IMAGES_FOLDER, \
+    NEGATIVE_PATIENTS_FILE_NAME, PATIENTS_METADATA_FILE_NAME, NEW_REPORT_FILE_NAME, NEGATIVE_SLICES_FILE_NAME, IMAGES_FOLDER, \
     SEPARATOR, VISCERAL_SLIDE_FILE
 from cinemri.config import ARCHIVE_PATH
-from cinemri.utils import get_patients, CineMRISlice, get_image_orientation
+from cinemri.utils import get_patients, get_image_orientation
 from cinemri.contour import get_contour
+from cinemri.definitions import Patient, CineMRISlice
 import shutil
 
 ADHESIONS_KEY_NEW = "adhesion"
+
+# TODO: move
+class VisceralSlide:
+    """An object representing visceral slide for a Cine-MRI slice
+    """
+    def __init__(self, patient_id, study_id, slice_id, visceral_slide_data):
+        self.patient_id = patient_id
+        self.study_id = study_id
+        self.slice_id = slice_id
+        self.full_id = SEPARATOR.join([patient_id, study_id, slice_id])
+        self.x = visceral_slide_data["x"]
+        self.y = visceral_slide_data["y"]
+        self.values = visceral_slide_data["slide"]
+
+    def build_path(self, relative_path, extension=".mha"):
+        return Path(relative_path) / self.patient_id / self.study_id / (self.slice_id + extension)
+
+
+# Splits the (start, end) range into n intervals and return the middle value of each interval
+def binning_intervals(start=0, end=1, n=1000):
+
+    intervals = np.linspace(start, end, n + 1)
+    reference_vals = [(intervals[i] + intervals[i + 1]) / 2 for i in range(n)]
+    return reference_vals
+
 
 def get_patients_without_slices(images_path):
     """Finds patients who do not have any slices
@@ -35,10 +61,10 @@ def get_patients_without_slices(images_path):
 
     """
 
-    patients = get_patients(images_path, with_scans_only=False)
+    patients = get_patients(images_path, with_slices_only=False)
     patients_without_slices = []
     for patient in patients:
-        if len(patient.slices()) == 0:
+        if len(patient.cinemri_slices()) == 0:
             patients_without_slices.append(patient.id)
 
     return patients_without_slices
@@ -150,35 +176,30 @@ def select_segmentation_patients_subset(images_path, target_path, n=10):
 
     patients_subset = [patient for patient in patients if patient.id in ids_to_segm]
     for patient in patients_subset:
-        patient_dir = target_path / patient.id
-        patient_dir.mkdir()
-        for scan_id in patient.scan_ids:
-            scan_dir = patient_dir / scan_id
-            scan_dir.mkdir()
+        patient.build_path(target_path).mkdir()
+        for study in patient.studies:
+            study.build_path(target_path).mkdir()
 
 
 # TODO: document
-def sample_negative_patients(annotations_path, metadata_path, N):
+def load_negative_patients_ids(report_path, new_only=True):
 
-    with open(annotations_path) as annotations_file:
-        annotations_data = json.load(annotations_file)
+    with open(report_path) as f:
+        report_data = json.load(f)
 
-    old_nums = range(1,65)
-    old_ids = ["R{:0>3d}".format(num) for num in old_nums]
+    # Filter out ids related to the old dataset
+    if new_only:
+        old_nums = range(1, 65)
+        old_ids = ["R{:0>3d}".format(num) for num in old_nums]
+    else:
+        old_ids = []
 
     negative_patients_ids = []
-    for patient_id, report in annotations_data.items():
+    for patient_id, report in report_data.items():
         if report[ADHESIONS_KEY_NEW] == 0 and patient_id not in old_ids:
             negative_patients_ids.append(patient_id)
 
-    sample = np.random.choice(negative_patients_ids, N, replace=False)
-    ids_string = "\n".join(sample)
-
-    negative_patients_file_path = metadata_path / NEGATIVE_PATIENTS_FILE_NAME
-    with open(negative_patients_file_path, "w") as file:
-        file.write(ids_string)
-
-    return sample
+    return negative_patients_ids
 
 
 def load_patients_ids(ids_file_path):
@@ -191,58 +212,65 @@ def load_patients_ids(ids_file_path):
 
 
 # Save as metadata file
-def sample_slices(images_path, negative_patients_ids, metadata_path):
+def sample_slices(report_path, patients_metadata_path, metadata_path, patients_num=63, slices_per_patient=1):
 
-    patients = get_patients(images_path)
-    # Filter out patients in negative sample for adhesions detection
-    negative_sample = [patient for patient in patients if patient.id in negative_patients_ids]
+    negative_ids = load_negative_patients_ids(report_path)
 
-    # Sample one CineMRI slice per patient
-    negative_slices = []
-    for patient in negative_sample:
-        found = False
-        attempts = 0
-        while not found and attempts <= len(patient.cinemri_slices):
-            attempts += 1
-            slice = np.random.choice(patient.cinemri_slices, 1)[0]
-            slice_path = slice.build_path(images_path)
-            slice_image = sitk.ReadImage(str(slice_path))
-            depth = slice_image.GetDepth()
-            orientation = get_image_orientation(slice_image)
-            print("Slice {}".format(slice.full_id))
-            print("Slice depth {}".format(depth))
-            print("Slice orientation {}".format(orientation))
-            # Check that a slice is valid
-            if depth >= 30 and orientation == "ASL":
-                print("Accepted")
-                found = True
-                negative_slices.append(slice)
+    # Load patients with all the extracted metadata
+    with open(patients_metadata_path) as f:
+        patients_json = json.load(f)
+
+    patients = [Patient.from_dict(patient_dict) for patient_dict in patients_json]
+
+    # Leave only negative patients
+    negative_patients = [patient for patient in patients if patient.id in negative_ids]
+    sampled_patients_ids = []
+    sampled_slices = []
+
+    while len(sampled_patients_ids) < patients_num or len(negative_patients) == 0:
+        # Sample patient
+        patient = np.random.choice(negative_patients, 1)[0]
+        # Sample slice
+        suitable_slices = [slice for slice in patient.cinemri_slices if slice.vs_suitable]
+
+        if len(suitable_slices) > 0:
+            n = min(len(suitable_slices), slices_per_patient)
+            slices = np.random.choice(suitable_slices, n)
+            sampled_slices += slices.tolist()
+            sampled_patients_ids.append(patient.id)
+
+        negative_patients.remove(patient)
 
     # Write full ids of sampled slices to file
-    negative_slices_full_ids = [slice.full_id for slice in negative_slices]
+    negative_slices_full_ids = [slice.full_id for slice in sampled_slices]
     output_file_path = metadata_path / NEGATIVE_SLICES_FILE_NAME
     with open(output_file_path, "w") as file:
         for full_id in negative_slices_full_ids:
             file.write(full_id + "\n")
 
-    return negative_slices
+    return sampled_slices
 
 
 def sample_slices_detection(argv):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--patients_file', type=str, required=True,
+    parser.add_argument('--report_path', type=str, required=True,
                         help="a path to a file with patients ids to sample slices from")
-    parser.add_argument('--images_path', type=str, required=True, help="a path to the cine-MRI archive")
+    parser.add_argument('--patients_metadata_path', type=str, required=True, help="a path to the cine-MRI archive")
     parser.add_argument('--metadata_path', type=str, required=True,
                         help="a path to the metadata folder of the cine-MRI archive")
+    parser.add_argument('--patients_num', type=str, default=63,
+                        help="a number of different patients to sample")
+    parser.add_argument('--slices_num', type=str, default=1,
+                        help="a number of slices per patient to sample")
 
     args = parser.parse_args(argv)
-    patients_file_path = Path(args.patients_file)
-    images_path = Path(args.images_path)
+    report_path = Path(args.report_path)
+    patients_metadata_path = Path(args.patients_metadata_path)
     metadata_path = Path(args.metadata_path)
+    patients_num = args.patients_num
+    slices_num = args.slices_num
 
-    patients_ids = load_patients_ids(patients_file_path)
-    sample_slices(images_path, patients_ids, metadata_path)
+    sample_slices(report_path, patients_metadata_path, metadata_path, patients_num, slices_num)
 
 
 def average_bb_size(annotations):
@@ -328,8 +356,8 @@ def extract_detection_dataset(slices, images_folder, target_folder):
 
     # Copy slices to a new location
     for slice in slices:
-        scan_dir = target_folder / slice.patient_id / slice.scan_id
-        scan_dir.mkdir(exist_ok=True, parents=True)
+        study_dir = target_folder / slice.patient_id / slice.study_id
+        study_dir.mkdir(exist_ok=True, parents=True)
         slice_path = slice.build_path(images_folder)
         slice_target_path = slice.build_path(target_folder)
         shutil.copyfile(slice_path, slice_target_path)
@@ -377,75 +405,50 @@ def contour_stat(images_path):
     return mean_length
 
 
-# TODO: move
-class VisceralSlide:
-    """An object representing visceral slide for a Cine-MRI slice
-    """
-    def __init__(self, patient_id, scan_id, slice_id, visceral_slide_data):
-        self.patient_id = patient_id
-        self.scan_id = scan_id
-        self.slice_id = slice_id
-        self.full_id = SEPARATOR.join([patient_id, scan_id, slice_id])
-        self.x = visceral_slide_data["x"]
-        self.y = visceral_slide_data["y"]
-        self.values = visceral_slide_data["slide"]
-
-    def build_path(self, relative_path, extension=".mha"):
-        return Path(relative_path) / self.patient_id / self.scan_id / (self.slice_id + extension)
-
-
 def load_visceral_slides(visceral_slide_path):
     patient_ids = [f.name for f in visceral_slide_path.iterdir() if f.is_dir()]
 
     visceral_slides = []
     for patient_id in patient_ids:
         patient_path = visceral_slide_path / patient_id
-        scans = [f.name for f in patient_path.iterdir() if f.is_dir()]
+        studies = [f.name for f in patient_path.iterdir() if f.is_dir()]
 
-        for scan_id in scans:
-            scan_path = patient_path / scan_id
-            slices = [f.name for f in scan_path.iterdir() if f.is_dir()]
+        for study_id in studies:
+            study_path = patient_path / study_id
+            slices = [f.name for f in study_path.iterdir() if f.is_dir()]
 
             for slice_id in slices:
-                visceral_slide_data_path = scan_path / slice_id / VISCERAL_SLIDE_FILE
+                visceral_slide_data_path = study_path / slice_id / VISCERAL_SLIDE_FILE
                 with open(str(visceral_slide_data_path), "r+b") as file:
                     visceral_slide_data = pickle.load(file)
 
-                visceral_slide = VisceralSlide(patient_id, scan_id, slice_id, visceral_slide_data)
+                visceral_slide = VisceralSlide(patient_id, study_id, slice_id, visceral_slide_data)
                 visceral_slides.append(visceral_slide)
 
     return visceral_slides
 
-
-# Splits the (start, end) range into n intervals and return the middle value of each interval
-def binning_intervals(start=0, end=1, n=1000):
-
-    intervals = np.linspace(start, end, n + 1)
-    reference_vals = [(intervals[i] + intervals[i + 1]) / 2 for i in range(n)]
-    return reference_vals
 
 
 def test():
     archive_path = Path(ARCHIVE_PATH)
 
     metadata_path = archive_path / METADATA_FOLDER
-    annotations_path = metadata_path / PATIENT_ANNOTATIONS_NEW_FILE_NAME
-    negative_patients_file = metadata_path / NEGATIVE_PATIENTS_FILE_NAME
+    report_path = metadata_path / NEW_REPORT_FILE_NAME
+    patients_metadata = metadata_path / PATIENTS_METADATA_FILE_NAME
+    
+    slices = sample_slices(report_path, patients_metadata, metadata_path)
 
-    full_segmentation_path = archive_path / "full_segmentation"
-    contour_stat(full_segmentation_path)
-
-
+    print("done")
+    #full_segmentation_path = archive_path / "full_segmentation"
+    #contour_stat(full_segmentation_path)
     #train_test_split(archive_path, subset_path, train_proportion=1)
+
 
 
 if __name__ == '__main__':
     np.random.seed(99)
     random.seed(99)
 
-    test()
-
-    """
     # Very first argument determines action
     actions = {
         "extract_detection_data": extract_detection_data,
@@ -458,4 +461,3 @@ if __name__ == '__main__':
         print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
-    """

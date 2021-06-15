@@ -305,9 +305,9 @@ def predict_and_visualize(annotations, visceral_slide_path, images_path, output_
             try:
                 frame, _ = get_inspexp_frames(annotation.slice, inspexp_data, images_path)
             except:
-                print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(slice.patient_id,
-                                                                                           slice.scan_id,
-                                                                                           slice.slice_id))
+                print("Missing insp/exp data for the patient {}, study {}, slice {}".format(annotation.patient_id,
+                                                                                           annotation.study_id,
+                                                                                           annotation.slice_id))
 
         file_path = output_path / (annotation.full_id + ".png")
         visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, frame, file_path)
@@ -321,7 +321,7 @@ def predict(full_ids, visceral_slide_dict, mean_size, likelihood_data, adhesion_
     Parameters
     ----------
     full_ids : list of str
-       Full ids of slices in the format patientID_scanID_slice_ID
+       Full ids of slices in the format patientID_studyID_slice_ID
     visceral_slide_dict : dict
        A dictionary that contains the coordinates of abdominal cavity contour and
        the corresponding visceral slide
@@ -331,7 +331,7 @@ def predict(full_ids, visceral_slide_dict, mean_size, likelihood_data, adhesion_
     Returns
     -------
     prediction : dict
-       A dictionary with full ids of scans used as keys and predicted bounding boxes as values
+       A dictionary with full ids of slices used as keys and predicted bounding boxes as values
     """
 
     predictions = {}
@@ -407,11 +407,11 @@ def evaluate(annotations, predictions, iou_threshold=0.1, visceral_slide_dict=No
             # Extract inspiration frame
             try:
                 patient_data = inspexp_data[annotation.patient_id]
-                scan_data = patient_data[annotation.scan_id]
-                inspexp_frames = scan_data[annotation.slice_id]
+                study_data = patient_data[annotation.study_id]
+                inspexp_frames = study_data[annotation.slice_id]
             except:
-                print("Missing insp/exp data for the patient {}, scan {}, slice {}".format(annotation.patient_id,
-                                                                                           annotation.scan_id,
+                print("Missing insp/exp data for the patient {}, study {}, slice {}".format(annotation.patient_id,
+                                                                                           annotation.study_id,
                                                                                            annotation.slice_id))
 
             # load images

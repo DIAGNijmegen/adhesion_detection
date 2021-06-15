@@ -11,7 +11,6 @@ import shutil
 from skimage import io
 import SimpleITK as sitk
 from cinemri.config import ARCHIVE_PATH
-from cinemri.utils import CineMRISlice
 from cinemri.utils import get_patients, get_image_orientation
 import utils
 from sklearn.model_selection import KFold
@@ -82,36 +81,32 @@ def extract_segmentation_data(archive_path,
     images_path = archive_path / images_folder
     segmentation_path = archive_path / segmentations_folder
     patients = get_patients(segmentation_path)
-    # Now get all scans for each patient and create an array of Patients
+    # Now get all slices for each patient and create an array of Patients
     for patient in patients:
         # Create patient folder in both images and masks target directories
-        patient_images_path = target_images_path / patient.id
-        patient_images_path.mkdir(exist_ok=True)
+        patient.build_path(target_images_path).mkdir(exist_ok=True)
+        patient.build_path(target_segmentations_path).mkdir(exist_ok=True)
 
-        patient_segmentations_path = target_segmentations_path / patient.id
-        patient_segmentations_path.mkdir(exist_ok=True)
-
-        for (scan_id, slices) in patient.scans.items():
-            # Skip scans without slices
-            if len(slices) == 0:
+        for study in patient.studies:
+            # Skip studies without slices
+            if len(study.slices) == 0:
                 continue
 
-            # Create scan folder in both images and masks target directories
-            scan_images_path = patient_images_path / scan_id
-            scan_images_path.mkdir(exist_ok=True)
+            # Create study folder in both images and masks target directories
+            study_images_path = study.build_path(target_images_path)
+            study_images_path.mkdir(exist_ok=True)
 
-            scan_segmentations_path = patient_segmentations_path / scan_id
-            scan_segmentations_path.mkdir(exist_ok=True)
+            study_segmentations_path = study.build_path(target_segmentations_path)
+            study_segmentations_path.mkdir(exist_ok=True)
 
-            for slice_id in slices:
-                cinemri_slice = CineMRISlice(patient.id, scan_id, slice_id)
+            for slice in study.slices:
                 # read an image and extract the first frame
-                slice_path = cinemri_slice.build_path(images_path)
-                save_frame(slice_path, scan_images_path)
+                slice_path = slice.build_path(images_path)
+                save_frame(slice_path, study_images_path)
 
                 # read a segmentation mask and extract the first frame
-                segmentation_path = cinemri_slice.build_path(segmentation_path)
-                save_frame(segmentation_path, scan_segmentations_path)
+                segmentation_path = slice.build_path(segmentation_path)
+                save_frame(segmentation_path, study_segmentations_path)
 
 
 def extract_segmentation(argv):
@@ -233,32 +228,27 @@ def subset_to_diag_nnunet(patients,
     # Create folders of the subset
     target_path.mkdir(exist_ok=True)
 
-    train_path_imags = target_path / images_folder
-    train_path_imags.mkdir(exist_ok=True)
+    train_path_images = target_path / images_folder
+    train_path_images.mkdir(exist_ok=True)
 
     train_path_masks = target_path / masks_folder
     train_path_masks.mkdir(exist_ok=True)
 
     # Extract and save files related to the specified patients list
     for patient in patients:
-        for scan_id, slices in patient.scans.items():
-            for slice in slices:
-                # Filter out .png images
-                if slice.endswith(".npy"):
-                    separator = "_"
-                    file_format = ".mha" if is_train else ".nii.gz"
-                    file_id = separator.join([patient.id, scan_id, slice[:-4]])
+        for slice in patient.cinemri_slices:
+            extension = ".mha" if is_train else ".nii.gz"
 
-                    image_id = file_id if is_train else (file_id + "_0000")
-                    image_stem = train_path_imags / image_id
-                    slice_image_path = segmentation_path / images_folder / patient.id / scan_id / slice
-                    img_pseudo_3d = convert_2d_image_file_to_pseudo_3d(slice_image_path, image_stem, file_format=file_format)
-                    sitk.WriteImage(img_pseudo_3d, str(image_stem) + file_format)
+            image_id = slice.full_id if is_train else (slice.full_id + "_0000")
+            image_stem = train_path_images / image_id
+            slice_image_path = slice.build_path(segmentation_path / images_folder, extension=extension)
+            img_pseudo_3d = convert_2d_image_file_to_pseudo_3d(slice_image_path)
+            sitk.WriteImage(img_pseudo_3d, str(image_stem) + extension)
 
-                    mask_stem = train_path_masks / file_id
-                    slice_mask_path = segmentation_path / masks_folder / patient.id / scan_id / slice
-                    mask_pseudo_3d = convert_2d_image_file_to_pseudo_3d(slice_mask_path, mask_stem, file_format=file_format, is_seg=False)
-                    sitk.WriteImage(mask_pseudo_3d, str(mask_stem) + file_format)
+            mask_stem = train_path_masks / slice.full_id
+            slice_mask_path = slice.build_path(segmentation_path / masks_folder, extension=extension)
+            mask_pseudo_3d = convert_2d_image_file_to_pseudo_3d(slice_mask_path, is_seg=False)
+            sitk.WriteImage(mask_pseudo_3d, str(mask_stem) + extension)
 
 
 def create_folds(data_path,
@@ -296,7 +286,7 @@ def create_folds(data_path,
         fold_train_ids = train_patients_ids[train_index]
         fold_val_ids = train_patients_ids[val_index]
 
-        # Extract scans ids
+        # Extract F ids
         fold_train_scans_ids = [ind for ind in train_image_ids if (ind.split("_")[0] in fold_train_ids)]
         fold_val_scans_ids = [ind for ind in train_image_ids if (ind.split("_")[0] in fold_val_ids)]
 
@@ -414,7 +404,7 @@ def extract_frames(slice_path,
     Parameters
     ----------
     slice_path : Path
-       A path to a cine-MRI slice in format "patientID_scanID_sliceID"
+       A path to a cine-MRI slice in format "patientID_studyID_sliceID"
     slice_id : str
        A full id of a slice
     target_path_images : Path
@@ -469,7 +459,7 @@ def merge_frames(slice_full_id,
     Parameters
     ----------
     slice_full_id : str
-       A full id of a cine-MRI slice in format "patientID_scanID_sliceID"
+       A full id of a cine-MRI slice in format "patientID_studyID_sliceID"
     frames_folder : Path
        A path to a folder containing frames of a cine-MRI slice
     target_folder : Path
@@ -586,30 +576,27 @@ def save_visualised_full_prediction(images_path, predictions_path, target_path, 
     # get frames ids
     patients = get_patients(images_path)
     for patient in patients:
-        patient_path = target_path / patient.id
-        patient_path.mkdir()
+        patient.build_path(target_path).mkdir()
 
-        for scan_id in patient.scan_ids:
-            scan_path = patient_path / scan_id
-            scan_path.mkdir()
+        for study in patient.studies:
+            study.build_path(target_path).mkdir()
 
-            slices = patient.scans[scan_id]
-            for slice_id in slices:
+            for slice in study.slices:
                 # extract cine-MRI slice
-                slice_path = images_path / patient.id / scan_id / (slice_id + ".mha")
-                slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+                slice_path = slice.build_path(images_path)
+                slice_img = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
                 # extract predicted mask
-                mask_path = predictions_path / patient.id / scan_id / (slice_id + ".mha")
+                mask_path = slice.build_path(predictions_path)
                 mask = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
 
-                vis_path = scan_path / slice_id
+                vis_path = slice.build_path(target_path, extension="")
                 vis_path.mkdir()
 
                 # Make a separate folder for .png files
                 png_path = vis_path / "pngs"
                 png_path.mkdir()
 
-                for ind, frame in enumerate(slice):
+                for ind, frame in enumerate(slice_img):
                     frame_mask = mask[ind]
 
                     plt.figure()
@@ -617,7 +604,7 @@ def save_visualised_full_prediction(images_path, predictions_path, target_path, 
                     masked = np.ma.masked_where(frame_mask == 0, frame_mask)
                     plt.imshow(masked, cmap='autumn', alpha=0.2)
                     plt.axis("off")
-                    overlayed_mask_file_path = png_path / "{}_{}.png".format(slice_id, ind)
+                    overlayed_mask_file_path = png_path / "{}_{}.png".format(slice.id, ind)
                     plt.savefig(overlayed_mask_file_path, bbox_inches='tight', pad_inches=0)
                     plt.close()
 
@@ -630,7 +617,7 @@ def save_visualised_full_prediction(images_path, predictions_path, target_path, 
                         "-loop",
                         "0",
                         str(png_path) + "/*png",
-                        str(vis_path) + "/" + slice_id + ".gif",
+                        str(vis_path) + "/" + slice.id + ".gif",
                     ]
                     subprocess.run(command)
 
@@ -642,15 +629,15 @@ def extract_detection_gifs(source_path, target_path):
     patient_ids = [f.name for f in source_path.iterdir() if f.is_dir()]
     for patient_id in patient_ids:
         patient_path = source_path / patient_id
-        scans = [f.name for f in patient_path.iterdir() if f.is_dir()]
+        studies = [f.name for f in patient_path.iterdir() if f.is_dir()]
 
-        for scan_id in scans:
-            scan_path = patient_path / scan_id
-            slices = [f.name for f in scan_path.iterdir() if f.is_dir()]
+        for study_id in studies:
+            study_path = patient_path / study_id
+            slices = [f.name for f in study_path.iterdir() if f.is_dir()]
 
             for slice_id in slices:
-                gif_source_path = scan_path / slice_id / (slice_id + ".gif")
-                gif_target_path = target_path / (SEPARATOR.join((patient_id, scan_id, slice_id)) + ".gif")
+                gif_source_path = study_path / slice_id / (slice_id + ".gif")
+                gif_target_path = target_path / (SEPARATOR.join((patient_id, study_id, slice_id)) + ".gif")
 
                 shutil.copy(gif_source_path, gif_target_path)
 

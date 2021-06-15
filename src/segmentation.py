@@ -6,7 +6,8 @@ import subprocess
 import argparse
 import numpy as np
 from pathlib import Path
-from cinemri.utils import get_patients, Patient
+from cinemri.definitions import Patient, Study, CineMRISlice
+from cinemri.utils import get_patients
 from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, SEPARATOR
 from data_conversion import extract_frames, merge_frames
@@ -237,28 +238,34 @@ def merge_segmentation(segmentation_path,
     patients = []
     for patient_id in patient_ids:
         patient = Patient(patient_id)
-        slices = slices_id_chunks[slices_id_chunks[:, 0] == patient_id]
-        for _, scan_id, slice_id in slices:
-            patient.add_slice(slice_id, scan_id)
+        patient_records = slices_id_chunks[slices_id_chunks[:, 0] == patient_id]
+        studies_ids = np.unique(patient_records[:, 1])
+
+        for study_id in studies_ids:
+            study = Study(study_id, patient_id=patient_id)
+            study_records = patient_records[patient_records[:, 1] == study_id]
+
+            for _, _, slice_id in study_records:
+                study.add_slice(CineMRISlice(slice_id, patient_id, study_id))
+
+            patient.add_study(study)
 
         patients.append(patient)
 
-    # Create folders hierarchy matching hierarchy of images in the archive: patientID -> scanID
+    # Create folders hierarchy matching hierarchy of images in the archive: patientID -> studyID
     # and merge and save each slice
     for patient in patients:
-        patient_path = target_path / patient.id
-        patient_path.mkdir()
-        for scan_id in patient.scan_ids:
-            scan_path = patient_path / scan_id
-            scan_path.mkdir()
+        patient.build_path(target_path).mkdir()
+        for study in patient.studies:
+            study_path = study.build_path(target_path)
+            study_path.mkdir()
 
-            for slice_id in patient.scans[scan_id]:
-                slice_full_id = SEPARATOR.join([patient.id, scan_id, slice_id])
-                slice_metadata_path = metadata_path / (slice_full_id + ".json")
+            for slice in study.slices:
+                slice_metadata_path = metadata_path / (slice.full_id + ".json")
 
                 # Extract frames matching the slice id and its metadata, merge into .mha
-                # and save in a scan folder
-                merge_frames(slice_full_id, segmentation_path, scan_path, slice_metadata_path)
+                # and save in a study folder
+                merge_frames(slice.full_id, segmentation_path, study_path, slice_metadata_path)
 
 
 def merge(argv):
@@ -281,7 +288,7 @@ def merge(argv):
     merge_segmentation(segmentation_path, metadata_path, target_path)
 
 
-def run_full_inference(archive_path,
+def run_full_inference(images_path,
                        output_path,
                        nnUNet_model_path,
                        nnUNet_task):
@@ -289,8 +296,8 @@ def run_full_inference(archive_path,
     Runs inference of segmentation masks for the whole cine-MRI archive with nn-UNet
     Parameters
     ----------
-    archive_path : Path
-       A path to the full cine-MRI data archive
+    images_path : Path
+       A path to a folder with cine-MRI images
     output_path : Path
        A path where to save nn-UNet prediction. After execution of the function
        output_path / FRAMES_FOLDER will contain separate frames of all cine-MRI slices in the archive
@@ -304,7 +311,7 @@ def run_full_inference(archive_path,
        An id of a task for nnU-Net
     """
 
-    extract_segmentation_data(archive_path, output_path)
+    extract_segmentation_data(images_path, output_path)
 
     nnUNet_input_path = output_path / FRAMES_FOLDER
     nnUNet_output_path = output_path / MASKS_FOLDER
@@ -328,19 +335,19 @@ def full_inference(argv):
         Command line arguments
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("archive_path", type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument("images_path", type=str, help="a path to a folder with cine-MRI images")
     parser.add_argument("--output_path", type=str, help="a path where to save the output")
     parser.add_argument("--nnUNet_results", type=str, required=True,
                         help="a path to the \"results\" folder generated during nnU-Net training")
     parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
     args = parser.parse_args(argv)
 
-    archive_path = Path(args.archive_path)
+    images_path = Path(args.images_path)
     output_path = Path(args.output_path)
     nnUNet_results_path = Path(args.nnUNet_results)
     nnUNet_task = args.task
 
-    run_full_inference(archive_path, output_path, nnUNet_results_path, nnUNet_task)
+    run_full_inference(images_path, output_path, nnUNet_results_path, nnUNet_task)
 
 
 def test():
