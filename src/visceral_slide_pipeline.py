@@ -470,7 +470,7 @@ def pipeline(argv):
     run_pileline(data_path, nnUNet_results_path, output_path, mode, task)
 
 
-def compute_cumulative_visceral_slide(images_path, masks_path, slices, output_path, series_stat=False, rest_def=False):
+def compute_cumulative_visceral_slide(images_path, masks_path, slices, output_path, rest_def=False):
     """
     Computes and save cumulative visceral slide for the specified subset of slices
     Parameters
@@ -485,7 +485,7 @@ def compute_cumulative_visceral_slide(images_path, masks_path, slices, output_pa
        A path where to save computed visceral slide
     """
 
-    output_path.mkdir()
+    output_path.mkdir(exist_ok=True)
     visceral_slide_detector = CumulativeVisceralSlideDetector()
 
     for slice in slices:
@@ -500,7 +500,7 @@ def compute_cumulative_visceral_slide(images_path, masks_path, slices, output_pa
         mask_path = slice.build_path(masks_path)
         mask_image = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
 
-        x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(slice_image, mask_image, series_stat, rest_def)
+        x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(slice_image, mask_image, rest_def)
 
         pickle_path = slice_output_path / VISCERAL_SLIDE_FILE
         slide_dict = {"x": x, "y": y, "slide": visceral_slide}
@@ -520,6 +520,7 @@ def cumulative_visceral_slide(argv):
     parser = argparse.ArgumentParser()
     parser.add_argument('--images', type=str, required=True, help="a path to image folder in the cine-MRI archive")
     parser.add_argument('--masks', type=str, required=True, help="a path to segmentation masks of the whole slices")
+    # TODO: make optional
     parser.add_argument('--slices_file', type=str, required=True, help="a path to a file with fill ids of slices to compute visceral slide for")
     parser.add_argument('--output', type=str, required=True, help="a path to a folder to save visceral slide")
     # Boolean flags
@@ -542,7 +543,7 @@ def cumulative_visceral_slide(argv):
     print(rest_def)
 
     slices = slices_from_full_ids_file(slices_file_path)
-    compute_cumulative_visceral_slide(images_path, masks_path, slices, output_path, series_stat, rest_def)
+    compute_cumulative_visceral_slide(images_path, masks_path, slices, output_path, rest_def)
 
 
 if __name__ == '__main__':

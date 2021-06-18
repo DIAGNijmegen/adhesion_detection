@@ -1002,15 +1002,15 @@ def test():
     archive_path = Path(ARCHIVE_PATH)
     metadata_path = archive_path / METADATA_FOLDER
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
-    output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_full")
+    output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_det_full_df")
     full_segmentation_path = archive_path / "full_segmentation" / "merged_segmentation"
     bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE
     images_path = archive_path / IMAGES_FOLDER
-    detection_path = Path("../../data/cinemri_mha/detection") / IMAGES_FOLDER
+    detection_path = Path("../../data/cinemri_mha/detection_new") / IMAGES_FOLDER
     ie_file = metadata_path / INSPEXP_FILE_NAME
     bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
 
-    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg")
+    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
     vis_annotation_on_cumulative_vs(cumulative_vs_path, detection_path, bb_expanded_annotation_path, output_path, save=True)
 
     #bb_annotations_to_full_ids_file(bb_expanded_annotation_path, metadata_path / "bb_annotations_full_ids.txt")

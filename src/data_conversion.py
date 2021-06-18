@@ -648,10 +648,10 @@ def test():
     subset_path = Path("segmentation_subset")
     diag_nnUNet_path = Path("../../data/cinemri_mha/diag_nnunet")
 
-    images_path = Path("../../data/cinemri_mha/detection/images")
-    prediction_path = Path("../../data/cinemri_mha/detection/full_segmentation/merged_masks")
-    target_path = Path("../../experiments/detection_vis")
-    target_path1 = Path("../../experiments/detection_gifs")
+    images_path = Path("../../data/cinemri_mha/detection_new/images")
+    prediction_path = Path("../../data/cinemri_mha/detection_new/full_segmentation/merged_masks")
+    target_path = Path("../../experiments/detection_vis_new")
+    target_path1 = Path("../../experiments/detection_gifs_new")
 
     save_visualised_full_prediction(images_path, prediction_path, target_path)
     extract_detection_gifs(target_path, target_path1)

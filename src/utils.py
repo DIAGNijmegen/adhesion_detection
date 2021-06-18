@@ -211,6 +211,15 @@ def load_patients_ids(ids_file_path):
     return patients_ids
 
 
+def write_slices_to_file(slices, file_path):
+
+    slices_full_ids = [slice.full_id for slice in slices]
+    with open(file_path, "w") as file:
+        for full_id in slices_full_ids:
+            file.write(full_id + "\n")
+
+
+
 # Save as metadata file
 def sample_slices(report_path, patients_metadata_path, metadata_path, patients_num=63, slices_per_patient=1):
 
@@ -242,11 +251,8 @@ def sample_slices(report_path, patients_metadata_path, metadata_path, patients_n
         negative_patients.remove(patient)
 
     # Write full ids of sampled slices to file
-    negative_slices_full_ids = [slice.full_id for slice in sampled_slices]
     output_file_path = metadata_path / NEGATIVE_SLICES_FILE_NAME
-    with open(output_file_path, "w") as file:
-        for full_id in negative_slices_full_ids:
-            file.write(full_id + "\n")
+    write_slices_to_file(sampled_slices, output_file_path)
 
     return sampled_slices
 
@@ -436,7 +442,19 @@ def test():
     report_path = metadata_path / NEW_REPORT_FILE_NAME
     patients_metadata = metadata_path / PATIENTS_METADATA_FILE_NAME
     
-    slices = sample_slices(report_path, patients_metadata, metadata_path)
+    #slices = sample_slices(report_path, patients_metadata, metadata_path)
+
+    full_ids = Path("detection_ids.txt")
+    added_ids = Path("ids.txt")
+
+    patients_ids = load_patients_ids(added_ids)
+    slices = slices_from_full_ids_file(full_ids)
+
+    missed_slices = [slice for slice in slices if slice.patient_id not in patients_ids]
+    write_slices_to_file(missed_slices, Path("missed_detection_ids.txt"))
+
+
+
 
     print("done")
     #full_segmentation_path = archive_path / "full_segmentation"
@@ -446,6 +464,7 @@ def test():
 
 
 if __name__ == '__main__':
+
     np.random.seed(99)
     random.seed(99)
 
@@ -461,3 +480,4 @@ if __name__ == '__main__':
         print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
+
