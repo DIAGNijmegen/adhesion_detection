@@ -10,37 +10,155 @@ import argparse
 import pickle
 from pathlib import Path
 import SimpleITK as sitk
-from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY, METADATA_FOLDER,\
-    NEGATIVE_PATIENTS_FILE_NAME, PATIENTS_METADATA_FILE_NAME, NEW_REPORT_FILE_NAME, NEGATIVE_SLICES_FILE_NAME, IMAGES_FOLDER, \
+from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY, METADATA_FOLDER, \
+    NEGATIVE_PATIENTS_FILE_NAME, PATIENTS_METADATA_FILE_NAME, NEW_REPORT_FILE_NAME, NEGATIVE_SLICES_FILE_NAME, \
+    IMAGES_FOLDER, \
     SEPARATOR, VISCERAL_SLIDE_FILE
 from cinemri.config import ARCHIVE_PATH
 from cinemri.utils import get_patients, get_image_orientation
 from cinemri.contour import get_contour
-from cinemri.definitions import Patient, CineMRISlice
+from cinemri.definitions import Patient, CineMRISlice, AnatomicalPlane, CineMRIMotionType, CineMRISlicePos
 import shutil
 
 ADHESIONS_KEY_NEW = "adhesion"
+
 
 # TODO: move
 class VisceralSlide:
     """An object representing visceral slide for a Cine-MRI slice
     """
+
     def __init__(self, patient_id, study_id, slice_id, visceral_slide_data):
         self.patient_id = patient_id
         self.study_id = study_id
         self.slice_id = slice_id
         self.full_id = SEPARATOR.join([patient_id, study_id, slice_id])
-        self.x = visceral_slide_data["x"]
-        self.y = visceral_slide_data["y"]
-        self.values = visceral_slide_data["slide"]
+        self.x = np.array(visceral_slide_data["x"])
+        self.y = np.array(visceral_slide_data["y"])
+        self.values = np.array(visceral_slide_data["slide"])
+        self.origin_x = np.min(self.x)
+        self.origin_y = np.min(self.y)
+        self.width = np.max(self.x) - self.origin_x
+        self.height = np.max(self.y) - self.origin_y
+        self.middle_x = self.origin_x + round(self.width / 2)
+        self.middle_y = self.origin_y + round(self.height / 2)
+
+        self.__top_coords = None
+        self.__bottom_coords = None
+
+        self.__top_left_coords = None
+        self.__top_right_coords = None
+        self.__bottom_left_coords = None
+        self.__bottom_right_coords = None
+
+        self.__bottom_left_point = None
+        self.__top_left_point = None
+        self.__bottom_right_point = None
+        self.__top_right_point = None
+
+    @property
+    def top_coords(self):
+        if self.__top_coords is None:
+            coords = np.column_stack((self.x, self.y))
+            self.__top_coords = np.array([coord for coord in coords if coord[1] < self.middle_y])
+
+        return self.__top_coords
+
+    @property
+    def bottom_coords(self):
+        if self.__bottom_coords is None:
+            coords = np.column_stack((self.x, self.y))
+            self.__bottom_coords = np.array([coord for coord in coords if coord[1] >= self.middle_y])
+
+        return self.__bottom_coords
+    
+    @property
+    def top_middle_x(self):
+        top_coords_x = self.top_coords[:, 0]
+        return top_coords_x.min() + (top_coords_x.max() - top_coords_x.min()) / 2
+
+    @property
+    def bottom_middle_x(self):
+        bottom_coords_x = self.bottom_coords[:, 0]
+        return bottom_coords_x.min() + (bottom_coords_x.max() - bottom_coords_x.min()) / 2
+
+    @property
+    def top_left_coords(self):
+        if self.__top_left_coords is None:
+            top_left_coords = np.array([coord for coord in self.top_coords if coord[0] < self.top_middle_x])
+            self.__top_left_coords = top_left_coords[:, 0], top_left_coords[:, 1]
+
+        return self.__top_left_coords
+
+    @property
+    def top_right_coords(self):
+        if self.__top_right_coords is None:
+            top_right_coords = np.array([coord for coord in self.top_coords if coord[0] >= self.top_middle_x])
+            self.__top_right_coords = top_right_coords[:, 0], top_right_coords[:, 1]
+
+        return self.__top_right_coords
+
+    @property
+    def bottom_left_coords(self):
+        if self.__bottom_left_coords is None:
+            bottom_left_coords = np.array([coord for coord in self.bottom_coords if coord[0] < self.bottom_middle_x])
+            self.__bottom_left_coords = bottom_left_coords[:, 0], bottom_left_coords[:, 1]
+
+        return self.__bottom_left_coords
+
+    @property
+    def bottom_right_coords(self):
+        if self.__bottom_right_coords is None:
+            bottom_right_coords = np.array([coord for coord in self.bottom_coords if coord[0] >= self.bottom_middle_x])
+            self.__bottom_right_coords = bottom_right_coords[:, 0], bottom_right_coords[:, 1]
+
+        return self.__bottom_right_coords
+
+    @property
+    def bottom_left_point(self):
+        x, y = self.bottom_left_coords
+        x, y = x.astype(np.float64), y.astype(np.float64)
+        bottom_left_x = x.min()
+        bottom_left_y = y.max()
+
+        diff = np.sqrt((x - bottom_left_x) ** 2 + (y - bottom_left_y) ** 2)
+        index = np.argmin(diff)
+        return x[index], y[index]
+
+    @property
+    def top_left_point(self):
+        x, y = self.top_left_coords
+        x, y = x.astype(np.float64), y.astype(np.float64)
+
+        diff = np.sqrt((x - x.min()) ** 2 + (y - y.min()) ** 2)
+        index = np.argmin(diff)
+        return x[index], y[index]
+
+    @property
+    def bottom_right_point(self):
+        x, y = self.bottom_right_coords
+        x, y = x.astype(np.float64), y.astype(np.float64)
+
+        diff = np.sqrt((x - x.max()) ** 2 + (y - y.max()) ** 2)
+        index = np.argmin(diff)
+        return x[index], y[index]
+
+    @property
+    def top_right_point(self):
+        x, y = self.top_right_coords
+        x, y = x.astype(np.float64), y.astype(np.float64)
+
+        diff = np.sqrt((x - x.max()) ** 2 + (y - y.min()) ** 2)
+        index = np.argmin(diff)
+        return x[index], y[index]
 
     def build_path(self, relative_path, extension=".mha"):
         return Path(relative_path) / self.patient_id / self.study_id / (self.slice_id + extension)
 
 
+
 # Splits the (start, end) range into n intervals and return the middle value of each interval
 def binning_intervals(start=0, end=1, n=1000):
-
     intervals = np.linspace(start, end, n + 1)
     reference_vals = [(intervals[i] + intervals[i + 1]) / 2 for i in range(n)]
     return reference_vals
@@ -183,7 +301,6 @@ def select_segmentation_patients_subset(images_path, target_path, n=10):
 
 # TODO: document
 def load_negative_patients_ids(report_path, new_only=True):
-
     with open(report_path) as f:
         report_data = json.load(f)
 
@@ -203,7 +320,6 @@ def load_negative_patients_ids(report_path, new_only=True):
 
 
 def load_patients_ids(ids_file_path):
-
     with open(ids_file_path) as file:
         lines = file.readlines()
         patients_ids = [line.strip() for line in lines]
@@ -212,17 +328,32 @@ def load_patients_ids(ids_file_path):
 
 
 def write_slices_to_file(slices, file_path):
-
     slices_full_ids = [slice.full_id for slice in slices]
     with open(file_path, "w") as file:
         for full_id in slices_full_ids:
             file.write(full_id + "\n")
 
 
+def is_slice_vs_suitable(slice):
+    """
+    Checkes whether a slice is suitable for the algorithm to calculate the visceral slide
+    To calculate the visceral slide only slices in sagittal plane should be used,
+    midline slices and full abdominal motion are prefferable.
+    Also we should check whether a slice have normal number of frames
+    Returns
+    -------
+    suitable : bool
+        A boolean flag indicaing whether a slice is suitable
+    """
+
+    return (slice.anatomical_plane == AnatomicalPlane.sagittal and
+            slice.motion_type == CineMRIMotionType.full and
+            slice.position == CineMRISlicePos.middle and
+            slice.complete)
+
 
 # Save as metadata file
 def sample_slices(report_path, patients_metadata_path, metadata_path, patients_num=63, slices_per_patient=1):
-
     negative_ids = load_negative_patients_ids(report_path)
 
     # Load patients with all the extracted metadata
@@ -240,7 +371,7 @@ def sample_slices(report_path, patients_metadata_path, metadata_path, patients_n
         # Sample patient
         patient = np.random.choice(negative_patients, 1)[0]
         # Sample slice
-        suitable_slices = [slice for slice in patient.cinemri_slices if slice.vs_suitable]
+        suitable_slices = [slice for slice in patient.cinemri_slices if is_slice_vs_suitable(slice)]
 
         if len(suitable_slices) > 0:
             n = min(len(suitable_slices), slices_per_patient)
@@ -345,7 +476,9 @@ def adhesions_stat(annotations):
     print("Median width: {}".format(np.median(widths)))
     print("Median height: {}".format(np.median(heights)))
 
-    print("Smallest annotation, x_o: {}, y_o: {}, width: {}, height: {}".format(smallest_bb.origin_x, smallest_bb.origin_y, smallest_bb.width, smallest_bb.height))
+    print("Smallest annotation, x_o: {}, y_o: {}, width: {}, height: {}".format(smallest_bb.origin_x,
+                                                                                smallest_bb.origin_y, smallest_bb.width,
+                                                                                smallest_bb.height))
     print("Largest annotation, width: {}, height: {}".format(largest_bb.width, largest_bb.height))
 
 
@@ -359,7 +492,6 @@ def slices_from_full_ids_file(slices_full_ids_file_path):
 
 
 def extract_detection_dataset(slices, images_folder, target_folder):
-
     # Copy slices to a new location
     for slice in slices:
         study_dir = target_folder / slice.patient_id / slice.study_id
@@ -371,10 +503,13 @@ def extract_detection_dataset(slices, images_folder, target_folder):
 
 def extract_detection_data(argv):
     parser = argparse.ArgumentParser()
-    parser.add_argument('--positive_file', type=str, required=True, help="a path to a file with fill ids of positive slices")
-    parser.add_argument('--negative_file', type=str, required=True, help="a path to a file with fill ids of negative slices")
+    parser.add_argument('--positive_file', type=str, required=True,
+                        help="a path to a file with fill ids of positive slices")
+    parser.add_argument('--negative_file', type=str, required=True,
+                        help="a path to a file with fill ids of negative slices")
     parser.add_argument('--images', type=str, required=True, help="a path to image folder in the cine-MRI archive")
-    parser.add_argument('--target_folder', type=str, required=True, help="a path to a folder to place the detection subset")
+    parser.add_argument('--target_folder', type=str, required=True,
+                        help="a path to a folder to place the detection subset")
 
     args = parser.parse_args(argv)
 
@@ -434,33 +569,37 @@ def load_visceral_slides(visceral_slide_path):
     return visceral_slides
 
 
-
 def test():
     archive_path = Path(ARCHIVE_PATH)
 
     metadata_path = archive_path / METADATA_FOLDER
     report_path = metadata_path / NEW_REPORT_FILE_NAME
     patients_metadata = metadata_path / PATIENTS_METADATA_FILE_NAME
-    
-    #slices = sample_slices(report_path, patients_metadata, metadata_path)
 
-    full_ids = Path("detection_ids.txt")
-    added_ids = Path("ids.txt")
+    with open("patients.json") as f:
+        pat_data = json.load(f)
 
-    patients_ids = load_patients_ids(added_ids)
-    slices = slices_from_full_ids_file(full_ids)
+    patients = [Patient.from_dict(dict) for dict in pat_data]
+    print(len(patients))
 
-    missed_slices = [slice for slice in slices if slice.patient_id not in patients_ids]
-    write_slices_to_file(missed_slices, Path("missed_detection_ids.txt"))
+    patients_few_studies = [patient for patient in patients if len(patient.studies) > 1]
+    patients_few_studies_ids = [(p.id, len(p.studies)) for p in patients_few_studies]
+    print(len(patients_few_studies_ids))
+    print(patients_few_studies_ids)
 
+    studies = []
+    for p in patients:
+        studies += p.studies
 
-
-
+    studies_no_date = [s for s in studies if s.date is None]
+    studies_no_date_ids = [(s.patient_id, s.id, len(s.slices)) for s in studies_no_date]
+    print(len(studies_no_date_ids))
+    print(studies_no_date_ids)
     print("done")
-    #full_segmentation_path = archive_path / "full_segmentation"
-    #contour_stat(full_segmentation_path)
-    #train_test_split(archive_path, subset_path, train_proportion=1)
 
+    # full_segmentation_path = archive_path / "full_segmentation"
+    # contour_stat(full_segmentation_path)
+    # train_test_split(archive_path, subset_path, train_proportion=1)
 
 
 if __name__ == '__main__':
@@ -480,4 +619,3 @@ if __name__ == '__main__':
         print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
-
