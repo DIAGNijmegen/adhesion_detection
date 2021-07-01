@@ -10,20 +10,17 @@ import argparse
 import pickle
 from pathlib import Path
 import SimpleITK as sitk
-from config import TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY, TEST_PATIENTS_KEY, METADATA_FOLDER, \
-    NEGATIVE_PATIENTS_FILE_NAME, PATIENTS_METADATA_FILE_NAME, NEW_REPORT_FILE_NAME, NEGATIVE_SLICES_FILE_NAME, \
-    IMAGES_FOLDER, \
-    SEPARATOR, VISCERAL_SLIDE_FILE
+from config import *
 from cinemri.config import ARCHIVE_PATH
 from cinemri.utils import get_patients, get_image_orientation
 from cinemri.contour import get_contour
-from cinemri.definitions import Patient, CineMRISlice, AnatomicalPlane, CineMRIMotionType, CineMRISlicePos
+from cinemri.definitions import Patient, CineMRISlice, Study, AnatomicalPlane, CineMRIMotionType, CineMRISlicePos
 import shutil
 
-ADHESIONS_KEY_NEW = "adhesion"
 
 
-# TODO: move
+
+# TODO: moveis_slice_vs_suitable
 class VisceralSlide:
     """An object representing visceral slide for a Cine-MRI slice
     """
@@ -299,26 +296,6 @@ def select_segmentation_patients_subset(images_path, target_path, n=10):
             study.build_path(target_path).mkdir()
 
 
-# TODO: document
-def load_negative_patients_ids(report_path, new_only=True):
-    with open(report_path) as f:
-        report_data = json.load(f)
-
-    # Filter out ids related to the old dataset
-    if new_only:
-        old_nums = range(1, 65)
-        old_ids = ["R{:0>3d}".format(num) for num in old_nums]
-    else:
-        old_ids = []
-
-    negative_patients_ids = []
-    for patient_id, report in report_data.items():
-        if report[ADHESIONS_KEY_NEW] == 0 and patient_id not in old_ids:
-            negative_patients_ids.append(patient_id)
-
-    return negative_patients_ids
-
-
 def load_patients_ids(ids_file_path):
     with open(ids_file_path) as file:
         lines = file.readlines()
@@ -332,82 +309,6 @@ def write_slices_to_file(slices, file_path):
     with open(file_path, "w") as file:
         for full_id in slices_full_ids:
             file.write(full_id + "\n")
-
-
-def is_slice_vs_suitable(slice):
-    """
-    Checkes whether a slice is suitable for the algorithm to calculate the visceral slide
-    To calculate the visceral slide only slices in sagittal plane should be used,
-    midline slices and full abdominal motion are prefferable.
-    Also we should check whether a slice have normal number of frames
-    Returns
-    -------
-    suitable : bool
-        A boolean flag indicaing whether a slice is suitable
-    """
-
-    return (slice.anatomical_plane == AnatomicalPlane.sagittal and
-            slice.motion_type == CineMRIMotionType.full and
-            slice.position == CineMRISlicePos.middle and
-            slice.complete)
-
-
-# Save as metadata file
-def sample_slices(report_path, patients_metadata_path, metadata_path, patients_num=63, slices_per_patient=1):
-    negative_ids = load_negative_patients_ids(report_path)
-
-    # Load patients with all the extracted metadata
-    with open(patients_metadata_path) as f:
-        patients_json = json.load(f)
-
-    patients = [Patient.from_dict(patient_dict) for patient_dict in patients_json]
-
-    # Leave only negative patients
-    negative_patients = [patient for patient in patients if patient.id in negative_ids]
-    sampled_patients_ids = []
-    sampled_slices = []
-
-    while len(sampled_patients_ids) < patients_num or len(negative_patients) == 0:
-        # Sample patient
-        patient = np.random.choice(negative_patients, 1)[0]
-        # Sample slice
-        suitable_slices = [slice for slice in patient.cinemri_slices if is_slice_vs_suitable(slice)]
-
-        if len(suitable_slices) > 0:
-            n = min(len(suitable_slices), slices_per_patient)
-            slices = np.random.choice(suitable_slices, n)
-            sampled_slices += slices.tolist()
-            sampled_patients_ids.append(patient.id)
-
-        negative_patients.remove(patient)
-
-    # Write full ids of sampled slices to file
-    output_file_path = metadata_path / NEGATIVE_SLICES_FILE_NAME
-    write_slices_to_file(sampled_slices, output_file_path)
-
-    return sampled_slices
-
-
-def sample_slices_detection(argv):
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--report_path', type=str, required=True,
-                        help="a path to a file with patients ids to sample slices from")
-    parser.add_argument('--patients_metadata_path', type=str, required=True, help="a path to the cine-MRI archive")
-    parser.add_argument('--metadata_path', type=str, required=True,
-                        help="a path to the metadata folder of the cine-MRI archive")
-    parser.add_argument('--patients_num', type=str, default=63,
-                        help="a number of different patients to sample")
-    parser.add_argument('--slices_num', type=str, default=1,
-                        help="a number of slices per patient to sample")
-
-    args = parser.parse_args(argv)
-    report_path = Path(args.report_path)
-    patients_metadata_path = Path(args.patients_metadata_path)
-    metadata_path = Path(args.metadata_path)
-    patients_num = args.patients_num
-    slices_num = args.slices_num
-
-    sample_slices(report_path, patients_metadata_path, metadata_path, patients_num, slices_num)
 
 
 def average_bb_size(annotations):
@@ -491,6 +392,47 @@ def slices_from_full_ids_file(slices_full_ids_file_path):
     return slices
 
 
+def patients_from_full_ids_file(slices_full_ids_file_path):
+    with open(slices_full_ids_file_path) as file:
+        lines = file.readlines()
+        slices_full_ids = [line.strip() for line in lines]
+
+    return patients_from_full_ids(slices_full_ids)
+
+
+def patients_from_full_ids(slices_full_ids):
+    slices_id_chunks = [slice_full_id.split("_") for slice_full_id in slices_full_ids]
+    slices_id_chunks = np.array(slices_id_chunks)
+
+    patient_ids = np.unique(slices_id_chunks[:, 0])
+    patients = []
+    for patient_id in patient_ids:
+        patient = Patient(patient_id)
+        patient_records = slices_id_chunks[slices_id_chunks[:, 0] == patient_id]
+        studies_ids = np.unique(patient_records[:, 1])
+
+        for study_id in studies_ids:
+            study = Study(study_id, patient_id=patient_id)
+            study_records = patient_records[patient_records[:, 1] == study_id]
+
+            for _, _, slice_id in study_records:
+                study.add_slice(CineMRISlice(slice_id, patient_id, study_id))
+
+            patient.add_study(study)
+
+        patients.append(patient)
+
+    return patients
+
+
+def slices_full_ids_from_patients(patients):
+    slices_full_ids = []
+    for patient in patients:
+        slices_full_ids.extend([slice.full_id for slice in patient.cinemri_slices])
+
+    return slices_full_ids
+
+
 def extract_detection_dataset(slices, images_folder, target_folder):
     # Copy slices to a new location
     for slice in slices:
@@ -516,7 +458,7 @@ def extract_detection_data(argv):
     positive_file_path = Path(args.positive_file)
     negative_file_path = Path(args.negative_file)
     images_path = Path(args.images)
-    target_path = Path(args.target_folder) / IMAGES_FOLDER
+    target_path = Path(args.target_folder)
     target_path.mkdir(parents=True)
 
     positive_slices = slices_from_full_ids_file(positive_file_path)
@@ -569,17 +511,34 @@ def load_visceral_slides(visceral_slide_path):
     return visceral_slides
 
 
+def patients_from_metadata(patients_metadata_path):
+
+    # Load patients with all the extracted metadata
+    with open(patients_metadata_path) as f:
+        patients_json = json.load(f)
+
+    patients = [Patient.from_dict(patient_dict) for patient_dict in patients_json]
+    return patients
+
+
+
 def test():
-    archive_path = Path(ARCHIVE_PATH)
+    archive_path = ARCHIVE_PATH
 
     metadata_path = archive_path / METADATA_FOLDER
-    report_path = metadata_path / NEW_REPORT_FILE_NAME
+    report_path = metadata_path / REPORT_FILE_NAME
     patients_metadata = metadata_path / PATIENTS_METADATA_FILE_NAME
+    mapping_path = archive_path / METADATA_FOLDER / PATIENTS_MAPPING_FILE_NAME
+    patients = patients_from_metadata(patients_metadata)
+    max_stud_num = 0
+    for patient in patients:
+        max_stud_num = max(max_stud_num, len(patient.studies))
+        
+    print("Maximum number of studies {}".format(max_stud_num))
 
-    with open("patients.json") as f:
-        pat_data = json.load(f)
+    """
+    patients = patients_from_metadata("patients.json")
 
-    patients = [Patient.from_dict(dict) for dict in pat_data]
     print(len(patients))
 
     patients_few_studies = [patient for patient in patients if len(patient.studies) > 1]
@@ -596,6 +555,7 @@ def test():
     print(len(studies_no_date_ids))
     print(studies_no_date_ids)
     print("done")
+    """
 
     # full_segmentation_path = archive_path / "full_segmentation"
     # contour_stat(full_segmentation_path)
@@ -603,6 +563,7 @@ def test():
 
 
 if __name__ == '__main__':
+    #test()
 
     np.random.seed(99)
     random.seed(99)
@@ -610,7 +571,6 @@ if __name__ == '__main__':
     # Very first argument determines action
     actions = {
         "extract_detection_data": extract_detection_data,
-        "sample_slices": sample_slices_detection
     }
 
     try:

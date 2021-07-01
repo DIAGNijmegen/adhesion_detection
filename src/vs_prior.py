@@ -2,14 +2,15 @@ import numpy as np
 from pathlib import Path
 from cinemri.config import ARCHIVE_PATH
 from cinemri.definitions import CineMRISlice
-from config import METADATA_FOLDER, NEGATIVE_SLICES_FILE_NAME, SEPARATOR, IMAGES_FOLDER
+from config import METADATA_FOLDER, NEGATIVE_SLICES_FILE_NAME, SEPARATOR
 from utils import load_visceral_slides, binning_intervals
 import matplotlib.pyplot as plt
+import matplotlib.cm as cm
 from scipy import signal
 import SimpleITK as sitk
 import math
 from cinemri.contour import get_abdominal_contour_top, _get_tangent_vectors, get_most_vertical_point
-import matplotlib.cm as cm
+
 
 class Region:
     """An object representing visceral slide for a Cine-MRI slice
@@ -314,7 +315,7 @@ def norm_vs(vs, expected_vs, frame, output_path):
 
 
 if __name__ == '__main__':
-    archive_path = Path(ARCHIVE_PATH)
+    archive_path = ARCHIVE_PATH
     images_path = archive_path / "detection_new" / "images"
     negative_slices_file = archive_path / METADATA_FOLDER / NEGATIVE_SLICES_FILE_NAME
     cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")

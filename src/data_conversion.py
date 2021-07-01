@@ -644,7 +644,7 @@ def extract_detection_gifs(source_path, target_path):
 
 
 def test():
-    archive_path = Path(ARCHIVE_PATH)
+    archive_path = ARCHIVE_PATH
     subset_path = Path("segmentation_subset")
     diag_nnUNet_path = Path("../../data/cinemri_mha/diag_nnunet")
 

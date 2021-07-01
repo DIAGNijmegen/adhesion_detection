@@ -1,5 +1,5 @@
 import numpy as np
-from cinemri.contour import AbdominalContourPart
+from cinemri.contour import AbdominalContourPart #, Contour
 
 def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=-1):
     """
@@ -186,7 +186,6 @@ def get_adhesions_prior_coords(x, y, connectivity_threshold=5):
     coords = np.column_stack((x, y))
 
     # Keep only the top half of the contour
-
     middle_y = (np.max(y) - np.min(y)) / 2
     coords_top = np.array([coord for coord in coords if coord[1] <= middle_y])
 
@@ -205,6 +204,15 @@ def get_adhesions_prior_coords(x, y, connectivity_threshold=5):
     # Filter out the top right part of the contour
     adhesions_prior_coords = [coord for coord in coords.tolist() if coord not in rest_coords]
 
+    # Get the posterior wall
+    posterior_wall_x, posterior_wall_y = get_abdominal_wall_coord(coords[:, 0],
+                                                                  coords[:, 1],
+                                                                  type=AbdominalContourPart.posterior_wall,
+                                                                  connectivity_threshold=connectivity_threshold)
+    posterior_wall_coords = np.column_stack((posterior_wall_x, posterior_wall_y)).tolist()
+    # Filter out the posterior wall
+    adhesions_prior_coords = [coord for coord in adhesions_prior_coords if coord not in posterior_wall_coords]
+
     # Get the top coordinates
     top_x, top_y = get_abdominal_contour_top(coords[:, 0],
                                              coords[:, 1],
@@ -214,5 +222,44 @@ def get_adhesions_prior_coords(x, y, connectivity_threshold=5):
     adhesions_prior_coords = np.array([coord for coord in adhesions_prior_coords if coord not in top_coords])
 
     return adhesions_prior_coords[:, 0], adhesions_prior_coords[:, 1]
+
+
+from pathlib import Path
+from cinemri.config import ARCHIVE_PATH
+from config import METADATA_FOLDER, SEPARATOR, IMAGES_FOLDER
+from utils import load_visceral_slides
+import SimpleITK as sitk
+import matplotlib.pyplot as plt
+
+if __name__ == '__main__':
+    archive_path = ARCHIVE_PATH
+    images_path = archive_path / "detection_new" / "images"
+    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
+
+    visceral_slides = load_visceral_slides(cumulative_vs_path)
+    output_path = Path("anchor_points_contour_parts")
+    output_path.mkdir(exist_ok=True)
+    for i in range(len(visceral_slides)):
+        vs = visceral_slides[i]
+        vs_image = vs.build_path(images_path)
+        image = sitk.ReadImage(str(vs_image))
+        frame = sitk.GetArrayFromImage(image)[-2]
+
+        contour = Contour(vs.x, vs.y)
+        x1, y1 = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
+        x2, y2 = contour.get_abdominal_contour_part(AbdominalContourPart.top)
+        x3, y3 = contour.get_abdominal_contour_part(AbdominalContourPart.posterior_wall)
+        x4, y4 = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
+
+        plt.figure()
+        plt.imshow(frame, cmap="gray")
+        plt.scatter(vs.x, vs.y, s=5, color="b")
+        plt.scatter(x1, y1, s=10, color="r")
+        plt.scatter(x2, y2, s=10, color="y")
+        plt.scatter(x3, y3, s=10, color="g")
+        plt.scatter(x4, y4, s=10, color="c")
+
+        plt.savefig(output_path / "{}.png".format(vs.full_id), bbox_inches='tight', pad_inches=0)
+        plt.close()
 
 

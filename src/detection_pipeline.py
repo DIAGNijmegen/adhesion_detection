@@ -757,18 +757,23 @@ def vs_adhesion_likelihood(visceral_slide_path,
 
 def vs_value_distr(visceral_slide_path,
                    intervals_num=1000):
+
+    visceral_slides = load_visceral_slides(visceral_slide_path)
+    vs_max = 0
+    for visceral_slide in visceral_slides:
+        vs_max = max(vs_max, np.max(visceral_slide.values))
+
     # Binning
-    reference_vals = binning_intervals(n=intervals_num)
+    reference_vals = binning_intervals(end=vs_max, n=intervals_num)
 
     # Initialize frequencies
     freq_dict = {}
     for i in range(intervals_num):
         freq_dict[i] = 0
 
-    # Calculate frequencies in 
-    visceral_slides = load_visceral_slides(visceral_slide_path)
+    # Calculate frequencies in
     for visceral_slide in visceral_slides:
-        slide_normalized = visceral_slide.values / np.max(visceral_slide.values)
+        slide_normalized = visceral_slide.values #/ np.max(visceral_slide.values)
         for value in slide_normalized:
             diff = reference_vals - value
             index = np.argmin(np.abs(diff))
@@ -789,7 +794,7 @@ def vs_value_distr(visceral_slide_path,
 
 
 def test():
-    archive_path = Path(ARCHIVE_PATH)
+    archive_path = ARCHIVE_PATH
     images_path = archive_path / IMAGES_FOLDER
     annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     visceral_slide_path = Path(VISCERAL_SLIDE_PATH)
@@ -802,25 +807,28 @@ def test():
     adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
     annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
     
-    output = Path("threshold_prediction_cumulative_contour_reg_3")
+    output = Path("threshold_prediction_09_example")
     #cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_rest_reg_pos")
-    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_pos")
+    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
 
+    """
     int_nums = [100, 200, 300, 400, 500, 600, 653, 700, 800, 900, 1000, 1500, 2000]
+    int_nums = [200, 653]
     for int_num in int_nums:
         vs_value_distr(cumulative_vs_path, int_num)
         values, adh_likelihood, not_adh_likelihood = vs_adhesion_likelihood(cumulative_vs_path, annotations_path, int_num, plot=True)
         #print(adh_likelihood.sum())
         #print(not_adh_likelihood.sum())
-
     """
+
+
     int_num = 653
     values, adh_likelihood, not_adh_likelihood = vs_adhesion_likelihood(cumulative_vs_path, annotations_path, int_num)
     likelihood_data = {"values": values, "adh_like": adh_likelihood, "not_adh_like": not_adh_likelihood}
 
-    predict_and_visualize(annotations, cumulative_vs_path, images_path, output, likelihood_data, 0.5, threshold=0.2)
-    prediction_by_threshold(annotations, cumulative_vs_path, output, likelihood_data, 0.5, threshold=0.2)
-    """
+    predict_and_visualize(annotations[:2], cumulative_vs_path, images_path, output, likelihood_data, 0.5, threshold=0.9)
+    #prediction_by_threshold(annotations, cumulative_vs_path, output, likelihood_data, 0.5, threshold=0.2)
+
 
     #bb_with_threshold(annotations, visceral_slide_path, inspexp_data, images_path)
 

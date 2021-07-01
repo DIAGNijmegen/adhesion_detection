@@ -797,7 +797,7 @@ if __name__ == '__main__':
     np.random.seed(99)
     random.seed(99)
 
-    archive_path = Path(ARCHIVE_PATH)
+    archive_path = ARCHIVE_PATH
     annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     inspexp_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     images_path = archive_path / IMAGES_FOLDER

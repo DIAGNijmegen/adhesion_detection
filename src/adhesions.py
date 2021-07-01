@@ -7,7 +7,7 @@ import cv2
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, REPORT_FILE_NAME, \
+from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, OLD_REPORT_FILE_NAME, \
     BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import AbdominalContourPart, get_contour, get_abdominal_contour_top
@@ -244,6 +244,7 @@ class AdhesionAnnotation:
         return self.slice.build_path(relative_path, extension=extension)
 
 
+# TODO: maybe change to also return slices for which adhesions were not found
 def load_annotations(annotations_path,
                      adhesion_types=[AdhesionType.anteriorWall,
                                      AdhesionType.abdominalCavityContour,
@@ -440,15 +441,6 @@ def load_patients_of_type(images_path, annotations_type_path, annotation_type):
     filtered_patients = [p for p in all_patients if p.id in type_patients_ids]
     return filtered_patients
 
-
-# TODO: add documentation
-def bb_annotations_to_full_ids_file(bb_annotations_path, output_file_path):
-    annotations = load_annotations(bb_annotations_path)
-    full_ids = [annotation.full_id for annotation in annotations]
-
-    with open(output_file_path, "w") as file:
-        for full_id in full_ids:
-            file.write(full_id + "\n")
 
 
 
@@ -999,7 +991,7 @@ def verify_abdominal_wall(x, y, frame, slice_id, target_path, type=AbdominalCont
 
 
 def test():
-    archive_path = Path(ARCHIVE_PATH)
+    archive_path = ARCHIVE_PATH
     metadata_path = archive_path / METADATA_FOLDER
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
     output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_det_full_df")
@@ -1012,8 +1004,6 @@ def test():
 
     cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
     vis_annotation_on_cumulative_vs(cumulative_vs_path, detection_path, bb_expanded_annotation_path, output_path, save=True)
-
-    #bb_annotations_to_full_ids_file(bb_expanded_annotation_path, metadata_path / "bb_annotations_full_ids.txt")
 
     #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path, Path("posterior"), AbdominalContourPart.posterior_wall)
     #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,

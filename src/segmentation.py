@@ -12,6 +12,7 @@ from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, SEPARATOR
 from data_conversion import extract_frames, merge_frames
 from postprocessing import fill_in_holes
+from utils import patients_from_full_ids
 
 FRAMES_FOLDER = "frames"
 MASKS_FOLDER = "masks"
@@ -230,27 +231,8 @@ def merge_segmentation(segmentation_path,
 
     # Get slices ids from metadata folder
     slices_metadata_glob = metadata_path.glob("*.json")
-    slices_id_chunks = [f.name[:-5].split("_") for f in slices_metadata_glob]
-    slices_id_chunks = np.array(slices_id_chunks)
-
-    # Extract patients to recover original folder structure
-    patient_ids = np.unique(slices_id_chunks[:, 0])
-    patients = []
-    for patient_id in patient_ids:
-        patient = Patient(patient_id)
-        patient_records = slices_id_chunks[slices_id_chunks[:, 0] == patient_id]
-        studies_ids = np.unique(patient_records[:, 1])
-
-        for study_id in studies_ids:
-            study = Study(study_id, patient_id=patient_id)
-            study_records = patient_records[patient_records[:, 1] == study_id]
-
-            for _, _, slice_id in study_records:
-                study.add_slice(CineMRISlice(slice_id, patient_id, study_id))
-
-            patient.add_study(study)
-
-        patients.append(patient)
+    slices_full_ids = [slice_file.name[:-5] for slice_file in slices_metadata_glob]
+    patients = patients_from_full_ids(slices_full_ids)
 
     # Create folders hierarchy matching hierarchy of images in the archive: patientID -> studyID
     # and merge and save each slice
@@ -351,7 +333,7 @@ def full_inference(argv):
 
 
 def test():
-    archive_path = Path(ARCHIVE_PATH)
+    archive_path = ARCHIVE_PATH
     target_path_images = Path("../../data/target")
     target_path_metadata = Path("../../data/images_metadata")
     segmentation_path = Path("../../data/masks")

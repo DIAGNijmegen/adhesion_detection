@@ -16,7 +16,7 @@ from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY, VISCERAL_SLIDE_FILE
 from segmentation import segment_abdominal_cavity
-from utils import slices_from_full_ids_file
+from utils import slices_from_full_ids_file, patients_from_full_ids
 
 # TODO: maybe in future rewrite the pipeline to extract the full segmentation needed for cumulative visceral slide
 # TODO: How do we evaluate registration?
@@ -297,29 +297,8 @@ def compute_visceral_slide(images_path,
     visceral_slide_detector = VisceralSlideDetector()
 
     slices_glob = masks_path.glob("*insp.nii.gz")
-    slices_id_chunks = [f.name[:-12].split("_") for f in slices_glob]
-    slices_id_chunks = np.array(slices_id_chunks)
-
-    # Extract patients to recover original folder structure
-    patient_ids = np.unique(slices_id_chunks[:, 0])
-    patients = []
-    for patient_id in patient_ids:
-        patient = Patient(patient_id)
-        patient_records = slices_id_chunks[slices_id_chunks[:, 0] == patient_id]
-        studies_ids = np.unique(patient_records[:, 1])
-
-        for study_id in studies_ids:
-            study = Study(study_id, patient_id=patient_id)
-            study_records = patient_records[patient_records[:, 1] == study_id]
-
-            for _, _, slice_id in study_records:
-                study.add_slice(CineMRISlice(slice_id, patient_id, study_id))
-
-            patient.add_study(study)
-
-        patients.append(patient)
-
-
+    slices_full_ids = [slice_file.name[:-12] for slice_file in slices_glob]
+    patients = patients_from_full_ids(slices_full_ids)
     for patient in patients:
         patient.build_path(target_path).mkdir()
 
