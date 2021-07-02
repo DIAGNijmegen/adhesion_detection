@@ -2,6 +2,9 @@
 # Constants
 SEPARATOR = "_"
 
+# Paths
+DETECTION_PATH = "/Users/emartynova/Documents/AIForHealth/Project/data/cinemri_mha_detection"
+
 # Folders
 IMAGES_FOLDER = "images"
 SEGMENTATION_FOLDER = "cavity_segmentations"
@@ -42,6 +45,6 @@ DETECTION_SLICES_FILE_NAME = "full_detection_ids.txt"
 PATIENTS_SPLIT_FILE_NAME = "patients_split.json"
 
 # K-fold split files
-NEGATIVE_KFOLD_FILE_NAME = "negative_kfold_split.json"
-POSITIVE_KFOLD_FILE_NAME = "positive_kfold_split.json"
+DETECTION_PATIENT_FOLD_FILE_NAME = "detection_patients_folds.json"
+SEGMENTATION_PATIENT_FOLD_FILE_NAME = "segmentation_patients_folds.json"
 

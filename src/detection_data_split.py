@@ -5,7 +5,7 @@ import numpy as np
 from collections import Counter
 from pathlib import Path
 from enum import Enum, unique
-from utils import patients_from_metadata, patients_from_full_ids_file, slices_full_ids_from_patients
+from utils import patients_from_metadata, patients_from_full_ids_file, slices_full_ids_from_patients, get_segm_patients_ids
 from cinemri.definitions import Patient, CineMRIMotionType, CineMRISlice, CineMRISlicePos
 from cinemri.utils import get_patients
 from adhesions import AdhesionAnnotation, AdhesionType
@@ -31,19 +31,13 @@ class NegativePatientTypes(Enum):
 
 @unique
 class PatientTypes(Enum):
-    train_positive = 0
-    train_negative = 1
-    test_positive = 2
-    test_negative = 3
-    control = 4
-
-
-# Sampling of negative patients
-# Segmentation statistics for positive
-# Split into groups:
-#   - negative control (about 40)
-#   - training (about 58 x 2 equal num of negative and positive slices)
-#   - test (12 x 2 equal num of negative and positive slices) or (12 neg, 24 pos)
+    train = 0
+    train_positive = 1
+    train_negative = 2
+    test = 3
+    test_positive = 4
+    test_negative = 5
+    control = 6
 
 
 # Positive slices statistics: motion type and slice position
@@ -206,6 +200,23 @@ def slice_vs_suitable(slice):
             slice.complete)
 
 
+def slice_annotation_suitable(slice):
+    """
+    Checkes whether a slice is suitable for the algorithm to calculate the visceral slide
+    To calculate the visceral slide only slices in sagittal plane should be used,
+    midline slices and full abdominal motion are prefferable.
+    Also we should check whether a slice have normal number of frames
+    Returns
+    -------
+    suitable : bool
+        A boolean flag indicaing whether a slice is suitable
+    """
+
+    return (slice.anatomical_plane == AnatomicalPlane.sagittal and
+            slice.motion_type == CineMRIMotionType.full and
+            slice.complete)
+
+
 def mapped_old_ids(mapping_path):
     # Read json
     with open(mapping_path) as f:
@@ -306,14 +317,13 @@ def get_suitable_patient_subset(report_path, patients_metadata_path, ids_to_excl
     return patients_subset
 
 
-def negative_patients_split(patients_full_ids_file, split_file=None, train_file=None, test_file=None, control_file=None):
-    patients = patients_from_full_ids_file(patients_full_ids_file)
+def negative_patients_split(patients, split_file=None, train_file=None, test_file=None, control_file=None):
     # shuffle patients
     np.random.shuffle(patients)
 
     patients_train = []
     # For balance with patients subset with BB annotations we take one patient with 5 slices
-    # and 3 patients with
+    # and 3 patients with 2 slices
     patient_five_slices = [patient for patient in patients if len(patient.cinemri_slices) == 5][0]
     patients_train.append(patient_five_slices)
 
@@ -349,50 +359,69 @@ def negative_patients_split(patients_full_ids_file, split_file=None, train_file=
     if control_file is not None:
         control_slices_fill_ids = slices_full_ids_from_patients(patients_control)
         full_ids_to_file(control_slices_fill_ids, control_file)
-        
+
+    train_segm_ids = [patient.id for patient in patients_train_segm]
+    train_no_segm_ids = [patient.id for patient in patients_train_no_segm]
+    test_ids = [patient.id for patient in patients_test]
+    control_ids = [patient.id for patient in patients_control]
+
+    split_dict = {"train": {"segm": train_segm_ids, "no_segm": train_no_segm_ids},
+                  "test": test_ids,
+                  "control": control_ids}
+
     # Write a file with negative patients data split
     if split_file is not None:
-        train_segm_ids = [patient.id for patient in patients_train_segm]
-        train_no_segm_ids = [patient.id for patient in patients_train_no_segm]
-        test_ids = [patient.id for patient in patients_test]
-        control_ids = [patient.id for patient in patients_control]
-        
-        split_dict = {"train": {"segm": train_segm_ids, "no_segm": train_no_segm_ids},
-                      "test": test_ids,
-                      "control": control_ids}
         
         with open(split_file, "w") as f:
             json.dump(split_dict, f)
 
-    return {"train": {"segm": patients_train_segm, "no_segm": patients_train_no_segm},
-            "test": patients_test,
-            "control": patients_control}
+    return split_dict
 
 
-def slice_annotation_suitable(slice):
-    """
-    Checkes whether a slice is suitable for the algorithm to calculate the visceral slide
-    To calculate the visceral slide only slices in sagittal plane should be used,
-    midline slices and full abdominal motion are prefferable.
-    Also we should check whether a slice have normal number of frames
-    Returns
-    -------
-    suitable : bool
-        A boolean flag indicaing whether a slice is suitable
-    """
+# Sample negative patients with suitable slices, split into train (with segmentation subset), test, control,
+# sample more slices for segmentation
+def prepare_negative_patients(report_path, patients_metadata_path, metadata_path):
 
-    return (slice.anatomical_plane == AnatomicalPlane.sagittal and
-            slice.motion_type == CineMRIMotionType.full and
-            slice.complete)
+    full_ids_file = metadata_path / NEGATIVE_SLICES_FILE_NAME
+    split_file = metadata_path / NEGATIVE_SPLIT_FILE_NAME
+    train_file = metadata_path / NEGATIVE_SLICES_TRAIN_NAME
+    train_segm_file = metadata_path / NEGATIVE_SLICES_TRAIN_SEGM_NAME
+    test_file = metadata_path / NEGATIVE_SLICES_TEST_NAME
+    control_file = metadata_path / NEGATIVE_SLICES_CONTROL_NAME
+
+    old_ids = mapped_old_ids(mapping_path)
+    controversial_patients_ids = get_controversial_patients_ids(report_path, old_ids)
+    ids_to_exclude = old_ids + controversial_patients_ids
+
+    negative_patients = get_suitable_patient_subset(report_path,
+                                                    patients_metadata_path,
+                                                    ids_to_exclude,
+                                                    slice_vs_suitable,
+                                                    full_ids_file_path=full_ids_file)
+
+    negative_split = negative_patients_split(negative_patients,
+                                             split_file,
+                                             train_file,
+                                             test_file,
+                                             control_file)
+
+    # Sample slices for additional segmentation (not only midline)
+    sample_train_segm_subset(report_path, patients_metadata_file_path, negative_split, slice_annotation_suitable,
+                             train_segm_file)
+
+    return negative_split, split_file
 
 
-def sample_test_subset(report_path, mapping_path, patients_metadata_path, json_split, suitability_function, patients_num=15, metadata_path=None):
+def sample_test_subset(report_path, mapping_path, patients_metadata_path, json_split, suitability_function, metadata_path=None):
 
     # Negative subset
     all_patient_ids = [patient.id for patient in patients_from_metadata(patients_metadata_path)]
     test_ids = get_negative_patient_ids(NegativePatientTypes.test, json_split)
     ids_to_exclude = set(all_patient_ids).difference(test_ids)
-    negative_subset = get_suitable_patient_subset(report_path, patients_metadata_path, ids_to_exclude, suitability_function)
+    negative_subset = get_suitable_patient_subset(report_path, patients_metadata_path, ids_to_exclude,
+                                                  suitability_function)
+    # We want to sample the same number of positive patients as negative
+    patients_num = len(negative_subset)
 
     # Positive subset
     old_ids = mapped_old_ids(mapping_path)
@@ -400,10 +429,16 @@ def sample_test_subset(report_path, mapping_path, patients_metadata_path, json_s
     ids_to_exclude = old_ids + controversial_positive_ids
     positive_subset = get_suitable_patient_subset(report_path, patients_metadata_path, ids_to_exclude,
                                                   suitability_function, negative=False)
+
+    # Select the subset of a necessary size
     np.random.shuffle(positive_subset)
     positive_subset = positive_subset[:patients_num]
 
     subset = negative_subset + positive_subset
+
+    negative_ids = [patient.id for patient in negative_subset]
+    positive_ids = [patient.id for patient in positive_subset]
+    split_dict = {"negative": negative_ids, "positive": positive_ids}
 
     if metadata_path is not None:
         full_ids_file_path = metadata_path / TEST_SLICES_NAME
@@ -411,15 +446,12 @@ def sample_test_subset(report_path, mapping_path, patients_metadata_path, json_s
         full_ids_to_file(slices_fill_ids, full_ids_file_path)
 
         pos_neg_split_file_path = metadata_path / TEST_POSNEG_SPLIT_NAME
-        negative_ids = [patient.id for patient in negative_subset]
-        positive_ids = [patient.id for patient in positive_subset]
-        split_dict = {"negative": negative_ids, "positive": positive_ids}
         with open(pos_neg_split_file_path, "w") as f:
             json.dump(split_dict, f)
 
-    return subset
+    return subset, split_dict
 
-
+# Extracts all suitable slices for negative patients in the training set that were selected for additional segmentation
 def sample_train_segm_subset(report_path, patients_metadata_path, json_split, suitability_function, full_ids_file_path=None):
     all_patient_ids = [patient.id for patient in patients_from_metadata(patients_metadata_path)]
     test_ids = get_negative_patient_ids(NegativePatientTypes.train_segm, json_split)
@@ -434,20 +466,14 @@ def sample_train_segm_subset(report_path, patients_metadata_path, json_split, su
     return negative_train_segm_subset
 
 
-def complete_patients_split(bb_slices_file, negative_split_file, test_file, output_file):
+def complete_patients_split(bb_slices_file, negative_split, testset_dict, output_file):
     positive_train = patients_from_full_ids_file(bb_slices_file)
     positive_train_ids = [patient.id for patient in positive_train]
 
-    with open(negative_split_file) as f:
-        negative_split_json = json.load(f)
-
-    with open(test_file) as f:
-        test_json = json.load(f)
-
     split_dict = {"train": {"positive": positive_train_ids,
-                            "negative": negative_split_json["train"]["segm"] + negative_split_json["train"]["no_segm"]},
-                  "test": test_json,
-                  "control": negative_split_json["control"]}
+                            "negative": negative_split["train"]["segm"] + negative_split["train"]["no_segm"]},
+                  "test": testset_dict,
+                  "control": negative_split["control"]}
 
     if output_file is not None:
         with open(output_file, "w") as f:
@@ -456,10 +482,7 @@ def complete_patients_split(bb_slices_file, negative_split_file, test_file, outp
     return split_dict
 
 
-def get_negative_patient_ids(type, split_json_file):
-
-    with open(split_json_file) as f:
-        split_json = json.load(f)
+def get_negative_patient_ids(type, split_json):
 
     if type == NegativePatientTypes.train:
         patient_ids = split_json["train"]["segm"] + split_json["train"]["no_segm"]
@@ -475,15 +498,16 @@ def get_negative_patient_ids(type, split_json_file):
     return patient_ids
 
 
-def get_patient_ids(type, split_json_file):
+def get_patient_ids(type, split_json):
 
-    with open(split_json_file) as f:
-        split_json = json.load(f)
-
-    if type == PatientTypes.train_positive:
+    if type == PatientTypes.train:
+        patient_ids = split_json["train"]["positive"] + split_json["train"]["negative"]
+    elif type == PatientTypes.train_positive:
         patient_ids = split_json["train"]["positive"]
     elif type == PatientTypes.train_negative:
         patient_ids = split_json["train"]["negative"]
+    elif type == PatientTypes.test:
+        patient_ids = split_json["test"]["positive"] + split_json["test"]["negative"]
     elif type == PatientTypes.test_positive:
         patient_ids = split_json["test"]["positive"]
     elif type == PatientTypes.test_negative:
@@ -495,107 +519,24 @@ def get_patient_ids(type, split_json_file):
 
 
 # K-fold split
-def negative_folds(split_json_file, folds_num=5, output_file=None):
-    
-    patients_segm = get_negative_patient_ids(NegativePatientTypes.train_segm, split_json_file)
-    np.random.shuffle(patients_segm)
-    patients_no_segm = get_negative_patient_ids(NegativePatientTypes.train_no_segm, split_json_file)
-    np.random.shuffle(patients_no_segm)
-
-    kf = KFold(n_splits=folds_num)
-    folds_train = []
-    folds_val = []
-
-    # Split patients with segmentation
-    patients_segm = np.array(patients_segm)
-    for train_index, val_index in kf.split(patients_segm):
-        fold_train_ids = patients_segm[train_index]
-        fold_val_ids = patients_segm[val_index]
-
-        folds_train.append(fold_train_ids)
-        folds_val.append(fold_val_ids)
-
-    # Split patients without segmentation
-    patients_no_segm = np.array(patients_no_segm)
-    for index, (train_index, val_index) in enumerate(kf.split(patients_no_segm)):
-        fold_train_ids = patients_no_segm[train_index]
-        fold_val_ids = patients_no_segm[val_index]
-
-        folds_train[index] = np.concatenate((folds_train[index], fold_train_ids))
-        folds_val[index] = np.concatenate((folds_val[index], fold_val_ids))
-
-    folds = []
-    for train_ids, val_ids in zip(folds_train, folds_val):
-        fold = {"train": train_ids.tolist(), "val": val_ids.tolist()}
-        folds.append(fold)
-        
-    if output_file is not None:
-        with open(output_file, "w") as f:
-            json.dump(folds, f)
-        
-    return folds
-
-
-def positive_folds(split_json_file, folds_num=5, output_file=None):
-    patients = get_patient_ids(PatientTypes.train_positive, split_json_file)
-    patients_segm = list(set(patients).intersection(PARAMEDIAN_SEGMENTATION_IDS_POS))
-    np.random.shuffle(patients_segm)
-    patients_no_segm = list(set(patients).difference(patients_segm))
-    np.random.shuffle(patients_no_segm)
-
-    kf = KFold(n_splits=folds_num)
-    folds_train = []
-    folds_val = []
-
-    # Split patients with segmentation
-    patients_segm = np.array(patients_segm)
-    for train_index, val_index in kf.split(patients_segm):
-        fold_train_ids = patients_segm[train_index]
-        fold_val_ids = patients_segm[val_index]
-
-        folds_train.append(fold_train_ids)
-        folds_val.append(fold_val_ids)
-
-    # Split patients without segmentation
-    patients_no_segm = np.array(patients_no_segm)
-    for index, (train_index, val_index) in enumerate(kf.split(patients_no_segm)):
-        fold_train_ids = patients_no_segm[train_index]
-        fold_val_ids = patients_no_segm[val_index]
-
-        # Reverse index to have balanced folds
-        reversed_ind = folds_num - index - 1
-        folds_train[reversed_ind] = np.concatenate((folds_train[reversed_ind], fold_train_ids))
-        folds_val[reversed_ind] = np.concatenate((folds_val[reversed_ind], fold_val_ids))
-
-    folds = []
-    for train_ids, val_ids in zip(folds_train, folds_val):
-        fold = {"train": train_ids.tolist(), "val": val_ids.tolist()}
-        folds.append(fold)
-
-    if output_file is not None:
-        with open(output_file, "w") as f:
-            json.dump(folds, f)
-
-    return folds
-
-
 def kfold_by_group(groups, reversed, folds_num=5):
     kf = KFold(n_splits=folds_num)
     folds_train = []
     folds_val = []
 
-    for group in groups:
+    for group_ind, group in enumerate(groups):
+        group = np.array(group)
         np.random.shuffle(group)
 
         for index, (train_index, val_index) in enumerate(kf.split(group)):
             fold_train_ids = group[train_index]
             fold_val_ids = group[val_index]
 
-            if index == 0:
+            if group_ind == 0:
                 folds_train.append(fold_train_ids)
                 folds_val.append(fold_val_ids)
             else:
-                reversed_index = folds_num - index - 1 if reversed[index] else index
+                reversed_index = folds_num - index - 1 if reversed[group_ind] else index
                 folds_train[reversed_index] = np.concatenate((folds_train[reversed_index], fold_train_ids))
                 folds_val[reversed_index] = np.concatenate((folds_val[reversed_index], fold_val_ids))
 
@@ -607,15 +548,66 @@ def kfold_by_group(groups, reversed, folds_num=5):
     return folds
 
 
+def load_folds(file_path):
+
+    with open(file_path) as f:
+        folds_json = json.load(f)
+
+    return folds_json
+
+
+def detection_folds(patient_split, negative_split, folds_num=5, output_file=None):
+
+    neg_patients_segm = get_negative_patient_ids(NegativePatientTypes.train_segm, negative_split)
+    neg_patients_no_segm = get_negative_patient_ids(NegativePatientTypes.train_no_segm, negative_split)
+
+    pos_patients = get_patient_ids(PatientTypes.train_positive, patient_split)
+    pos_patients_segm = list(set(pos_patients).intersection(PARAMEDIAN_SEGMENTATION_IDS_POS))
+    pos_patients_no_segm = list(set(pos_patients).difference(pos_patients_segm))
+
+    folds = kfold_by_group([neg_patients_segm, neg_patients_no_segm, pos_patients_segm, pos_patients_no_segm],
+                           [False, False, False, True],
+                           folds_num=folds_num)
+
+    if output_file is not None:
+        with open(output_file, "w") as f:
+            json.dump(folds, f)
+
+    return folds
+
+
+def segmentation_folds(detection_folds_file, segm_path, patients_split, output_file):
+    detection_folds = load_folds(detection_folds_file)
+    train_patients = get_patient_ids(PatientTypes.train, patients_split)
+    segm_patients_ids = get_segm_patients_ids(segm_path)
+
+    additional_segm_ids = list(set(segm_patients_ids).difference(train_patients))
+    additional_folds = kfold_by_group([additional_segm_ids], [False], len(detection_folds))
+
+    segmentation_folds = []
+    for detection_fold, additional_fold in zip(detection_folds, additional_folds):
+        segmentation_train_subset = list(set(detection_fold["train"]).intersection(segm_patients_ids))
+        segmentation_val_subset = list(set(detection_fold["val"]).intersection(segm_patients_ids))
+        segmentation_fold_train = np.concatenate((segmentation_train_subset, additional_fold["train"]))
+        segmentation_fold_val = np.concatenate((segmentation_val_subset, additional_fold["val"]))
+        segmentation_folds.append({"train": segmentation_fold_train.tolist(), "val": segmentation_fold_val.tolist()})
+
+    if output_file is not None:
+        with open(output_file, "w") as f:
+            json.dump(segmentation_folds, f)
+    
+    return segmentation_folds
+
 
 if __name__ == '__main__':
     np.random.seed(99)
     random.seed(99)
 
     archive_path = ARCHIVE_PATH
+    detection_path = Path(DETECTION_PATH)
     # Folders
     images_path = archive_path / IMAGES_FOLDER
-    segmentation_path = archive_path / SEGMENTATION_FOLDER
+    segmentation_path = detection_path / SEGMENTATION_FOLDER
     metadata_path = archive_path / METADATA_FOLDER
     annotation_path = metadata_path / ANNOTATIONS_TYPE_FILE
 
@@ -625,25 +617,18 @@ if __name__ == '__main__':
     mapping_path = metadata_path / PATIENTS_MAPPING_FILE_NAME
     report_path = metadata_path / REPORT_FILE_NAME
     bb_annotations_full_ids_file = metadata_path / BB_ANNOTATED_SLICES_FILE_NAME
-    negative_patients_full_ids_file = metadata_path / NEGATIVE_SLICES_FILE_NAME
+
     # Data split files
-    negative_split_file = metadata_path / NEGATIVE_SPLIT_FILE_NAME
-    negative_train_file = metadata_path / NEGATIVE_SLICES_TRAIN_NAME
-    negative_train_segm_file = metadata_path / NEGATIVE_SLICES_TRAIN_SEGM_NAME
-    negative_test_file = metadata_path / NEGATIVE_SLICES_TEST_NAME
-    negative_control_file = metadata_path / NEGATIVE_SLICES_CONTROL_NAME
+
     test_slices_file = metadata_path / TEST_SLICES_NAME
     patient_split_file = metadata_path / PATIENTS_SPLIT_FILE_NAME
     # K-fold
-    negative_kfold_file = metadata_path / NEGATIVE_KFOLD_FILE_NAME
-    positive_kfold_file = metadata_path / POSITIVE_KFOLD_FILE_NAME
+    detection_kfold_file = metadata_path / DETECTION_PATIENT_FOLD_FILE_NAME
+    segmentation_kfold_file = metadata_path / SEGMENTATION_PATIENT_FOLD_FILE_NAME
 
     # Auxiliary data
     # Patients ids to exclude from sampling of negative patients: old data set and patients with not positive 
     # and negative studies
-    old_ids = mapped_old_ids(mapping_path)
-    controversial_patients_ids = get_controversial_patients_ids(report_path, old_ids)
-    ids_to_exclude = old_ids + controversial_patients_ids
 
     # BB annotations statistics
     # positive_stat(annotation_expanded_path, patients_metadata_old_file_path, mapping_path)
@@ -653,28 +638,16 @@ if __name__ == '__main__':
     # bb_annotations_to_full_ids_file(annotation_expanded_path, bb_annotations_full_ids_file)
     
     # Negative patients with suitable slices to file of full ids of slices
-    """
-    negative_patients = get_suitable_patient_subset(report_path,
-                                                    patients_metadata_file_path,
-                                                    ids_to_exclude,
-                                                    slice_vs_suitable,
-                                                    full_ids_file_path=negative_patients_full_ids_file)
+    negative_split, negative_split_file = prepare_negative_patients(report_path, patients_metadata_file_path, metadata_path)
 
-    negative_patients_split(negative_patients_full_ids_file,
-                            negative_split_file,
-                            negative_train_file,
-                            negative_test_file,
-                            negative_control_file)
-    """
+    # Sample test subset
+    _, testset_dict = sample_test_subset(report_path, mapping_path, patients_metadata_file_path, negative_split, slice_annotation_suitable, metadata_path=metadata_path)
 
-    # sample_test_subset(report_path, mapping_path, patients_metadata_file_path, negative_split_file, slice_annotation_suitable, metadata_path=metadata_path)
+    # Make data split by patient
+    patient_split = complete_patients_split(bb_annotations_full_ids_file, negative_split, testset_dict, patient_split_file)
 
-    # sample_train_segm_subset(report_path, patients_metadata_file_path, negative_split_file, slice_annotation_suitable, negative_train_segm_file)
+    # Detection folds
+    dfolds = detection_folds(patient_split, negative_split, output_file=detection_kfold_file)
     
-    # negative_folds(negative_split_file, output_file=negative_kfold_file)
-
-    # complete_patients_split(bb_annotations_full_ids_file, negative_split_file, metadata_path / TEST_POSNEG_SPLIT_NAME, patient_split_file)
-
-    positive_folds(patient_split_file, output_file=positive_kfold_file)
-
-    pass
+    # Segmentation folds
+    sfolds = segmentation_folds(detection_kfold_file, segmentation_path, patient_split, segmentation_kfold_file)

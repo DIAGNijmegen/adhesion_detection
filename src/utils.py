@@ -184,6 +184,12 @@ def get_patients_without_slices(images_path):
 
     return patients_without_slices
 
+# TODO: probably handing of pos/neg
+def get_segm_patients_ids(images_path):
+    patients = get_patients(images_path)
+    patient_ids = [patient.id for patient in patients]
+    return patient_ids
+
 
 def train_test_split(images_path,
                      split_destination,
