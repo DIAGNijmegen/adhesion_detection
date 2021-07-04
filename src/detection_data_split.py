@@ -318,6 +318,9 @@ def get_suitable_patient_subset(report_path, patients_metadata_path, ids_to_excl
 
 
 def negative_patients_split(patients, split_file=None, train_file=None, test_file=None, control_file=None):
+    # Necessary to get the current split of patients
+    patients.sort(key=lambda patient: patient.id, reverse=False)
+
     # shuffle patients
     np.random.shuffle(patients)
 
@@ -651,3 +654,4 @@ if __name__ == '__main__':
     
     # Segmentation folds
     sfolds = segmentation_folds(detection_kfold_file, segmentation_path, patient_split, segmentation_kfold_file)
+
