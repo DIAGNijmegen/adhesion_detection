@@ -5,7 +5,8 @@ import numpy as np
 from collections import Counter
 from pathlib import Path
 from enum import Enum, unique
-from utils import patients_from_metadata, patients_from_full_ids_file, slices_full_ids_from_patients, get_segm_patients_ids
+from utils import patients_from_metadata, patients_from_full_ids_file, slices_full_ids_from_patients, \
+    get_segm_patients_ids, slices_from_full_ids_file
 from cinemri.definitions import Patient, CineMRIMotionType, CineMRISlice, CineMRISlicePos
 from cinemri.utils import get_patients
 from adhesions import AdhesionAnnotation, AdhesionType
@@ -602,6 +603,29 @@ def segmentation_folds(detection_folds_file, segm_path, patients_split, output_f
     return segmentation_folds
 
 
+def folds_slices(patients_folds_file, train_patients, output_file):
+
+    patients_folds = load_folds(patients_folds_file)
+
+    folds_by_slices = []
+    for fold in patients_folds:
+        train_ids = fold["train"]
+        fold_train_patients = [patient for patient in train_patients if patient.id in train_ids]
+        fold_train_full_ids = slices_full_ids_from_patients(fold_train_patients)
+
+        val_ids = fold["val"]
+        fold_val_patients = [patient for patient in train_patients if patient.id in val_ids]
+        fold_val_full_ids = slices_full_ids_from_patients(fold_val_patients)
+
+        folds_by_slices.append({"train": fold_train_full_ids, "val":fold_val_full_ids})
+
+    if output_file is not None:
+        with open(output_file, "w") as f:
+            json.dump(folds_by_slices, f)
+
+    return folds_by_slices
+
+
 if __name__ == '__main__':
     np.random.seed(99)
     random.seed(99)
@@ -612,7 +636,9 @@ if __name__ == '__main__':
     images_path = archive_path / IMAGES_FOLDER
     segmentation_path = detection_path / SEGMENTATION_FOLDER
     metadata_path = archive_path / METADATA_FOLDER
+    detection_metadata_path = detection_path / METADATA_FOLDER
     annotation_path = metadata_path / ANNOTATIONS_TYPE_FILE
+    train_segm_slices = detection_path / IMAGES_FOLDER / "train_segm"
 
     # Files
     annotation_expanded_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
@@ -620,14 +646,16 @@ if __name__ == '__main__':
     mapping_path = metadata_path / PATIENTS_MAPPING_FILE_NAME
     report_path = metadata_path / REPORT_FILE_NAME
     bb_annotations_full_ids_file = metadata_path / BB_ANNOTATED_SLICES_FILE_NAME
+    detection_train_full_ids = detection_metadata_path / DETECTION_SLICES_FILE_NAME
 
     # Data split files
-
     test_slices_file = metadata_path / TEST_SLICES_NAME
     patient_split_file = metadata_path / PATIENTS_SPLIT_FILE_NAME
     # K-fold
-    detection_kfold_file = metadata_path / DETECTION_PATIENT_FOLD_FILE_NAME
-    segmentation_kfold_file = metadata_path / SEGMENTATION_PATIENT_FOLD_FILE_NAME
+    detection_kfold_file = detection_metadata_path / DETECTION_PATIENT_FOLD_FILE_NAME
+    detection_slices_kfold_file = detection_metadata_path / DETECTION_SLICE_FOLD_FILE_NAME
+    segmentation_kfold_file = detection_metadata_path / SEGMENTATION_PATIENT_FOLD_FILE_NAME
+    segmentation_slices_kfold_file = detection_metadata_path / SEGMENTATION_SLICE_FOLD_FILE_NAME
 
     # Auxiliary data
     # Patients ids to exclude from sampling of negative patients: old data set and patients with not positive 
@@ -641,6 +669,7 @@ if __name__ == '__main__':
     # bb_annotations_to_full_ids_file(annotation_expanded_path, bb_annotations_full_ids_file)
     
     # Negative patients with suitable slices to file of full ids of slices
+    """
     negative_split, negative_split_file = prepare_negative_patients(report_path, patients_metadata_file_path, metadata_path)
 
     # Sample test subset
@@ -654,4 +683,13 @@ if __name__ == '__main__':
     
     # Segmentation folds
     sfolds = segmentation_folds(detection_kfold_file, segmentation_path, patient_split, segmentation_kfold_file)
+    """
 
+    # Folds by slices for detection
+    detection_train_patients = patients_from_full_ids_file(detection_train_full_ids)
+    folds_slices(detection_kfold_file, detection_train_patients, detection_slices_kfold_file)
+
+    # Folds by slices for segmentation
+    segmentation_train_patients = get_patients(segmentation_path)
+    folds_slices(segmentation_kfold_file, segmentation_train_patients, segmentation_slices_kfold_file)
+    pass

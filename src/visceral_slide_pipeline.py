@@ -103,7 +103,7 @@ def get_insp_exp_indices(slice, inspexp_data):
     return insp_ind, exp_ind
 
 
-# TODO: should be wrapped into try/cath
+# TODO: move. should be wrapped into try/cath
 def get_inspexp_frames(slice, inspexp_data, images_path):
     """
     Loads inspiration and expiration frames for the specified cine-MRI slice
@@ -126,8 +126,9 @@ def get_inspexp_frames(slice, inspexp_data, images_path):
 
     # Load the expiration frame (visceral slide is computed for the expiration frame)
     slice_path = slice.build_path(images_path)
-    insp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))[insp_ind]
-    exp_frame = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))[exp_ind]
+    slice_image = sitk.ReadImage(str(slice_path))
+    insp_frame = sitk.GetArrayFromImage(slice_image)[insp_ind]
+    exp_frame = sitk.GetArrayFromImage(slice_image)[exp_ind]
     return insp_frame, exp_frame
 
 

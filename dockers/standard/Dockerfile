@@ -1,5 +1,7 @@
 FROM doduo1.umcn.nl/uokbaseimage/base:latest
 
+ENV CINE_MRI_ARCHIVE =/mnt/netcache/pelvis/projects/bram/archives/cinemri_mha
+
 COPY requirements.txt requirements.txt
 
 RUN pip3 install -r requirements.txt

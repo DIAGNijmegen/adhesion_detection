@@ -12,14 +12,13 @@ from skimage import io
 import SimpleITK as sitk
 from cinemri.config import ARCHIVE_PATH
 from cinemri.utils import get_patients, get_image_orientation
-import utils
+from utils import slices_full_ids_from_patients
 from sklearn.model_selection import KFold
 import matplotlib.pyplot as plt
-from config import SEPARATOR
+from config import *
 
 
-# TODO: see if there is loss in quality when converting to .png
-def save_frame(source_path, target_path, index=0):
+def save_frame(source_path, target_path, index=0, is_segm=False):
     """Saves a single frame of  .mha cine-MRI slice as .npy and .png
 
     Parameters
@@ -33,15 +32,30 @@ def save_frame(source_path, target_path, index=0):
 
     """
 
-    image = sitk.GetArrayFromImage(sitk.ReadImage(str(source_path)))[index]
+    frame = sitk.GetArrayFromImage(sitk.ReadImage(str(source_path)))[index]
+    if is_segm:
+        frame[frame > 0] = 1
 
-    image_target_path = Path(target_path) / Path(source_path).stem
+    frame_target_path = target_path / source_path.stem
     # Save .npy
-    np.save(image_target_path.with_suffix(".npy"), image)
+    np.save(str(frame_target_path) + ".npy", frame)
     # Save .png
-    image_png = image / image.max() * 255
-    image_png = image_png.astype(np.uint8)
-    io.imsave(str(image_target_path.with_suffix(".png")), image_png)
+    frame_png = frame / frame.max() * 255
+    frame_png = frame_png.astype(np.uint8)
+    io.imsave(str(frame_target_path) + ".png", frame_png)
+
+
+def find_segmented_frame_index(segmentation_path):
+
+    image = sitk.GetArrayFromImage(sitk.ReadImage(str(segmentation_path)))
+
+    for index, frame in enumerate(image):
+        # Find first frame with non zero values
+        if len(np.nonzero(frame)[0]) > 0:
+            return index
+
+    # If not found return None
+    return None
 
 
 def extract_segmentation_data(archive_path,
@@ -100,13 +114,17 @@ def extract_segmentation_data(archive_path,
             study_segmentations_path.mkdir(exist_ok=True)
 
             for slice in study.slices:
-                # read an image and extract the first frame
-                slice_path = slice.build_path(images_path)
-                save_frame(slice_path, study_images_path)
+                # read a segmentation mask, find the segmented frame index
+                mask_path = slice.build_path(segmentation_path)
+                segmented_frame_index = find_segmented_frame_index(mask_path)
+                if segmented_frame_index is not None:
+                    save_frame(mask_path, study_segmentations_path, segmented_frame_index, True)
 
-                # read a segmentation mask and extract the first frame
-                segmentation_path = slice.build_path(segmentation_path)
-                save_frame(segmentation_path, study_segmentations_path)
+                    # read an image and extract the segmented frame
+                    slice_path = slice.build_path(images_path)
+                    save_frame(slice_path, study_images_path, segmented_frame_index)
+
+
 
 
 def extract_segmentation(argv):
@@ -241,13 +259,13 @@ def subset_to_diag_nnunet(patients,
 
             image_id = slice.full_id if is_train else (slice.full_id + "_0000")
             image_stem = train_path_images / image_id
-            slice_image_path = slice.build_path(segmentation_path / images_folder, extension=extension)
+            slice_image_path = slice.build_path(segmentation_path / images_folder, extension=".npy")
             img_pseudo_3d = convert_2d_image_file_to_pseudo_3d(slice_image_path)
             sitk.WriteImage(img_pseudo_3d, str(image_stem) + extension)
 
             mask_stem = train_path_masks / slice.full_id
-            slice_mask_path = slice.build_path(segmentation_path / masks_folder, extension=extension)
-            mask_pseudo_3d = convert_2d_image_file_to_pseudo_3d(slice_mask_path, is_seg=False)
+            slice_mask_path = slice.build_path(segmentation_path / masks_folder, extension=".npy")
+            mask_pseudo_3d = convert_2d_image_file_to_pseudo_3d(slice_mask_path, is_seg=True)
             sitk.WriteImage(mask_pseudo_3d, str(mask_stem) + extension)
 
 
@@ -300,11 +318,9 @@ def create_folds(data_path,
 
 def convert_to_diag_nnunet(segmentation_path,
                            target_path,
-                           images_folder="images",
-                           masks_folder="masks",
                            train_folder="train",
-                           test_folder="test",
-                           train_split=0.8):
+                           images_folder="images",
+                           masks_folder="masks"):
     """Converts the segmentation data subset to a diag nnU-Net input format
 
     This format is expected by prepare method of a diag nnU-Net that
@@ -322,41 +338,20 @@ def convert_to_diag_nnunet(segmentation_path,
        A name of a folder that contains masks inside the archive
     train_folder : str, default="train"
        A name of a folder with training data
-    test_folder : str, default="test"
-       A name of a folder with test data
-    train_split : float, default=0.8
-       A share of the data to use for training
     """
 
     # Make directories to save converted images
     target_path.mkdir(exist_ok=True)
 
-    train_patients, test_patients = utils.train_test_split(segmentation_path,
-                                                           target_path,
-                                                           images_folder=masks_folder,
-                                                           train_proportion=train_split)
+    patients = get_patients(segmentation_path / images_folder, slice_extension=".npy")
 
     # Convert training data
-    subset_to_diag_nnunet(train_patients,
+    subset_to_diag_nnunet(patients,
                           segmentation_path,
                           target_path / train_folder,
                           images_folder,
                           masks_folder)
 
-    # Convert test data
-    subset_to_diag_nnunet(test_patients,
-                          segmentation_path,
-                          target_path / test_folder,
-                          images_folder,
-                          masks_folder,
-                          is_train=False)
-
-    # Split into folds
-    train_patient_ids = np.array([patient.id for patient in train_patients])
-    create_folds(target_path,
-                 train_patient_ids,
-                 train_folder=train_folder,
-                 images_folder=images_folder)
 
 
 def to_diag_nnunet(argv):
@@ -648,6 +643,18 @@ def test():
     subset_path = Path("segmentation_subset")
     diag_nnUNet_path = Path("../../data/cinemri_mha/diag_nnunet")
 
+    detection_path = Path(DETECTION_PATH)
+    # Folders
+    destination_path = Path(DETECTION_PATH) / SEGM_FRAMES_FOLDER
+    images_folder = IMAGES_FOLDER
+    segmentation_folder = SEGMENTATION_FOLDER
+    diag_nnunet_folder = Path(DETECTION_PATH) / DIAG_NNUNET_FOLDER
+
+    extract_segmentation_data(archive_path, destination_path, images_folder, segmentation_folder)
+    
+    convert_to_diag_nnunet(destination_path, diag_nnunet_folder)
+
+    """
     images_path = Path("../../data/cinemri_mha/detection_new/images")
     prediction_path = Path("../../data/cinemri_mha/detection_new/full_segmentation/merged_masks")
     target_path = Path("../../experiments/detection_vis_new")
@@ -655,6 +662,7 @@ def test():
 
     save_visualised_full_prediction(images_path, prediction_path, target_path)
     extract_detection_gifs(target_path, target_path1)
+    """
 
     #extract_frames(subset_path, diag_nnUNet_path)
 

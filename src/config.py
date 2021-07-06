@@ -6,9 +6,17 @@ SEPARATOR = "_"
 DETECTION_PATH = "/Users/emartynova/Documents/AIForHealth/Project/data/cinemri_mha_detection"
 
 # Folders
+# General
 IMAGES_FOLDER = "images"
 SEGMENTATION_FOLDER = "cavity_segmentations"
 METADATA_FOLDER = "metadata"
+# Data split
+TRAIN_FOLDER = "train"
+TEST_FOLDER = "test"
+CONTROL_FOLDER = "test"
+TRAIN_SEGM_FOLDER = "train_segm"
+SEGM_FRAMES_FOLDER = "segmentation_subset"
+DIAG_NNUNET_FOLDER = "diag_nnunet"
 
 # Metadata files
 BB_ANNOTATIONS_FILE = "annotations.json"
@@ -36,15 +44,19 @@ NEGATIVE_SLICES_FILE_NAME = "negative_slices_detection.txt"
 NEGATIVE_SPLIT_FILE_NAME = "negative_split.json"
 NEGATIVE_SLICES_TRAIN_NAME = "negative_slices_train.txt"
 NEGATIVE_SLICES_TEST_NAME = "negative_slices_test.txt"
+# IDs sampled automatically
 NEGATIVE_SLICES_TRAIN_SEGM_NAME = "negative_slices_train_segm.txt"
+# IDs manually filtered by position
+NEGATIVE_SLICES_TRAIN_SEGM_MANUAL_NAME = "negative_slices_train_segm_manual.txt"
 TEST_SLICES_NAME = "test_slices.txt"
 TEST_POSNEG_SPLIT_NAME = "test_pos_neg.json"
 NEGATIVE_SLICES_CONTROL_NAME = "negative_slices_control.txt"
 BB_ANNOTATED_SLICES_FILE_NAME = "bb_annotations_full_ids.txt"
-DETECTION_SLICES_FILE_NAME = "full_detection_ids.txt"
+DETECTION_SLICES_FILE_NAME = "detection_train_full_ids.txt"
 PATIENTS_SPLIT_FILE_NAME = "patients_split.json"
 
 # K-fold split files
 DETECTION_PATIENT_FOLD_FILE_NAME = "detection_patients_folds.json"
+DETECTION_SLICE_FOLD_FILE_NAME = "detection_slices_folds.json"
 SEGMENTATION_PATIENT_FOLD_FILE_NAME = "segmentation_patients_folds.json"
-
+SEGMENTATION_SLICE_FOLD_FILE_NAME = "segmentation_slices_folds.json"

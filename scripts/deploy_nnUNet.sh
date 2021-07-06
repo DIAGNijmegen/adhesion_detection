@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-VERSION=1.02
+VERSION=1.06
 TAG=doduo1.umcn.nl/evgenia/nnunet
 
 docker build \
