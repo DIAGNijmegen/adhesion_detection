@@ -22,7 +22,7 @@ from cinemri.utils import get_image_orientation
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from skimage import io
 from sklearn.model_selection import KFold
-from visceral_slide_pipeline import get_inspexp_frames
+from utils import get_inspexp_frames
 
 POSITIVE_FOLDER = "positive"
 
@@ -802,7 +802,7 @@ if __name__ == '__main__':
     inspexp_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     images_path = archive_path / IMAGES_FOLDER
 
-    masks_path = archive_path / "full_segmentation" / "merged_segmentation"
+    masks_path = archive_path / FULL_SEGMENTATION_FOLDER / "merged_segmentation"
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
     visualization_path = archive_path / "deformation_vis"
 

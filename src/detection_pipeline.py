@@ -8,9 +8,8 @@ from pathlib import Path
 from adhesions import AdhesionType, Adhesion, load_annotations
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, BB_ANNOTATIONS_EXPANDED_FILE, VISCERAL_SLIDE_FILE
 from cinemri.config import ARCHIVE_PATH
-from utils import average_bb_size, load_visceral_slides, binning_intervals
+from utils import average_bb_size, load_visceral_slides, binning_intervals, get_inspexp_frames
 from contour import get_connected_regions, get_adhesions_prior_coords, get_abdominal_contour_top
-from visceral_slide_pipeline import get_inspexp_frames
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
 
@@ -799,7 +798,7 @@ def test():
     annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     visceral_slide_path = Path(VISCERAL_SLIDE_PATH)
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
-    full_segmentation_path = archive_path / "full_segmentation" / "merged_segmentation"
+    full_segmentation_path = archive_path / FULL_SEGMENTATION_FOLDER / "merged_segmentation"
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)

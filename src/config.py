@@ -13,10 +13,11 @@ METADATA_FOLDER = "metadata"
 # Data split
 TRAIN_FOLDER = "train"
 TEST_FOLDER = "test"
-CONTROL_FOLDER = "test"
+CONTROL_FOLDER = "control"
 TRAIN_SEGM_FOLDER = "train_segm"
 SEGM_FRAMES_FOLDER = "segmentation_subset"
 DIAG_NNUNET_FOLDER = "diag_nnunet"
+FULL_SEGMENTATION_FOLDER = "full_segmentation"
 
 # Metadata files
 BB_ANNOTATIONS_FILE = "annotations.json"
@@ -27,6 +28,7 @@ REPORT_FILE_NAME = "metadata.json"
 PATIENTS_METADATA_FILE_NAME = "patients.json"
 PATIENTS_METADATA_FILE_OLD_NAME = "patients_old.json"
 PATIENTS_MAPPING_FILE_NAME = "patient_id_mapping.json"
+INSPEXP_FILE_NAME = "inspexp.json"
 
 # JSON keys
 TRAIN_PATIENTS_KEY = "train_patients"
@@ -37,7 +39,6 @@ ADHESIONS_KEY = "adhesion"
 VISCERAL_SLIDE_FILE = "visceral_slide.pkl"
 
 # Validation split files
-INSPEXP_FILE_NAME = "inspexp.json"
 TRAIN_TEST_SPLIT_FILE_NAME = "segm_train_test_split.json"
 NEGATIVE_PATIENTS_FILE_NAME = "negative_patients_detection.txt"
 NEGATIVE_SLICES_FILE_NAME = "negative_slices_detection.txt"

@@ -1,5 +1,5 @@
 import numpy as np
-from cinemri.contour import AbdominalContourPart #, Contour
+from cinemri.contour import AbdominalContourPart, Contour
 
 def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=-1):
     """

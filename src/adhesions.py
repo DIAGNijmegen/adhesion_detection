@@ -14,8 +14,8 @@ from cinemri.contour import AbdominalContourPart, get_contour, get_abdominal_con
 from cinemri.definitions import CineMRISlice
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
-from utils import interval_overlap, load_visceral_slides
-from visceral_slide_pipeline import load_visceral_slide, get_inspexp_frames
+from utils import interval_overlap, load_visceral_slides, get_inspexp_frames
+from visceral_slide_pipeline import load_visceral_slide
 from contour import get_abdominal_wall_coord, get_adhesions_prior_coords
 
 # Folder to save visualized annotations
@@ -995,7 +995,7 @@ def test():
     metadata_path = archive_path / METADATA_FOLDER
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
     output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_det_full_df")
-    full_segmentation_path = archive_path / "full_segmentation" / "merged_segmentation"
+    full_segmentation_path = archive_path / FULL_SEGMENTATION_FOLDER / "merged_segmentation"
     bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE
     images_path = archive_path / IMAGES_FOLDER
     detection_path = Path("../../data/cinemri_mha/detection_new") / IMAGES_FOLDER
