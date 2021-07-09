@@ -18,6 +18,12 @@ TRAIN_SEGM_FOLDER = "train_segm"
 SEGM_FRAMES_FOLDER = "segmentation_subset"
 DIAG_NNUNET_FOLDER = "diag_nnunet"
 FULL_SEGMENTATION_FOLDER = "full_segmentation"
+# Visceral slide input
+MASKS_FOLDER = "moving_masks"
+DF_REST_FOLDER = "df_rest"
+DF_CAVITY_FOLDER = "df_cavity"
+DF_COMPLETE_FOLDER = "df_complete"
+DF_CONTOUR_FOLDER = "df_contour"
 
 # Metadata files
 BB_ANNOTATIONS_FILE = "annotations.json"

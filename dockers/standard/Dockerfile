@@ -28,3 +28,7 @@ RUN chmod +x /home/user/segmentation.py && \
 # Configure utils functions
 RUN chmod +x /home/user/utils.py && \
     ln -s /home/user/utils.py /usr/local/bin/utils
+
+# Configure visceral slide input extraction functions
+RUN chmod +x /home/user/vs_input_extraction.py && \
+    ln -s /home/user/vs_input_extraction.py /usr/local/bin/vs_input

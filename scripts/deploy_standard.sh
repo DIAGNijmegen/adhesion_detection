@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-VERSION=1.01
+VERSION=1.04
 TAG=doduo1.umcn.nl/evgenia/standard
 
 docker build \

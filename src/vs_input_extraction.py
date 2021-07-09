@@ -1,5 +1,9 @@
+#!/usr/local/bin/python3
+
 import numpy as np
 import json
+import sys
+import argparse
 from pathlib import Path
 import SimpleITK as sitk
 from cinemri.registration import Registrator
@@ -8,16 +12,11 @@ from cinemri.contour import mask_to_contour
 from utils import get_insp_exp_frames_and_masks, patients_from_full_ids_file
 from config import *
 
-VS_DATA_FOLDER_NAME = "vs_input"
-CONTROL_GROUP_FOLDER_NAME = "control"
-TRAIN_GROUP_FOLDER_NAME = "train"
-INSP_EXP_FOLDER_NAME = "insp_exp"
-CUMULATIVE_FOLDER_NAME = "cumulative"
-MASKS_FOLDER_NAME = "moving_masks"
-DF_REST_FOLDER_NAME = "df_rest"
-DF_CAVITY_FOLDER_NAME = "df_cavity"
-DF_COMPLETE_FOLDER_NAME = "df_complete"
-DF_CONTOUR_FOLDER_NAME = "df_contour"
+VS_DATA_FOLDER = "vs_input"
+CONTROL_GROUP_FOLDER = "control"
+TRAIN_GROUP_FOLDER = "train"
+INSP_EXP_FOLDER = "insp_exp"
+CUMULATIVE_FOLDER = "cumulative"
 
 # Extraction of the data necessary to compute visceral slide with different normalization options
 # The necessary data is deformation fields and moving masks
@@ -61,21 +60,23 @@ DF_CONTOUR_FOLDER_NAME = "df_contour"
 
 
 def extract_insp_exp_dfs(patients, images_folder, segmentation_folder, insp_exp_path, output_folder):
+    """ Extracts deformation fields for visceral slide calculation with inspiration and expiration frames
+    """
 
     # Create target folders
-    insp_exp_folder = output_folder / INSP_EXP_FOLDER_NAME
+    insp_exp_folder = output_folder / INSP_EXP_FOLDER
     insp_exp_folder.mkdir()
 
-    masks_folder = insp_exp_folder / MASKS_FOLDER_NAME
+    masks_folder = insp_exp_folder / MASKS_FOLDER
     masks_folder.mkdir()
 
-    df_rest_folder = insp_exp_folder / DF_REST_FOLDER_NAME
+    df_rest_folder = insp_exp_folder / DF_REST_FOLDER
     df_rest_folder.mkdir()
 
-    df_cavity_folder = insp_exp_folder / DF_CAVITY_FOLDER_NAME
+    df_cavity_folder = insp_exp_folder / DF_CAVITY_FOLDER
     df_cavity_folder.mkdir()
 
-    df_complete_folder = insp_exp_folder / DF_COMPLETE_FOLDER_NAME
+    df_complete_folder = insp_exp_folder / DF_COMPLETE_FOLDER
     df_complete_folder.mkdir()
 
     with open(insp_exp_path) as inspexp_file:
@@ -125,35 +126,37 @@ def extract_insp_exp_dfs(patients, images_folder, segmentation_folder, insp_exp_
                 np.save(complete_df_path, complete_df)
 
                 # rest DF
-                _, rest_df = registrator.get_masked_deformation_field(exp_frame, insp_frame, 1 - exp_mask, 1 - insp_mask)
+                rest_df = registrator.get_masked_deformation_field(exp_frame, insp_frame, 1 - exp_mask, 1 - insp_mask)
                 rest_df_path = slice.build_path(df_rest_folder, extension=".npy")
                 np.save(rest_df_path, rest_df)
 
                 # cavity DF
-                _, cavity_df = registrator.get_masked_deformation_field(exp_frame, insp_frame, exp_mask, insp_mask)
+                cavity_df = registrator.get_masked_deformation_field(exp_frame, insp_frame, exp_mask, insp_mask)
                 cavity_df_path = slice.build_path(df_cavity_folder, extension=".npy")
                 np.save(cavity_df_path, cavity_df)
 
 
 def extract_cumulative_dfs(patients, images_folder, segmentation_folder, output_folder):
+    """ Extracts deformation fields for cumulative visceral slide calculation
+    """
 
     # Create target folders
-    cumulative_folder = output_folder / CUMULATIVE_FOLDER_NAME
+    cumulative_folder = output_folder / CUMULATIVE_FOLDER
     cumulative_folder.mkdir()
 
-    masks_folder = cumulative_folder / MASKS_FOLDER_NAME
+    masks_folder = cumulative_folder / MASKS_FOLDER
     masks_folder.mkdir()
 
-    df_rest_folder = cumulative_folder / DF_REST_FOLDER_NAME
+    df_rest_folder = cumulative_folder / DF_REST_FOLDER
     df_rest_folder.mkdir()
 
-    df_cavity_folder = cumulative_folder / DF_CAVITY_FOLDER_NAME
+    df_cavity_folder = cumulative_folder / DF_CAVITY_FOLDER
     df_cavity_folder.mkdir()
 
-    df_complete_folder = cumulative_folder / DF_COMPLETE_FOLDER_NAME
+    df_complete_folder = cumulative_folder / DF_COMPLETE_FOLDER
     df_complete_folder.mkdir()
 
-    df_contour_folder = cumulative_folder / DF_CONTOUR_FOLDER_NAME
+    df_contour_folder = cumulative_folder / DF_CONTOUR_FOLDER
     df_contour_folder.mkdir()
 
     registrator = Registrator()
@@ -231,13 +234,13 @@ def extract_cumulative_dfs(patients, images_folder, segmentation_folder, output_
                     np.save(complete_df_path, complete_df)
 
                     # rest DF
-                    _, rest_df = registrator.get_masked_deformation_field(fixed, moving, 1 - fixed_mask,
+                    rest_df = registrator.get_masked_deformation_field(fixed, moving, 1 - fixed_mask,
                                                               1 - moving_mask)
                     rest_df_path = slice.build_path(df_rest_folder, extension="") / "{}".format(i)
                     np.save(rest_df_path, rest_df)
 
                     # cavity DF
-                    _, cavity_df = registrator.get_masked_deformation_field(fixed, moving, fixed_mask, moving_mask)
+                    cavity_df = registrator.get_masked_deformation_field(fixed, moving, fixed_mask, moving_mask)
                     cavity_df_path = slice.build_path(df_cavity_folder, extension="") / "{}".format(i)
                     np.save(cavity_df_path, cavity_df)
 
@@ -251,14 +254,55 @@ def extract_cumulative_dfs(patients, images_folder, segmentation_folder, output_
                     np.save(contour_df_path, contour_df)
 
 
-def extract_vs_input(images_folder, full_ids_file, segmentation_folder, insp_exp_path, output_folder):
+def extract_vs_input(full_ids_file, images_folder, segmentation_folder, insp_exp_path, output_folder):
+    """
+    Extracts the data (moving masks and deformation fields) necessary for visceral slide calculation
+    Parameters
+    ----------
+    full_ids_file: Path
+       A path to a file with full ids of slices which to extract the data for
+    images_folder: Path
+       A path to an image folder
+    segmentation_folder: Path
+       A path to a folder with full segmentations
+    insp_exp_path: Path
+       A path to a file with expiration/inspiration data
+    output_folder: Path
+       A path to a folder where to save the results
+    """
 
     output_folder.mkdir(exist_ok=True, parents=True)
-    
     patients = patients_from_full_ids_file(full_ids_file)
 
     extract_insp_exp_dfs(patients, images_folder, segmentation_folder, insp_exp_path, output_folder)
     extract_cumulative_dfs(patients, images_folder, segmentation_folder, output_folder)
+
+
+def extract(argv):
+    """A command line wrapper of extract_vs_input
+
+    Parameters
+    ----------
+    argv: list of str
+        Command line arguments
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument("ids_file", type=str, help="a path to a file with full ids of slices which to extract the data for")
+    parser.add_argument('--images', type=str, help="a path to an image folder")
+    parser.add_argument("--masks", type=str, required=True,
+                        help="a path to a folder with full segmentations")
+    parser.add_argument("--insp_exp", type=str, help="a path to a file with expiration/inspiration data")
+    parser.add_argument('--output', type=str, required=False, help="a path to an output folder")
+
+    args = parser.parse_args(argv)
+    full_ids_file_path = Path(args.ids_file)
+    images_path = Path(args.images)
+    masks_path = Path(args.masks)
+    insp_exp_file_path = Path(args.insp_exp)
+    output_path = Path(args.output)
+
+    extract_vs_input(full_ids_file_path, images_path, masks_path, insp_exp_file_path, output_path)
 
 
 def extract_vs_input_train_control(train_images_folder,
@@ -269,17 +313,17 @@ def extract_vs_input_train_control(train_images_folder,
                                    insp_exp_path,
                                    output_folder):
 
-    vs_input_folder = output_folder / VS_DATA_FOLDER_NAME
+    vs_input_folder = output_folder / VS_DATA_FOLDER
     vs_input_folder.mkdir(exist_ok=True)
 
-    train_group_folder = vs_input_folder / TRAIN_GROUP_FOLDER_NAME
-    extract_vs_input(train_images_folder, train_full_ids_file, segmentation_folder, insp_exp_path, train_group_folder)
+    train_group_folder = vs_input_folder / TRAIN_GROUP_FOLDER
+    extract_vs_input(train_full_ids_file, train_images_folder , segmentation_folder, insp_exp_path, train_group_folder)
 
-    #control_group_folder = vs_input_folder / CONTROL_GROUP_FOLDER_NAME
-    #extract_vs_input(control_images_folder, control_full_ids_file, segmentation_folder, insp_exp_path, control_group_folder)
+    control_group_folder = vs_input_folder / CONTROL_GROUP_FOLDER
+    extract_vs_input(control_full_ids_file, control_images_folder, segmentation_folder, insp_exp_path, control_group_folder)
 
 
-if __name__ == '__main__':
+def test():
 
     detection_path = Path(DETECTION_PATH)
     train_images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
@@ -297,3 +341,17 @@ if __name__ == '__main__':
                                    full_segm_path,
                                    insp_exp_path,
                                    output_folder)
+
+
+if __name__ == '__main__':
+
+    actions = {
+        "extract": extract,
+    }
+
+    try:
+        action = actions[sys.argv[1]]
+    except (IndexError, KeyError):
+        print('Usage: data_conversion ' + '/'.join(actions.keys()) + ' ...')
+    else:
+        action(sys.argv[2:])

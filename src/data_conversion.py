@@ -571,25 +571,29 @@ def save_visualised_full_prediction(images_path, predictions_path, target_path, 
     # get frames ids
     patients = get_patients(images_path)
     for patient in patients:
-        patient.build_path(target_path).mkdir()
+        patient.build_path(target_path).mkdir(exist_ok=True)
 
         for study in patient.studies:
-            study.build_path(target_path).mkdir()
+            study.build_path(target_path).mkdir(exist_ok=True)
 
             for slice in study.slices:
                 # extract cine-MRI slice
                 slice_path = slice.build_path(images_path)
                 slice_img = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
                 # extract predicted mask
+
                 mask_path = slice.build_path(predictions_path)
+                if not mask_path.exists():
+                    continue
+
                 mask = sitk.GetArrayFromImage(sitk.ReadImage(str(mask_path)))
 
                 vis_path = slice.build_path(target_path, extension="")
-                vis_path.mkdir()
+                vis_path.mkdir(exist_ok=True)
 
                 # Make a separate folder for .png files
                 png_path = vis_path / "pngs"
-                png_path.mkdir()
+                png_path.mkdir(exist_ok=True)
 
                 for ind, frame in enumerate(slice_img):
                     frame_mask = mask[ind]
@@ -650,19 +654,16 @@ def test():
     segmentation_folder = SEGMENTATION_FOLDER
     diag_nnunet_folder = Path(DETECTION_PATH) / DIAG_NNUNET_FOLDER
 
-    extract_segmentation_data(archive_path, destination_path, images_folder, segmentation_folder)
-    
-    convert_to_diag_nnunet(destination_path, diag_nnunet_folder)
+    # extract_segmentation_data(archive_path, destination_path, images_folder, segmentation_folder)
+    # convert_to_diag_nnunet(destination_path, diag_nnunet_folder)
 
-    """
-    images_path = Path("../../data/cinemri_mha/detection_new/images")
-    prediction_path = Path("../../data/cinemri_mha/detection_new/full_segmentation/merged_masks")
-    target_path = Path("../../experiments/detection_vis_new")
-    target_path1 = Path("../../experiments/detection_gifs_new")
+    images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
+    prediction_path = detection_path / FULL_SEGMENTATION_FOLDER
+    target_path = Path("../../experiments/final_detection_segm_vis")
+    target_path1 = Path("../../experiments/final_detection_segm_gifs")
 
     save_visualised_full_prediction(images_path, prediction_path, target_path)
     extract_detection_gifs(target_path, target_path1)
-    """
 
     #extract_frames(subset_path, diag_nnUNet_path)
 
