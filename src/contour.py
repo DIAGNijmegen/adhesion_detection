@@ -33,12 +33,29 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
             distance = abs(coord_curr[axis] - coord_prev[axis])
 
         if distance > connectivity_threshold:
-            regions.append(current_region)
+            regions.append(np.array(current_region))
             current_region = []
         coord_prev = coord_curr
         current_region.append(coord_prev)
 
-    regions.append(current_region)
+    # Check if first and last region should be merged
+    if len(current_region) > 0:
+        first_of_first = regions[0][0]
+        last_of_last = current_region[-1]
+
+        if axis == -1:
+            distance = np.sqrt((first_of_first[0] - last_of_last[0]) ** 2 + (first_of_first[1] - last_of_last[1]) ** 2)
+        else:
+            distance = abs(first_of_first[axis] - last_of_last[axis])
+
+        if distance > connectivity_threshold:
+            # First and last regions are separated
+            regions.append(np.array(current_region))
+        else:
+            # First and last regions are connected
+            full_region = np.concatenate((current_region, regions[0]))
+            regions[0] = full_region
+
     return regions
 
 
@@ -182,46 +199,31 @@ def get_abdominal_wall_coord(x, y, type=AbdominalContourPart.anterior_wall, conn
     return abdominal_wall_coords[:, 0], abdominal_wall_coords[:, 1]
 
 
-def get_adhesions_prior_coords(x, y, connectivity_threshold=5):
-    coords = np.column_stack((x, y))
+def get_adhesions_prior_coords(x, y):
+    prior_coords = np.column_stack((x, y))
 
-    # Keep only the top half of the contour
-    middle_y = (np.max(y) - np.min(y)) / 2
-    coords_top = np.array([coord for coord in coords if coord[1] <= middle_y])
+    contour = Contour(x, y)
 
-    # Get the top part of the anterior wall
-    anterior_wall_x, anterior_wall_y = get_abdominal_wall_coord(coords_top[:, 0],
-                                                                coords_top[:, 1],
-                                                                connectivity_threshold=connectivity_threshold)
-    anterior_wall_coords = np.column_stack((anterior_wall_x, anterior_wall_y)).tolist()
+    # Remove top coordinates
+    x_top, y_top = contour.get_abdominal_contour_part(AbdominalContourPart.top)
+    top_coords = np.column_stack((x_top, y_top)).tolist()
+    prior_coords = [coord for coord in prior_coords.tolist() if coord not in top_coords]
 
-    # Also discard the top quarter of the anterior wall
-    middle_anterior_y = (np.max(anterior_wall_y) - np.min(anterior_wall_y)) / 2
-    anterior_wall_bottom = [coord for coord in anterior_wall_coords if coord[1] > middle_anterior_y]
+    # We remove top 1/3 of anterior wall coordinates
+    x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
+    anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall))
+    y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 3)]
+    anterior_wall_coords = [coord for coord in anterior_wall_coords.tolist() if coord[1] < y_anterior_wall_cutoff]
+    prior_coords = [coord for coord in prior_coords if coord not in anterior_wall_coords]
 
-    # Get the top right part of the contour
-    rest_coords = [coord for coord in coords_top.tolist() if coord not in anterior_wall_bottom]
-    # Filter out the top right part of the contour
-    adhesions_prior_coords = [coord for coord in coords.tolist() if coord not in rest_coords]
+    # We remove top 2/3 of anterior wall coordinates
+    x_posterior_wall, y_posterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.posterior_wall)
+    posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
+    y_posterior_wall_cutoff = sorted(y_posterior_wall)[int(2 * len(y_posterior_wall) / 3)]
+    posterior_wall_coords = [coord for coord in posterior_wall_coords.tolist() if coord[1] < y_posterior_wall_cutoff]
+    prior_coords = np.array([coord for coord in prior_coords if coord not in posterior_wall_coords])
 
-    # Get the posterior wall
-    posterior_wall_x, posterior_wall_y = get_abdominal_wall_coord(coords[:, 0],
-                                                                  coords[:, 1],
-                                                                  type=AbdominalContourPart.posterior_wall,
-                                                                  connectivity_threshold=connectivity_threshold)
-    posterior_wall_coords = np.column_stack((posterior_wall_x, posterior_wall_y)).tolist()
-    # Filter out the posterior wall
-    adhesions_prior_coords = [coord for coord in adhesions_prior_coords if coord not in posterior_wall_coords]
-
-    # Get the top coordinates
-    top_x, top_y = get_abdominal_contour_top(coords[:, 0],
-                                             coords[:, 1],
-                                             connectivity_threshold=connectivity_threshold)
-    top_coords = np.column_stack((top_x, top_y)).tolist()
-    # Filter out the top part of the contour
-    adhesions_prior_coords = np.array([coord for coord in adhesions_prior_coords if coord not in top_coords])
-
-    return adhesions_prior_coords[:, 0], adhesions_prior_coords[:, 1]
+    return prior_coords[:, 0], prior_coords[:, 1]
 
 
 from pathlib import Path

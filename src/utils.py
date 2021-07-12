@@ -19,7 +19,6 @@ import shutil
 
 
 
-
 # TODO: moveis_slice_vs_suitable
 class VisceralSlide:
     """An object representing visceral slide for a Cine-MRI slice
@@ -317,7 +316,7 @@ def write_slices_to_file(slices, file_path):
             file.write(full_id + "\n")
 
 
-def average_bb_size(annotations):
+def average_bb_size(annotations, is_median=False):
     """
     Computes an average adhesion boundig box size
 
@@ -340,7 +339,8 @@ def average_bb_size(annotations):
             widths.append(adhesion.width)
             heights.append(adhesion.height)
 
-    return np.mean(widths), np.mean(heights)
+    average_size = (np.median(widths), np.median(heights)) if is_median else (np.mean(widths), np.mean(heights))
+    return average_size
 
 
 def adhesions_stat(annotations):
@@ -625,12 +625,15 @@ def test():
     report_path = metadata_path / REPORT_FILE_NAME
     patients_metadata = metadata_path / PATIENTS_METADATA_FILE_NAME
     mapping_path = archive_path / METADATA_FOLDER / PATIENTS_MAPPING_FILE_NAME
+    
+    """
     patients = patients_from_metadata(patients_metadata)
     max_stud_num = 0
     for patient in patients:
         max_stud_num = max(max_stud_num, len(patient.studies))
         
     print("Maximum number of studies {}".format(max_stud_num))
+    """
 
     """
     patients = patients_from_metadata("patients.json")
@@ -659,8 +662,9 @@ def test():
 
 
 if __name__ == '__main__':
-    #test()
-
+    test()
+    
+    """
     np.random.seed(99)
     random.seed(99)
 
@@ -675,3 +679,4 @@ if __name__ == '__main__':
         print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
+    """

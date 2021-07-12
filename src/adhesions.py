@@ -7,8 +7,7 @@ import cv2
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, OLD_REPORT_FILE_NAME, \
-    BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
+from config import *
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import AbdominalContourPart, get_contour, get_abdominal_contour_top
 from cinemri.definitions import CineMRISlice
@@ -246,6 +245,7 @@ class AdhesionAnnotation:
 
 # TODO: maybe change to also return slices for which adhesions were not found
 def load_annotations(annotations_path,
+                     as_dict=False,
                      adhesion_types=[AdhesionType.anteriorWall,
                                      AdhesionType.abdominalCavityContour,
                                      AdhesionType.inside]):
@@ -270,7 +270,7 @@ def load_annotations(annotations_path,
     with open(annotations_path) as annotations_file:
         annotations_dict = json.load(annotations_file)
 
-    annotations = []
+    annotations = {} if as_dict else []
     for patient_id, studies_dict in annotations_dict.items():
         for study_id, slices_dict in studies_dict.items():
             for slice_id, bounding_box_annotations in slices_dict.items():
@@ -289,7 +289,10 @@ def load_annotations(annotations_path,
 
                 if len(bounding_boxes) > 0:
                     annotation = AdhesionAnnotation(patient_id, study_id, slice_id, bounding_boxes, types)
-                    annotations.append(annotation)
+                    if as_dict:
+                        annotations[annotation.full_id] = annotation
+                    else:
+                        annotations.append(annotation)
 
     return annotations
 
@@ -991,21 +994,26 @@ def verify_abdominal_wall(x, y, frame, slice_id, target_path, type=AbdominalCont
 
 
 def test():
-    archive_path = ARCHIVE_PATH
+    archive_path = Path(ARCHIVE_PATH)
     metadata_path = archive_path / METADATA_FOLDER
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
-    output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_det_full_df")
     full_segmentation_path = archive_path / FULL_SEGMENTATION_FOLDER / "merged_segmentation"
     bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE
     images_path = archive_path / IMAGES_FOLDER
-    detection_path = Path("../../data/cinemri_mha/detection_new") / IMAGES_FOLDER
+
+
+    # detection_path = Path("../../data/cinemri_mha/detection_new") / IMAGES_FOLDER
     ie_file = metadata_path / INSPEXP_FILE_NAME
-    bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
-
     cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
-    vis_annotation_on_cumulative_vs(cumulative_vs_path, detection_path, bb_expanded_annotation_path, output_path, save=True)
+    # output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_det_full_df")
+    detection_path = Path(DETECTION_PATH) / IMAGES_FOLDER / TRAIN_FOLDER
+    cumulative_vs_path = Path(DETECTION_PATH) / "output_folder_cum"
+    output_path = Path(DETECTION_PATH) / "visualization/cum_vs_warp_contour_norm_avg_rest"
+    bb_expanded_annotation_path = Path(DETECTION_PATH) / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
 
-    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path, Path("posterior"), AbdominalContourPart.posterior_wall)
+    #vis_annotation_on_cumulative_vs(cumulative_vs_path, detection_path, bb_expanded_annotation_path, output_path, save=True)
+
+    test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, cumulative_vs_path, Path("posterior"), AbdominalContourPart.posterior_wall)
     #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
      #                          Path("anterior"), AbdominalContourPart.anterior_wall)
     #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
