@@ -112,8 +112,8 @@ class Adhesion:
         x, y : a point coordinates by x and y axes
         tolerance: extra margin around the bounding box to register a hit
         """
-        x_min, x_max = self.origin_x - tolerance, self.origin_x + self.width + tolerance
-        y_min, y_max = self.origin_y - tolerance, self.origin_y + self.height + tolerance
+        x_min, x_max = self.origin_x - tolerance, self.max_x + tolerance
+        y_min, y_max = self.origin_y - tolerance, self.max_y + tolerance
 
         return x_min <= x <= x_max and y_min <= y <= y_max
 

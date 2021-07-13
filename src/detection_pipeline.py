@@ -84,19 +84,24 @@ def bb_from_region(region, mean_size):
 
 
 def bb_adjusted_region(region, bb):
+    x_inside_bb = (bb.origin_x <= region[:, 0]) & (region[:, 0] <= bb.max_x)
+    y_inside_bb = (bb.origin_y <= region[:, 1]) & (region[:, 1] <= bb.max_y)
+    inside_bb = x_inside_bb & y_inside_bb
+    adjusted_region = region[inside_bb]
 
-    diff_start = np.sqrt((region[:, 0] - bb.origin_x) ** 2 + (region[:, 1] - bb.origin_y) ** 2)
-    start_index = np.argmin(diff_start)
+    adjusted_region_start = adjusted_region[0, :2]
+    adjusted_region_end = adjusted_region[-1, :2]
 
-    diff_end = np.sqrt((region[:, 0] - bb.max_x) ** 2 + (region[:, 1] - bb.max_y) ** 2)
-    end_index = np.argmin(diff_end)
+    coords = region[:, :2]
+    start_index = np.where((coords == adjusted_region_start).all(axis=1))[0][0]
+    end_index = np.where((coords == adjusted_region_end).all(axis=1))[0][0]
 
     if start_index > end_index:
         temp = start_index
         start_index = end_index
         end_index = temp
 
-    return region[start_index:end_index], start_index, end_index
+    return adjusted_region, start_index, end_index
 
 
 def adhesions_from_region_fixed_size(regions, bb_size, vs_max):
@@ -993,7 +998,7 @@ def test_vs_calc_loading():
     visceral_slides = load_visceral_slides(cum_vs_path)
     visceral_slides.sort(key=lambda vs: vs.full_id, reverse=False)
 
-    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_half_ant_wall"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_new"
 
     predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True)
     predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True)
