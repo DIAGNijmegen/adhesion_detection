@@ -83,6 +83,22 @@ def bb_from_region(region, mean_size):
     return Adhesion([origin_x, origin_y, width, height])
 
 
+def bb_adjusted_region(region, bb):
+
+    diff_start = np.sqrt((region[:, 0] - bb.origin_x) ** 2 + (region[:, 1] - bb.origin_y) ** 2)
+    start_index = np.argmin(diff_start)
+
+    diff_end = np.sqrt((region[:, 0] - bb.max_x) ** 2 + (region[:, 1] - bb.max_y) ** 2)
+    end_index = np.argmin(diff_end)
+
+    if start_index > end_index:
+        temp = start_index
+        start_index = end_index
+        end_index = temp
+
+    return region[start_index:end_index], start_index, end_index
+
+
 def bb_with_threshold(x, y, slide_value, bb_size, vs_range):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
@@ -140,19 +156,22 @@ def bb_with_threshold(x, y, slide_value, bb_size, vs_range):
         # Generate bounding box from region
         bb_region = region_of_prediction[region_start:region_end]
         bounding_box = bb_from_region(bb_region, bb_size)
+
         # Later invert - subtract confidences from the max VS value
         confidence = vs_range[1] - min_slide_value
         bounding_boxes.append([bounding_box, confidence])
+
+        adjusted_region, start_index, end_index = bb_adjusted_region(region_of_prediction, bounding_box)
 
         # Cut out bounding box region
         # Remove the region of prediction from the array
         del suitable_regions[min_region_ind]
         # Add regions around the cutoff if they are large enough
-        region_before_bb = region_of_prediction[:region_start]
+        region_before_bb = region_of_prediction[:start_index]
         if len(region_before_bb) > region_len:
             suitable_regions.append(region_before_bb)
 
-        region_after_bb = region_of_prediction[region_end:]
+        region_after_bb = region_of_prediction[end_index:]
         if len(region_after_bb) > region_len:
             suitable_regions.append(region_after_bb)
 
@@ -204,6 +223,7 @@ def visualize_gt_vs_prediction(prediction, annotation, x, y, slide_normalized, i
     plt.imshow(insp_frame, cmap="gray")
     # Plot viseral slide
     plt.scatter(x, y, s=5, c=slide_normalized, cmap="jet")
+    plt.colorbar()
     # Plot regions of slow slide
     # plt.scatter(low_slide_x, low_slide_y, s=10, color="k", marker="x")
     ax = plt.gca()
@@ -890,7 +910,7 @@ def test_vs_calc_loading():
 
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
     visceral_slides = load_visceral_slides(cum_vs_path)
-    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_post_wall_removed"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_new"
 
     predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True)
     predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True)
