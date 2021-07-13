@@ -99,7 +99,133 @@ def bb_adjusted_region(region, bb):
     return region[start_index:end_index], start_index, end_index
 
 
-def bb_with_threshold(x, y, slide_value, bb_size, vs_range):
+def adhesions_from_region_fixed_size(regions, bb_size, vs_max):
+
+    # Predict bounding boxes
+    region_len = max(bb_size[0], bb_size[1])
+    vicinity = round((region_len - 1) / 2)
+    bounding_boxes = []
+    # While there are regions that are larger than region_len
+    while len(regions) > 0:
+        min_region_ind = None
+        min_slide_value = np.inf
+        # Find minimum across region
+        for (region_ind, region) in enumerate(regions):
+            region_values = region[:, 2]
+            region_min = np.min(region_values)
+            if region_min < min_slide_value:
+                min_region_ind = region_ind
+                min_slide_value = region_min
+
+        region_of_prediction = regions[min_region_ind]
+        vs_values = region_of_prediction[:, 2]
+        vs_value_min_ind = np.argmin(vs_values)
+        region_start = max(0, vs_value_min_ind - vicinity)
+        region_end = min(len(vs_values), vs_value_min_ind + vicinity)
+
+        # Generate bounding box from region
+        bb_region = region_of_prediction[region_start:region_end]
+        bounding_box = bb_from_region(bb_region, bb_size)
+
+        adjusted_region, start_index, end_index = bb_adjusted_region(region_of_prediction, bounding_box)
+
+        # Later invert - subtract confidences from the max VS value
+        # Take mean region vs as confidence
+        confidence = vs_max - np.mean(adjusted_region[:, 2])
+        bounding_boxes.append([bounding_box, confidence])
+
+        # Cut out bounding box region
+        # Remove the region of prediction from the array
+        del regions[min_region_ind]
+        # Add regions around the cutoff if they are large enough
+        region_before_bb = region_of_prediction[:start_index]
+        if len(region_before_bb) > region_len:
+            regions.append(region_before_bb)
+
+        region_after_bb = region_of_prediction[end_index:]
+        if len(region_after_bb) > region_len:
+            regions.append(region_after_bb)
+
+    return bounding_boxes
+
+
+def adhesions_with_region_growing(regions, bb_size, vs_max):
+    mim_region_len = 5
+    region_len = max(bb_size[0], bb_size[1])
+    vicinity = round((region_len - 1) / 2)
+    vicinity_max = 1.5 * vicinity
+    region_growing_ind = 2
+
+    bounding_boxes = []
+    # While there are regions that are larger than  mim_region_len
+    while len(regions) > 0:
+        min_region_ind = None
+        min_slide_value = np.inf
+        # Find minimum across region
+        for (region_ind, region) in enumerate(regions):
+            region_values = region[:, 2]
+            region_min = np.min(region_values)
+            if region_min < min_slide_value:
+                min_region_ind = region_ind
+                min_slide_value = region_min
+
+        region_of_prediction = regions[min_region_ind]
+        vs_values = region_of_prediction[:, 2]
+        vs_value_min_ind = np.argmin(vs_values)
+        max_region_slide_value = min_slide_value * region_growing_ind
+
+        # Looking for the regions start
+        start_ind = vs_value_min_ind
+        start_ind_found = False
+        while not start_ind_found:
+            new_start_ind = start_ind - 1
+            if new_start_ind < 0:
+                break
+
+            start_value = vs_values[start_ind]
+            start_ind_found = start_value > max_region_slide_value or (vs_value_min_ind - new_start_ind) > vicinity_max
+            if not start_ind_found:
+                start_ind = new_start_ind
+
+        # Looking for the regions end
+        end_ind = vs_value_min_ind
+        end_ind_found = False
+        while not end_ind_found:
+            new_end_ind = end_ind + 1
+            if new_end_ind >= len(region_of_prediction):
+                break
+
+            end_value = vs_values[end_ind]
+            end_ind_found = end_value > max_region_slide_value or (new_end_ind - vs_value_min_ind) > vicinity_max
+            if not end_ind_found:
+                    end_ind = new_end_ind
+
+        # Generate bounding box from region
+        bb_region = region_of_prediction[start_ind:end_ind]
+        bounding_box = bb_from_region(bb_region, bb_size)
+
+        if end_ind - start_ind >= mim_region_len:
+            adjusted_region, start_ind, end_ind = bb_adjusted_region(region_of_prediction, bounding_box)
+            # Take mean region vs as confidence
+            confidence = vs_max - np.mean(adjusted_region[:, 2])
+            bounding_boxes.append([bounding_box, confidence])
+
+        # Cut out bounding box region
+        # Remove the region of prediction from the array
+        del regions[min_region_ind]
+        # Add regions around the cutoff if they are large enough
+        region_before_bb = region_of_prediction[:start_ind]
+        if len(region_before_bb) > region_len:
+            regions.append(region_before_bb)
+
+        region_after_bb = region_of_prediction[end_ind:]
+        if len(region_after_bb) > region_len:
+            regions.append(region_after_bb)
+
+    return bounding_boxes
+
+
+def bb_with_threshold(x, y, slide_value, bb_size, vs_range, pred_func):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
     specified threshold level
@@ -131,50 +257,7 @@ def bb_with_threshold(x, y, slide_value, bb_size, vs_range):
     contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
     suitable_regions = get_connected_regions(contour_subset)
 
-    # Predict bounding boxes
-    region_len = max(bb_size[0], bb_size[1])
-    vicinity = round((region_len - 1) / 2)
-    bounding_boxes = []
-    # While there are regions that are larger than region_len
-    while len(suitable_regions) > 0:
-        min_region_ind = None
-        min_slide_value = np.inf
-        # Find minimum across region
-        for (region_ind, region) in enumerate(suitable_regions):
-            region_values = region[:, 2]
-            region_min = np.min(region_values)
-            if region_min < min_slide_value:
-                min_region_ind = region_ind
-                min_slide_value = region_min
-
-        region_of_prediction = suitable_regions[min_region_ind]
-        vs_values = region_of_prediction[:, 2]
-        vs_value_min_ind = np.argmin(vs_values)
-        region_start = max(0, vs_value_min_ind - vicinity)
-        region_end = min(len(vs_values), vs_value_min_ind + vicinity)
-
-        # Generate bounding box from region
-        bb_region = region_of_prediction[region_start:region_end]
-        bounding_box = bb_from_region(bb_region, bb_size)
-
-        # Later invert - subtract confidences from the max VS value
-        confidence = vs_range[1] - min_slide_value
-        bounding_boxes.append([bounding_box, confidence])
-
-        adjusted_region, start_index, end_index = bb_adjusted_region(region_of_prediction, bounding_box)
-
-        # Cut out bounding box region
-        # Remove the region of prediction from the array
-        del suitable_regions[min_region_ind]
-        # Add regions around the cutoff if they are large enough
-        region_before_bb = region_of_prediction[:start_index]
-        if len(region_before_bb) > region_len:
-            suitable_regions.append(region_before_bb)
-
-        region_after_bb = region_of_prediction[end_index:]
-        if len(region_after_bb) > region_len:
-            suitable_regions.append(region_after_bb)
-
+    bounding_boxes = pred_func(suitable_regions, bb_size, vs_range[1])
     return bounding_boxes
 
 
@@ -260,7 +343,7 @@ def predict_and_visualize(visceral_slides, annotations_dict, images_path, output
     vs_min, vs_max = get_vs_range(visceral_slides)
 
     for vs in visceral_slides:
-        prediction = bb_with_threshold(vs.x, vs.y, vs.values, bb_size, (vs_min, vs_max))
+        prediction = bb_with_threshold(vs.x, vs.y, vs.values, bb_size, (vs_min, vs_max), adhesions_with_region_growing)
 
         if inspexp_data is None:
             # Assume it is cumulative VS and take the one before the last one frame
@@ -306,7 +389,7 @@ def predict(visceral_slides, bb_size, vs_range):
     predictions = {}
 
     for vs in visceral_slides:
-        prediction = bb_with_threshold(vs.x, vs.y, vs.values, bb_size, vs_range)
+        prediction = bb_with_threshold(vs.x, vs.y, vs.values, bb_size, vs_range, adhesions_with_region_growing)
         predictions[vs.full_id] = prediction
 
     return predictions
@@ -910,7 +993,7 @@ def test_vs_calc_loading():
 
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
     visceral_slides = load_visceral_slides(cum_vs_path)
-    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_new"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_region_growing"
 
     predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True)
     predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True)
