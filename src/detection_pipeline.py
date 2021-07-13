@@ -152,9 +152,9 @@ def adhesions_from_region_fixed_size(regions, bb_size, vs_max):
 def adhesions_with_region_growing(regions, bb_size, vs_max):
     mim_region_len = 5
     region_len = max(bb_size[0], bb_size[1])
-    vicinity = round((region_len - 1) / 2)
-    vicinity_max = 1.5 * vicinity
-    region_growing_ind = 2
+    vicinity = region_len - 1
+    vicinity_max = 2.5 * vicinity
+    region_growing_ind = 2.5
 
     bounding_boxes = []
     # While there are regions that are larger than  mim_region_len
@@ -174,40 +174,35 @@ def adhesions_with_region_growing(regions, bb_size, vs_max):
         vs_value_min_ind = np.argmin(vs_values)
         max_region_slide_value = min_slide_value * region_growing_ind
 
-        # Looking for the regions start
-        start_ind = vs_value_min_ind
-        start_ind_found = False
-        while not start_ind_found:
-            new_start_ind = start_ind - 1
-            if new_start_ind < 0:
-                break
-
+        # Looking for the regions boundaries
+        start_ind = end_ind = vs_value_min_ind
+        start_ind_found = end_ind_found = False
+        while not (start_ind_found and end_ind_found):
+            new_start_ind = max(0, start_ind - 1)
             start_value = vs_values[start_ind]
-            start_ind_found = start_value > max_region_slide_value or (vs_value_min_ind - new_start_ind) > vicinity_max
+
+            start_ind_found = start_value > max_region_slide_value or (end_ind - new_start_ind) > vicinity_max or start_ind == 0
             if not start_ind_found:
                 start_ind = new_start_ind
 
-        # Looking for the regions end
-        end_ind = vs_value_min_ind
-        end_ind_found = False
-        while not end_ind_found:
-            new_end_ind = end_ind + 1
-            if new_end_ind >= len(region_of_prediction):
-                break
-
+            new_end_ind = min(len(region_of_prediction) - 1, end_ind + 1)
             end_value = vs_values[end_ind]
-            end_ind_found = end_value > max_region_slide_value or (new_end_ind - vs_value_min_ind) > vicinity_max
+            end_ind_found = end_value > max_region_slide_value or (new_end_ind - start_ind) > vicinity_max or end_ind == (len(region_of_prediction) - 1)
             if not end_ind_found:
-                    end_ind = new_end_ind
+                end_ind = new_end_ind
 
-        # Generate bounding box from region
-        bb_region = region_of_prediction[start_ind:end_ind]
-        bounding_box = bb_from_region(bb_region, bb_size)
+            if new_start_ind == 0 and new_end_ind == (len(region_of_prediction) - 1):
+                start_ind_found = end_ind_found = True
 
+        # Only predict the bouding box if the region is large enough
         if end_ind - start_ind >= mim_region_len:
+            # Generate bounding box from region
+            bb_region = region_of_prediction[start_ind:end_ind]
+            bounding_box = bb_from_region(bb_region, bb_size)
+
             adjusted_region, start_ind, end_ind = bb_adjusted_region(region_of_prediction, bounding_box)
             # Take mean region vs as confidence
-            confidence = vs_max - np.mean(adjusted_region[:, 2])
+            confidence = vs_max - min_slide_value
             bounding_boxes.append([bounding_box, confidence])
 
         # Cut out bounding box region
@@ -638,11 +633,11 @@ def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size
 
     print("Average precision {}".format(ap))
 
-    tp_conf = [vs_max - tp[1] for tp in tps]
+    tp_conf = [tp[1] for tp in tps]
     mean_tp_conf = np.mean(tp_conf)
     print("Mean TP conf {}".format(mean_tp_conf))
 
-    fp_conf = [vs_max - fp[1] for fp in fps]
+    fp_conf = [fp[1] for fp in fps]
     mean_fp_conf = np.mean(fp_conf)
     print("Mean FP conf {}".format(mean_fp_conf))
 
@@ -723,6 +718,7 @@ def plot_FROC(FP_per_image, sensitivity, output_path):
     plt.plot(FP_per_image, sensitivity)
     plt.xlabel("Mean number of FPs per image")
     plt.ylabel("TPs fraction")
+    plt.ylim([0, 1])
     plt.savefig(output_path / "FROC.png", bbox_inches='tight', pad_inches=0)
     #plt.show()
 
@@ -733,6 +729,8 @@ def plot_precision_recall(values, confidence, output_path, metric="Precision"):
     plt.plot(confidence, values)
     plt.xlabel("Confidence")
     plt.ylabel(metric)
+    if metric == "Recall":
+        plt.ylim([0, 1])
     plt.savefig(output_path / "{}.png".format(metric), bbox_inches='tight', pad_inches=0)
     plt.show()
 
@@ -993,7 +991,7 @@ def test_vs_calc_loading():
 
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
     visceral_slides = load_visceral_slides(cum_vs_path)
-    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_region_growing"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_conf_min_vic2_5_vs2_5"
 
     predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True)
     predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True)
