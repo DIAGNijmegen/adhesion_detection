@@ -297,20 +297,6 @@ def load_annotations(annotations_path,
     return annotations
 
 
-# TODO: document
-def load_annotations_dict(annotations_path,
-                          adhesion_types=[AdhesionType.anteriorWall,
-                                          AdhesionType.abdominalCavityContour,
-                                          AdhesionType.inside]):
-
-    annotations = load_annotations(annotations_path, adhesion_types)
-    annotations_dict = {}
-    for annotation in annotations:
-        annotations_dict[annotation.full_id] = annotation
-
-    return annotations_dict
-
-
 def load_annotated_slices(annotations_path,
                           adhesion_types=[AdhesionType.anteriorWall,
                                           AdhesionType.abdominalCavityContour,
@@ -590,7 +576,7 @@ def show_annotation(annotation, images_path):
         plt.show()
 
 
-def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, normalize=True, title=None, file_name=None):
+def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, normalize=False, title=None, file_name=None):
     """
     Plots absolute value of visceral slide normalized by the absolute maximum together with adhesions annotations
     over the frame of a cine-MRI slice for which visceral slide was computed and saves to a file
@@ -610,7 +596,18 @@ def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, normal
     save_file_name : str, optional
        A file name to save the plot
     """
-    slide_vis = visceral_slide / np.max(visceral_slide) if normalize else visceral_slide
+
+    x_prior, y_prior = get_adhesions_prior_coords(x, y)
+
+    coords = np.column_stack((x, y)).tolist()
+    prior_coords = np.column_stack((x_prior, y_prior)).tolist()
+    prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
+
+    x = x[prior_inds]
+    y = y[prior_inds]
+    slide_vis = visceral_slide[prior_inds]
+
+    slide_vis = slide_vis / np.max(slide_vis) if normalize else slide_vis
 
     plt.figure()
     plt.imshow(frame, cmap="gray")
@@ -851,7 +848,7 @@ def vis_annotation_on_cumulative_vs(visceral_slide_path,
     # load visceral slide
     visceral_slides = load_visceral_slides(visceral_slide_path)
     # load annotations
-    annotations_dict = load_annotations_dict(annotations_path, adhesion_types)
+    annotations_dict = load_annotations(annotations_path, True, adhesion_types)
 
     # For each vs find annotation is exists and plot
     for visceral_slide in visceral_slides:
@@ -865,7 +862,7 @@ def vis_annotation_on_cumulative_vs(visceral_slide_path,
         # Visualise
         annotated_visc_slide_path = output_path / (visceral_slide.full_id + ".png") if save else None
         show_vs_with_annotation(visceral_slide.x, visceral_slide.y, visceral_slide.values,
-                                frame, annotation, normalize=False, file_name=annotated_visc_slide_path)
+                                frame, annotation, file_name=annotated_visc_slide_path)
 
 
 def annotations_statistics(expanded_annotations_path):
@@ -1008,12 +1005,15 @@ def test():
     # output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_det_full_df")
     detection_path = Path(DETECTION_PATH) / IMAGES_FOLDER / TRAIN_FOLDER
     cumulative_vs_path = Path(DETECTION_PATH) / "output_folder_cum"
-    output_path = Path(DETECTION_PATH) / "visualization/cum_vs_warp_contour_norm_avg_rest"
+    output_path = Path(DETECTION_PATH) / "visualization/cum_vs_warp_contour_norm_avg_rest1"
     bb_expanded_annotation_path = Path(DETECTION_PATH) / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
 
-    #vis_annotation_on_cumulative_vs(cumulative_vs_path, detection_path, bb_expanded_annotation_path, output_path, save=True)
+    vis_annotation_on_cumulative_vs(cumulative_vs_path, detection_path, bb_expanded_annotation_path, output_path,
+                                    adhesion_types=[AdhesionType.anteriorWall,
+                                                    AdhesionType.abdominalCavityContour],
+                                    save=True)
 
-    test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, cumulative_vs_path, Path("posterior"), AbdominalContourPart.posterior_wall)
+    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, cumulative_vs_path, Path("posterior"), AbdominalContourPart.posterior_wall)
     #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
      #                          Path("anterior"), AbdominalContourPart.anterior_wall)
     #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,

@@ -83,7 +83,7 @@ def bb_from_region(region, mean_size):
     return Adhesion([origin_x, origin_y, width, height])
 
 
-def bb_with_threshold(x, y, slide_value, bb_size):
+def bb_with_threshold(x, y, slide_value, bb_size, vs_range):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
     specified threshold level
@@ -109,10 +109,10 @@ def bb_with_threshold(x, y, slide_value, bb_size):
     prior_coords = np.column_stack((x_prior, y_prior)).tolist()
     prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
 
-    vs_x = x[prior_inds]
-    vs_y = y[prior_inds]
-    vs_value = slide_value[prior_inds]
-    contour_subset = np.column_stack((vs_x, vs_y, vs_value))
+    contour_subset = np.column_stack((x, y, slide_value))
+    contour_subset = contour_subset[prior_inds]
+
+    contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
     suitable_regions = get_connected_regions(contour_subset)
 
     # Predict bounding boxes
@@ -141,7 +141,7 @@ def bb_with_threshold(x, y, slide_value, bb_size):
         bb_region = region_of_prediction[region_start:region_end]
         bounding_box = bb_from_region(bb_region, bb_size)
         # Later invert - subtract confidences from the max VS value
-        confidence = min_slide_value
+        confidence = vs_range[1] - min_slide_value
         bounding_boxes.append([bounding_box, confidence])
 
         # Cut out bounding box region
@@ -237,9 +237,10 @@ def predict_and_visualize(visceral_slides, annotations_dict, images_path, output
     annotations = annotations_dict.values()
     # Average bounding box size
     bb_size = average_bb_size(annotations, is_median=bb_size_median)
+    vs_min, vs_max = get_vs_range(visceral_slides)
 
     for vs in visceral_slides:
-        prediction = bb_with_threshold(vs.x, vs.y, vs.values, bb_size)
+        prediction = bb_with_threshold(vs.x, vs.y, vs.values, bb_size, (vs_min, vs_max))
 
         if inspexp_data is None:
             # Assume it is cumulative VS and take the one before the last one frame
@@ -262,7 +263,7 @@ def predict_and_visualize(visceral_slides, annotations_dict, images_path, output
 
 
 # TODO: should we also output confidence here?
-def predict(visceral_slides, bb_size):
+def predict(visceral_slides, bb_size, vs_range):
     """
     Predicts adhesions based on visceral slide values for the provided full ids of slices
 
@@ -285,7 +286,7 @@ def predict(visceral_slides, bb_size):
     predictions = {}
 
     for vs in visceral_slides:
-        prediction = bb_with_threshold(vs.x, vs.y, vs.values, bb_size)
+        prediction = bb_with_threshold(vs.x, vs.y, vs.values, bb_size, vs_range)
         predictions[vs.full_id] = prediction
 
     return predictions
@@ -440,7 +441,7 @@ def get_prediction_outcome(annotations_dict, predictions, iou_threshold=0.1):
     return tps, fps, fns
 
 
-def get_confidence_outcome(tps, fps, fns, conf_inv=None):
+def get_confidence_outcome(tps, fps, fns):
     """
     Determines whether prediction with a given confidence is true or false based on the TPs and FPs lists
     Parameters
@@ -457,17 +458,32 @@ def get_confidence_outcome(tps, fps, fns, conf_inv=None):
     """
     outcomes = []
     for _, confidence in tps:
-        inv_confidence = conf_inv - confidence if conf_inv else confidence
-        outcomes.append((1, inv_confidence))
+        outcomes.append((1, confidence))
         
     for _, confidence in fps:
-        inv_confidence = conf_inv - confidence if conf_inv else confidence
-        outcomes.append((0, inv_confidence))
+        outcomes.append((0, confidence))
 
     for _ in fns:
         outcomes.append((1, 0))
         
     return outcomes
+
+
+
+def get_vs_range(visceral_slides):
+    # Statistics useful for prediction
+    all_vs_values = []
+    for visceral_slide in visceral_slides:
+        all_vs_values.extend(visceral_slide.values)
+
+    vs_abs_max = np.max(all_vs_values)
+    vs_q1 = np.quantile(all_vs_values, 0.25)
+    vs_q3 = np.quantile(all_vs_values, 0.75)
+    vs_iqr = vs_q3 - vs_q1
+    vs_min = max(0, vs_q1 - 1.5 * vs_iqr)
+    vs_max = vs_q3 + 1.5 * vs_iqr
+
+    return vs_min, vs_max
 
 
 def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size_median=False):
@@ -493,15 +509,13 @@ def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size
 
     # vary threshold level
     # Get predictions by visceral slide level threshold
-    predictions = predict(visceral_slides, bb_size)
+    vs_min, vs_max = get_vs_range(visceral_slides)
+
+    predictions = predict(visceral_slides, bb_size, (vs_min, vs_max))
 
     tps, fps, fns = get_prediction_outcome(annotations_dict, predictions, 0.01)
 
-    vs_max = 0
-    for visceral_slide in visceral_slides:
-        vs_max = max(vs_max, np.max(visceral_slide.values))
-
-    outcomes = get_confidence_outcome(tps, fps, fns, vs_max)
+    outcomes = get_confidence_outcome(tps, fps, fns)
 
     total_patients = len(annotations)
 
@@ -565,7 +579,7 @@ def compute_pr_curves(outcomes):
 
             # Add the corresponding precision and recall values
             recall.append(tp / total_lesions)
-            curr_precision = 1 if (tp + fp) == 0 else tp / (tp + fp)
+            curr_precision = 0 if (tp + fp) == 0 else tp / (tp + fp)
             precision.append(curr_precision)
         else:
             # Extend precision and recall curves
@@ -876,10 +890,10 @@ def test_vs_calc_loading():
 
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
     visceral_slides = load_visceral_slides(cum_vs_path)
-    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_post_wall_removed"
 
     predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True)
-    #predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True)
+    predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True)
 
     #vs_values_boxplot(cum_vs_path)
     #vs_adhesion_boxplot(cum_vs_path, annotations_path)
