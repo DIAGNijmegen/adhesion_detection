@@ -991,7 +991,9 @@ def test_vs_calc_loading():
 
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
     visceral_slides = load_visceral_slides(cum_vs_path)
-    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_conf_min_vic2_5_vs2_5"
+    visceral_slides.sort(key=lambda vs: vs.full_id, reverse=False)
+
+    output = Path(DETECTION_PATH) / "predictions" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_half_ant_wall"
 
     predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True)
     predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True)

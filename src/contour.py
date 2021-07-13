@@ -209,18 +209,16 @@ def get_adhesions_prior_coords(x, y):
     top_coords = np.column_stack((x_top, y_top)).tolist()
     prior_coords = [coord for coord in prior_coords.tolist() if coord not in top_coords]
 
-    # We remove top 1/3 of anterior wall coordinates
+    # We remove top 1/2 of anterior wall coordinates
     x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
     anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall))
-    y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 3)]
+    y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
     anterior_wall_coords = [coord for coord in anterior_wall_coords.tolist() if coord[1] < y_anterior_wall_cutoff]
     prior_coords = [coord for coord in prior_coords if coord not in anterior_wall_coords]
 
     # We remove top 2/3 of posterior wall coordinates
     x_posterior_wall, y_posterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.posterior_wall)
     posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
-    #y_posterior_wall_cutoff = sorted(y_posterior_wall)[int(2*len(y_posterior_wall) / 3)]
-    #posterior_wall_coords = [coord for coord in posterior_wall_coords.tolist() if coord[1] < y_posterior_wall_cutoff]
     prior_coords = np.array([coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()])
 
     return prior_coords[:, 0], prior_coords[:, 1]
