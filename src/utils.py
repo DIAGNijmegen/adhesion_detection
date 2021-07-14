@@ -16,7 +16,7 @@ from cinemri.utils import get_patients, get_image_orientation
 from cinemri.contour import get_contour
 from cinemri.definitions import Patient, CineMRISlice, Study, AnatomicalPlane, CineMRIMotionType, CineMRISlicePos
 import shutil
-
+import matplotlib.pyplot as plt
 
 
 # TODO: moveis_slice_vs_suitable
@@ -383,6 +383,19 @@ def adhesions_stat(annotations):
     print("Median width: {}".format(np.median(widths)))
     print("Median height: {}".format(np.median(heights)))
 
+    print("Width std: {}".format(np.std(widths)))
+    print("Height std: {}".format(np.std(heights)))
+
+    plt.figure()
+    plt.boxplot(widths)
+    plt.title("Widths")
+    plt.show()
+
+    plt.figure()
+    plt.boxplot(heights)
+    plt.title("Heights")
+    plt.show()
+
     print("Smallest annotation, x_o: {}, y_o: {}, width: {}, height: {}".format(smallest_bb.origin_x,
                                                                                 smallest_bb.origin_y, smallest_bb.width,
                                                                                 smallest_bb.height))
@@ -617,14 +630,26 @@ def get_insp_exp_frames_and_masks(slice, inspexp_data, images_path, masks_path):
     return insp_frame, insp_mask, exp_frame, exp_mask
 
 
+def full_ids_to_file(full_ids, output_file_path):
+    with open(output_file_path, "w") as f:
+        for full_id in full_ids:
+            f.write(full_id + "\n")
+
 
 def test():
-    archive_path = ARCHIVE_PATH
+    archive_path = Path(ARCHIVE_PATH)
 
     metadata_path = archive_path / METADATA_FOLDER
     report_path = metadata_path / REPORT_FILE_NAME
     patients_metadata = metadata_path / PATIENTS_METADATA_FILE_NAME
     mapping_path = archive_path / METADATA_FOLDER / PATIENTS_MAPPING_FILE_NAME
+
+    detection_path = Path(DETECTION_PATH) / IMAGES_FOLDER / TEST_FOLDER
+
+    patients = get_patients(detection_path)
+    slices_full_ids = slices_full_ids_from_patients(patients)
+    full_ids_to_file(slices_full_ids, Path("test_full_ids.txt"))
+
     
     """
     patients = patients_from_metadata(patients_metadata)

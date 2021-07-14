@@ -13,7 +13,7 @@ from data_conversion import convert_2d_image_to_pseudo_3d
 from visceral_slide import VSNormType, VSNormField, VSWarpingField, VisceralSlideDetectorReg, VisceralSlideDetectorDF, \
     CumulativeVisceralSlideDetectorReg, CumulativeVisceralSlideDetectorDF
 import matplotlib.pyplot as plt
-from config import DETECTION_PATH
+from config import DETECTION_PATH, VS_CONTROL_FOLDER, AVG_NORM_FOLDER, CUMULATIVE_VS_FOLDER, INS_EXP_VS_FOLDER
 from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY, VISCERAL_SLIDE_FILE, MASKS_FOLDER, DF_REST_FOLDER, DF_CAVITY_FOLDER, DF_COMPLETE_FOLDER, \
@@ -458,7 +458,7 @@ def compute_fast_inspexp_vs(input_path,
     rest_dfs_path = input_path / DF_REST_FOLDER
     normalization_dfs_path = input_path / DF_REST_FOLDER if normalization_df==VSNormField.rest else input_path / DF_COMPLETE_FOLDER
 
-    output_path.mkdir()
+    output_path.mkdir(parents=True)
     vs_detector = VisceralSlideDetectorDF()
     patients = get_patients(moving_masks_path, slice_extension=".npy")
     for patient in patients:
@@ -520,7 +520,7 @@ def compute_fast_cumulative_vs(input_path,
     warping_dfs_path = input_path / DF_CONTOUR_FOLDER if warping_field == VSWarpingField.contours else input_path / DF_REST_FOLDER
     normalization_dfs_path = input_path / DF_REST_FOLDER if normalization_df == VSNormField.rest else input_path / DF_COMPLETE_FOLDER
 
-    output_path.mkdir()
+    output_path.mkdir(parents=True)
     vs_detector = CumulativeVisceralSlideDetectorDF()
     patients = get_patients(moving_masks_path, slice_extension="")
 
@@ -565,15 +565,29 @@ def compute_fast_cumulative_vs(input_path,
 
 def test():
     detection_path = Path(DETECTION_PATH)
+
+    # Train
+    """
     insp_exp_input_path = detection_path / "output" / "vs_input" / "train" / "insp_exp"
     insp_exp_output_path = detection_path / "output_folder_insp_exp"
 
     cum_input_path = detection_path / "output" / "vs_input" / "train" / "cumulative"
     cum_output_path = detection_path / "output_folder_cum"
     
-    #compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.average_anterior_wall)
+    compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.average_anterior_wall)
     compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.average_anterior_wall)
-    
+    """
+
+    # Control
+    insp_exp_input_path = detection_path / "output" / "vs_input" / "control" / "insp_exp"
+    insp_exp_output_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
+
+    cum_input_path = detection_path / "output" / "vs_input" / "control" / "cumulative"
+    cum_output_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
+
+    compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.average_anterior_wall)
+    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.average_anterior_wall)
+
     print("done")
 
 

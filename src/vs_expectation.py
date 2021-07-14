@@ -1,9 +1,10 @@
 import numpy as np
+import pickle
+import json
 from pathlib import Path
-from cinemri.config import ARCHIVE_PATH
 from cinemri.definitions import CineMRISlice
-from config import METADATA_FOLDER, NEGATIVE_SLICES_FILE_NAME, SEPARATOR
-from utils import load_visceral_slides, binning_intervals
+from config import *
+from utils import load_visceral_slides, binning_intervals, contour_stat, get_inspexp_frames
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from scipy import signal
@@ -78,9 +79,12 @@ def vs_to_regions(vs, regions_num, colors):
     return regions
 
 
-def get_regions_prior(vs_path, heathly_inds, regions_num=120, plot=False, images_path=None, output_path=None):
-    visceral_slides = load_visceral_slides(vs_path)
-    neg_visceral_slides = [vs for vs in visceral_slides if vs.patient_id in heathly_inds]
+def get_regions_expectation(vs_path, regions_num=120, heathly_inds=None, plot=False, inspexp_data=None, images_path=None, output_path=None):
+    neg_visceral_slides = load_visceral_slides(vs_path)
+
+    # Filter out visceral slides if list of ids is provided
+    if heathly_inds:
+        neg_visceral_slides = [vs for vs in neg_visceral_slides if vs.patient_id in heathly_inds]
 
     colors = cm.rainbow(np.linspace(0, 1, regions_num))
     vs_regions = []
@@ -103,8 +107,12 @@ def get_regions_prior(vs_path, heathly_inds, regions_num=120, plot=False, images
     if plot:
         vs = neg_visceral_slides[0]
         slice = CineMRISlice.from_full_id(vs.full_id)
-        image = sitk.ReadImage(str(slice.build_path(images_path)))
-        frame = sitk.GetArrayFromImage(image)[-2]
+
+        if inspexp_data is None:
+            image = sitk.ReadImage(str(slice.build_path(images_path)))
+            frame = sitk.GetArrayFromImage(image)[-2]
+        else:
+            frame, _ = get_inspexp_frames(slice, inspexp_data, images_path)
 
         plt.figure()
         plt.imshow(frame, cmap="gray")
@@ -121,15 +129,15 @@ def get_regions_prior(vs_path, heathly_inds, regions_num=120, plot=False, images
             c = np.concatenate((c, np.ones(len(reg.x)) * reg.col))
         plt.scatter(x, y, s=5, c=c)
         plt.colorbar()
-        plt.savefig(output_path / "prior_vi_{}.png".format(regions_num), bbox_inches='tight', pad_inches=0)
+        plt.savefig(output_path / "expectation_vi_{}.png".format(regions_num), bbox_inches='tight', pad_inches=0)
         plt.close()
 
     return averages
 
 
-def norm_vs_chunks(vs, prior, images_path, plot=False, output_path=None):
-    regions_num = len(prior)
-    vs_regs = vs_to_regions(vs, regions_num, prior)
+def norm_vs_chunks(vs, expectation, images_path, plot=False, output_path=None):
+    regions_num = len(expectation)
+    vs_regs = vs_to_regions(vs, regions_num, expectation)
 
     if plot:
         slice = CineMRISlice.from_full_id(vs.full_id)
@@ -179,7 +187,7 @@ def gaussian_2d(sigma):
     return kernel, x, y
 
 
-def get_vs_healthy_prior(vs_path, heathly_inds, grid_size, plot=False, output_path=None):
+def get_vs_healthy_expectation(vs_path, heathly_inds, grid_size, plot=False, output_path=None):
     visceral_slides = load_visceral_slides(vs_path)
     neg_visceral_slides = [vs for vs in visceral_slides if vs.patient_id in heathly_inds]
     
@@ -244,9 +252,12 @@ def get_vs_healthy_prior(vs_path, heathly_inds, grid_size, plot=False, output_pa
     return expected_vs
 
 
-def get_avg_contour_size(vs_path, heathly_inds):
-    visceral_slides = load_visceral_slides(vs_path)
-    neg_visceral_slides = [vs for vs in visceral_slides if vs.patient_id in heathly_inds]
+def get_avg_contour_size(vs_path, heathly_inds=None):
+    neg_visceral_slides = load_visceral_slides(vs_path)
+
+    # Filter out visceral slides if list of ids is provided
+    if heathly_inds:
+        neg_visceral_slides = [vs for vs in neg_visceral_slides if vs.patient_id in heathly_inds]
 
     widths = []
     heights = []
@@ -315,28 +326,44 @@ def norm_vs(vs, expected_vs, frame, output_path):
 
 
 if __name__ == '__main__':
-    archive_path = ARCHIVE_PATH
-    images_path = archive_path / "detection_new" / "images"
-    negative_slices_file = archive_path / METADATA_FOLDER / NEGATIVE_SLICES_FILE_NAME
-    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
+    detection_path = Path(DETECTION_PATH)
+    images_path = detection_path / IMAGES_FOLDER / CONTROL_FOLDER
+    masks_path = detection_path / FULL_SEGMENTATION_FOLDER
+    insp_exp_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
+    inspexp_file_path = detection_path / METADATA_FOLDER / INSPEXP_FILE_NAME
+    # load inspiration and expiration data
+    with open(inspexp_file_path) as inspexp_file:
+        inspexp_data = json.load(inspexp_file)
 
-    with open(negative_slices_file) as file:
+    cum_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
+
+    """
+        with open(negative_slices_file) as file:
         lines = file.readlines()
         negative_patients_ids = [line.strip().split(SEPARATOR)[0] for line in lines]
+    """
 
-    width, height = get_avg_contour_size(cumulative_vs_path, negative_patients_ids)
+    width, height = get_avg_contour_size(cum_control_path)
     print(width)
     print(height)
     print(width / height)
+
+    avg_contour_len = contour_stat(masks_path)
+    point_in_chunk = 5
+    chunks_num = round(avg_contour_len / point_in_chunk)
 
     output_path = Path("corner points v2")
     output_path.mkdir(exist_ok=True)
 
     # TODO: take 130
-    prior = get_regions_prior(cumulative_vs_path, negative_patients_ids, 65, True, images_path, output_path)
-    get_regions_prior(cumulative_vs_path, negative_patients_ids, 130, True, images_path, output_path)
-    get_regions_prior(cumulative_vs_path, negative_patients_ids, 260, True, images_path, output_path)
-    get_regions_prior(cumulative_vs_path, negative_patients_ids, 326, True, images_path, output_path)
+    expectation = get_regions_expectation(insp_exp_control_path, chunks_num, None, True, inspexp_data, images_path, output_path)
+    with open("insexp_vs_expectation.pkl", "w+b") as f:
+        pickle.dump(expectation, f)
+
+    with open("insexp_vs_expectation.pkl", "r+b") as file:
+        expectation1 = pickle.load(file)
+
+    print("done")
 
     """
     visceral_slides = load_visceral_slides(cumulative_vs_path)
