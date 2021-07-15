@@ -14,6 +14,7 @@ from contour import get_connected_regions, get_adhesions_prior_coords, get_abdom
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
 from enum import Enum, unique
+from sklearn.metrics import roc_curve, auc
 from vs_definitions import VSExpectationNormType
 
 VISCERAL_SLIDE_PATH = "../../data/visceral_slide_all/visceral_slide"
@@ -658,6 +659,22 @@ def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size
     t_test = stats.ttest_ind(tp_conf, fp_conf, equal_var=False)
     print("T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
 
+    # Get binary data
+    scores = []
+    labels = []
+    for slice_full_id, prediction in predictions.items():
+        if len(prediction) > 0:
+            _, confidence = prediction[0]
+            scores.append(confidence)
+        else:
+            scores.append(0)
+
+        label = 1 if slice_full_id in annotations_dict else 0
+        labels.append(label)
+
+    compute_slice_level_ROC(scores, labels, output_path)
+
+
 
 def compute_pr_curves(outcomes):
     # Compute precision and recall curves from list of predictions and confidence
@@ -726,6 +743,28 @@ def compute_ap(recall, precision):
     return ap, mpre, mrec
 
 
+def compute_slice_level_ROC(thresholds, labels, output_path):
+
+    fpr, tpr, thresholds = roc_curve(labels, thresholds)
+    auc_val = auc(fpr, tpr)
+
+    plt.figure()
+    lw = 2
+    plt.plot(fpr, tpr, color='darkorange',
+             lw=lw, label='ROC curve (area = %0.2f)' % auc_val)
+    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    plt.xlim([0.0, 1.0])
+    plt.ylim([0.0, 1.05])
+    plt.xlabel('False Positive Rate')
+    plt.ylabel('True Positive Rate')
+    plt.title('Slide level ROC')
+    plt.legend(loc="lower right")
+    plt.savefig(output_path / "Slice_ROC.png", bbox_inches='tight', pad_inches=0)
+    plt.show()
+
+    return  auc_val
+
+
 def plot_FROC(FP_per_image, sensitivity, output_path):
 
     plt.figure()
@@ -734,7 +773,7 @@ def plot_FROC(FP_per_image, sensitivity, output_path):
     plt.ylabel("TPs fraction")
     plt.ylim([0, 1])
     plt.savefig(output_path / "FROC.png", bbox_inches='tight', pad_inches=0)
-    #plt.show()
+    plt.show()
 
 
 def plot_precision_recall(values, confidence, output_path, metric="Precision"):
@@ -1025,10 +1064,10 @@ def test_vs_calc_loading():
     visceral_slides = load_visceral_slides(cum_vs_path)
     visceral_slides.sort(key=lambda vs: vs.full_id, reverse=False)
 
-    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_expectation" / "region_growing_range_noover_vic_2_5_max_vs_2_5_mean_div_outl_removed1"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_expectation" / "region_growing_range_noover_vic_2_5_max_vs_2_5_mean_standadise_roc"
 
-    predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.mean_div)
-    predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.mean_div)
+    predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.standardize)
+    predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.standardize)
 
     #vs_values_boxplot(insp_exp_vs_path)
     #vs_adhesion_boxplot(insp_exp_vs_path, annotations_path)
