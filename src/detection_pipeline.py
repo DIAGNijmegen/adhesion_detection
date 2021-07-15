@@ -9,7 +9,7 @@ from adhesions import AdhesionType, Adhesion, load_annotations
 from config import *
 from cinemri.config import ARCHIVE_PATH
 from cinemri.definitions import CineMRISlice
-from utils import average_bb_size, load_visceral_slides, binning_intervals, get_inspexp_frames, adhesions_stat
+from utils import bb_size_stat, load_visceral_slides, binning_intervals, get_inspexp_frames, adhesions_stat
 from contour import get_connected_regions, get_adhesions_prior_coords, get_abdominal_contour_top
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
@@ -61,17 +61,31 @@ def bb_from_region(region, mean_size):
         axis_min = np.min([coord[axis] for coord in region])
         axis_max = np.max([coord[axis] for coord in region])
         length = axis_max - axis_min + 1
+
         if length < mean_size[axis]:
             origin = region_centre[axis] - round(mean_size[axis] / 2)
             length = mean_size[axis]
         else:
-            origin= axis_min
+            origin = axis_min
 
         return origin, length
 
     origin_x, width = compute_origin_and_len(region, mean_size, axis=0)
     origin_y, height = compute_origin_and_len(region, mean_size, axis=1)
     return Adhesion([origin_x, origin_y, width, height])
+
+
+def region_size(region):
+
+    def compute_len(region, axis=0):
+        axis_min = np.min([coord[axis] for coord in region])
+        axis_max = np.max([coord[axis] for coord in region])
+        length = axis_max - axis_min + 1
+        return length
+
+    width = compute_len(np.array(region), axis=0)
+    height = compute_len(np.array(region), axis=1)
+    return width, height
 
 
 def bb_adjusted_region(region, bb):
@@ -114,7 +128,7 @@ def find_min_vs(regions):
     return region_of_prediction, min_region_ind, vs_values, vs_value_min_ind
 
 
-def adhesions_from_region_fixed_size(regions, bb_size, vs_max):
+def adhesions_from_region_fixed_size(regions, bb_size, bb_size_max, vs_max):
 
     # Predict bounding boxes
     region_len = max(bb_size[0], bb_size[1])
@@ -152,7 +166,7 @@ def adhesions_from_region_fixed_size(regions, bb_size, vs_max):
     return bounding_boxes
 
 
-def adhesions_with_region_growing(regions, bb_size, vs_max, vicinity_ind=2.5, region_growing_ind=2.5, min_region_len=5):
+def adhesions_with_region_growing(regions, bb_size, bb_size_max, vs_max, vicinity_ind=2.5, region_growing_ind=2.5, min_region_len=5):
     region_len = max(bb_size[0], bb_size[1])
     vicinity = region_len - 1
     vicinity_max = vicinity_ind * vicinity
@@ -167,19 +181,26 @@ def adhesions_with_region_growing(regions, bb_size, vs_max, vicinity_ind=2.5, re
         # Looking for the regions boundaries
         start_ind = end_ind = vs_value_min_ind
         start_ind_found = end_ind_found = False
+        prediction_region = [region_of_prediction[vs_value_min_ind]]
         while not (start_ind_found and end_ind_found):
             new_start_ind = max(0, start_ind - 1)
             start_value = vs_values[start_ind]
 
-            start_ind_found = start_value > max_region_slide_value or (end_ind - new_start_ind) > vicinity_max or start_ind == 0
+            exceeded_size_limit = region_size(prediction_region)[0] >= bb_size_max[0] or region_size(prediction_region)[1] >= bb_size_max[1]
+            start_ind_found = start_value > max_region_slide_value or exceeded_size_limit or start_ind == 0
             if not start_ind_found:
                 start_ind = new_start_ind
+                prediction_region.append(region_of_prediction[start_ind])
 
             new_end_ind = min(len(region_of_prediction) - 1, end_ind + 1)
             end_value = vs_values[end_ind]
-            end_ind_found = end_value > max_region_slide_value or (new_end_ind - start_ind) > vicinity_max or end_ind == (len(region_of_prediction) - 1)
+
+            exceeded_size_limit = region_size(prediction_region)[0] >= bb_size_max[0] or region_size(prediction_region)[
+                1] >= bb_size_max[1]
+            end_ind_found = end_value > max_region_slide_value or exceeded_size_limit or end_ind == (len(region_of_prediction) - 1)
             if not end_ind_found:
                 end_ind = new_end_ind
+                prediction_region.append(region_of_prediction[end_ind])
 
             if new_start_ind == 0 and new_end_ind == (len(region_of_prediction) - 1):
                 start_ind_found = end_ind_found = True
@@ -210,7 +231,7 @@ def adhesions_with_region_growing(regions, bb_size, vs_max, vicinity_ind=2.5, re
     return bounding_boxes
 
 
-def bb_with_threshold(vs, bb_size, vs_range, pred_func):
+def bb_with_threshold(vs, bb_size, bb_size_max, vs_range, pred_func):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
     specified threshold level
@@ -248,7 +269,7 @@ def bb_with_threshold(vs, bb_size, vs_range, pred_func):
 
     # Predict
     suitable_regions = get_connected_regions(contour_subset)
-    bounding_boxes = pred_func(suitable_regions, bb_size, vs_range[1])
+    bounding_boxes = pred_func(suitable_regions, bb_size, bb_size_max, vs_range[1])
     return bounding_boxes
 
 
@@ -331,7 +352,7 @@ def predict_and_visualize(visceral_slides, annotations_dict, images_path, output
 
     annotations = annotations_dict.values()
     # Average bounding box size
-    bb_size = average_bb_size(annotations, is_median=bb_size_median)
+    bb_size = bb_size_stat(annotations, is_median=bb_size_median)
 
     # Normalize with expectation
     if vs_expectation:
@@ -368,7 +389,7 @@ def predict_and_visualize(visceral_slides, annotations_dict, images_path, output
 
 
 # TODO: should we also output confidence here?
-def predict(visceral_slides, bb_size, vs_range):
+def predict(visceral_slides, bb_size, bb_size_max, vs_range):
     """
     Predicts adhesions based on visceral slide values for the provided full ids of slices
 
@@ -391,7 +412,7 @@ def predict(visceral_slides, bb_size, vs_range):
     predictions = {}
 
     for vs in visceral_slides:
-        prediction = bb_with_threshold(vs, bb_size, vs_range, adhesions_with_region_growing)
+        prediction = bb_with_threshold(vs, bb_size, bb_size_max, vs_range, adhesions_with_region_growing)
         predictions[vs.full_id] = prediction
 
     return predictions
@@ -612,7 +633,8 @@ def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size
     annotations = annotations_dict.values()
 
     # Average bounding box size
-    bb_size = average_bb_size(annotations, is_median=bb_size_median)
+    bb_mean_size, bb_size_std = bb_size_stat(annotations, is_median=bb_size_median)
+    bb_size_max = bb_mean_size[0] + 1.96 * bb_size_std[0], bb_mean_size[1] + 1.96 * bb_size_std[1]
 
     # Normalize with expectation
     if vs_expectation:
@@ -624,7 +646,7 @@ def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size
     negative_vs_needed = vs_expectation is not None and expectation_norm_type == VSExpectationNormType.standardize
     vs_min, vs_max = (-np.inf, 0) if negative_vs_needed else get_vs_range(visceral_slides)
 
-    predictions = predict(visceral_slides, bb_size, (vs_min, vs_max))
+    predictions = predict(visceral_slides, bb_mean_size, bb_size_max, (vs_min, vs_max))
 
     tps, fps, fns = get_prediction_outcome(annotations_dict, predictions, 0.01)
 
@@ -1058,16 +1080,16 @@ def test_vs_calc_loading():
     adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
     annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
 
-    #adhesions_stat(annotations)
+    adhesions_stat(annotations)
 
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
     visceral_slides = load_visceral_slides(cum_vs_path)
     visceral_slides.sort(key=lambda vs: vs.full_id, reverse=False)
 
-    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_expectation" / "region_growing_range_noover_vic_2_5_max_vs_2_5_mean_standadise_roc"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_no_avg_expectation" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_conf_min_vic2_vs2_5_roc_test"
 
-    predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=True, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.standardize)
-    predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=True, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.standardize)
+    predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=False)
+    #predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=False)
 
     #vs_values_boxplot(insp_exp_vs_path)
     #vs_adhesion_boxplot(insp_exp_vs_path, annotations_path)

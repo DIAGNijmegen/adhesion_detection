@@ -182,7 +182,7 @@ def write_slices_to_file(slices, file_path):
             file.write(full_id + "\n")
 
 
-def average_bb_size(annotations, is_median=False):
+def bb_size_stat(annotations, is_median=False):
     """
     Computes an average adhesion boundig box size
 
@@ -206,7 +206,8 @@ def average_bb_size(annotations, is_median=False):
             heights.append(adhesion.height)
 
     average_size = (np.median(widths), np.median(heights)) if is_median else (np.mean(widths), np.mean(heights))
-    return average_size
+    size_std = np.std(widths), np.std(heights)
+    return average_size, size_std
 
 
 def adhesions_stat(annotations):
