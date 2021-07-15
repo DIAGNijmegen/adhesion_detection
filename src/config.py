@@ -24,6 +24,12 @@ DF_REST_FOLDER = "df_rest"
 DF_CAVITY_FOLDER = "df_cavity"
 DF_COMPLETE_FOLDER = "df_complete"
 DF_CONTOUR_FOLDER = "df_contour"
+# Detection algorithm input
+VS_FOLDER = "visceral_slide"
+VS_CONTROL_FOLDER = "visceral_slide_control"
+AVG_NORM_FOLDER = "avg_norm"
+CUMULATIVE_VS_FOLDER = "cumulative"
+INS_EXP_VS_FOLDER = "insp_exp"
 
 # Metadata files
 BB_ANNOTATIONS_FILE = "annotations.json"
@@ -61,6 +67,9 @@ NEGATIVE_SLICES_CONTROL_NAME = "negative_slices_control.txt"
 BB_ANNOTATED_SLICES_FILE_NAME = "bb_annotations_full_ids.txt"
 DETECTION_SLICES_FILE_NAME = "detection_train_full_ids.txt"
 PATIENTS_SPLIT_FILE_NAME = "patients_split.json"
+# Visceral slide expectation
+CUMULATIVE_VS_EXPECTATION_FILE = "cumulative_vs_expectation.pkl"
+INSPEXP_VS_EXPECTATION_FILE = "insexp_vs_expectation.pkl"
 
 # K-fold split files
 DETECTION_PATIENT_FOLD_FILE_NAME = "detection_patients_folds.json"

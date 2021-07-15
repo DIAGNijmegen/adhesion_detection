@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from enum import Enum, unique
 from utils import patients_from_metadata, patients_from_full_ids_file, slices_full_ids_from_patients, \
-    get_segm_patients_ids, slices_from_full_ids_file
+    get_segm_patients_ids, slices_from_full_ids_file, full_ids_to_file
 from cinemri.definitions import Patient, CineMRIMotionType, CineMRISlice, CineMRISlicePos
 from cinemri.utils import get_patients
 from adhesions import AdhesionAnnotation, AdhesionType
@@ -164,13 +164,6 @@ def segmentation_pos_stat(annotations_file_path, segmentation_path):
     annotation_slice_num_more_than_one = [item for item in annotation_slice_num if item[1] > 1]
     print("Patients with more than one BB annotations:")
     print(annotation_slice_num_more_than_one)
-
-
-def full_ids_to_file(full_ids, output_file_path):
-    
-    with open(output_file_path, "w") as f:
-        for full_id in full_ids:
-            f.write(full_id + "\n")
 
 
 # Extract full ids of slices with BB annotations that have adhesions intersecting contour

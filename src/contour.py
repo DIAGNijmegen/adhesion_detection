@@ -39,22 +39,23 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
         current_region.append(coord_prev)
 
     # Check if first and last region should be merged
-    if len(current_region) > 0:
-        first_of_first = regions[0][0]
-        last_of_last = current_region[-1]
+    if len(regions) > 0:
+        if len(current_region) > 0:
+            first_of_first = regions[0][0]
+            last_of_last = current_region[-1]
 
-        if axis == -1:
-            distance = np.sqrt((first_of_first[0] - last_of_last[0]) ** 2 + (first_of_first[1] - last_of_last[1]) ** 2)
-        else:
-            distance = abs(first_of_first[axis] - last_of_last[axis])
+            if axis == -1:
+                distance = np.sqrt((first_of_first[0] - last_of_last[0]) ** 2 + (first_of_first[1] - last_of_last[1]) ** 2)
+            else:
+                distance = abs(first_of_first[axis] - last_of_last[axis])
 
-        if distance > connectivity_threshold:
-            # First and last regions are separated
-            regions.append(np.array(current_region))
-        else:
-            # First and last regions are connected
-            full_region = np.concatenate((current_region, regions[0]))
-            regions[0] = full_region
+            if distance > connectivity_threshold:
+                # First and last regions are separated
+                regions.append(np.array(current_region))
+            else:
+                # First and last regions are connected
+                full_region = np.concatenate((current_region, regions[0]))
+                regions[0] = full_region
 
     return regions
 

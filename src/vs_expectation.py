@@ -1,3 +1,4 @@
+import math
 import numpy as np
 import pickle
 import json
@@ -9,77 +10,9 @@ import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 from scipy import signal
 import SimpleITK as sitk
-import math
-from cinemri.contour import get_abdominal_contour_top, _get_tangent_vectors, get_most_vertical_point
+from vs_definitions import VisceralSlide, Region
 
-
-class Region:
-    """An object representing visceral slide for a Cine-MRI slice
-    """
-
-    def __init__(self, x, y, values, col):
-        self.x = x
-        self.y = y
-        self.values = values
-        self.col = col
-
-    def extend(self, x, y, values):
-        self.x = np.concatenate((self.x, x))
-        self.y = np.concatenate((self.y, y))
-        self.values = np.concatenate((self.values, values))
-
-
-def vs_to_regions(vs, regions_num, colors):
-    xs, ys = vs.x, vs.y
-    values = vs.values
-
-    vs_len = len(vs.values)
-    indices = np.arange(vs_len)
-    chunks = np.array_split(indices, regions_num)
-    chunk_lens = np.array([len(chunk) for chunk in chunks])
-    np.random.shuffle(chunk_lens)
-
-    x_bottom_left, y_bottom_left = vs.bottom_left_point
-    coords = np.column_stack((xs, ys))
-    ind = np.where((coords == (x_bottom_left, y_bottom_left)).all(axis=1))[0][0]
-
-    reg_start = ind
-    reg_end = reg_start + chunk_lens[0]
-    last_ind = reg_start
-
-    regions = []
-    for i in range(regions_num):
-        if reg_end >= vs_len:
-            reg_end -= vs_len
-
-        if reg_start >= vs_len:
-            reg_start -= vs_len
-
-        # Normal situation, take the connected region
-        if reg_start < reg_end:
-            x_reg = xs[reg_start:reg_end]
-            y_reg = ys[reg_start:reg_end]
-            val_reg = values[reg_start:reg_end]
-            region = Region(x_reg, y_reg, val_reg, colors[i])
-        else:
-            x_reg1 = xs[reg_start:]
-            y_reg1 = ys[reg_start:]
-            val_reg1 = values[reg_start:]
-            region = Region(x_reg1, y_reg1, val_reg1, colors[i])
-            region.extend(xs[:reg_end], ys[:reg_end], values[:reg_end])
-
-        regions.append(region)
-        reg_start = reg_end
-        if i < regions_num - 1:
-            if i == regions_num - 2:
-                reg_end = last_ind
-            else:
-                reg_end += chunk_lens[i+1]
-
-    return regions
-
-
-def get_regions_expectation(vs_path, regions_num=120, heathly_inds=None, plot=False, inspexp_data=None, images_path=None, output_path=None):
+def get_regions_expectation(vs_path, vs_range, regions_num=120, heathly_inds=None, plot=False, inspexp_data=None, images_path=None, output_path=None):
     neg_visceral_slides = load_visceral_slides(vs_path)
 
     # Filter out visceral slides if list of ids is provided
@@ -90,19 +23,24 @@ def get_regions_expectation(vs_path, regions_num=120, heathly_inds=None, plot=Fa
     vs_regions = []
     for i in range(len(neg_visceral_slides)):
         vs = neg_visceral_slides[i]
-        regions = vs_to_regions(vs, regions_num, colors)
+        regions = vs.to_regions(regions_num, colors)
         vs_regions.append(regions)
 
     vs_regions = np.array(vs_regions)
     # Now for each region calculate the average
-    averages = []
+    means = []
+    stds = []
     for i in range(regions_num):
         cur_regions = vs_regions[:, i]
         values = cur_regions[0].values
         for j in range(1, len(neg_visceral_slides)):
             values = np.concatenate((values, cur_regions[j].values))
-        avg = values.mean()
-        averages.append(avg)
+
+        # Remove the outliers
+        values = np.array([value for value in values if vs_range[0] <= value <= vs_range[1]])
+
+        means.append(np.mean(values))
+        stds.append(np.mean(values))
 
     if plot:
         vs = neg_visceral_slides[0]
@@ -117,52 +55,22 @@ def get_regions_expectation(vs_path, regions_num=120, heathly_inds=None, plot=Fa
         plt.figure()
         plt.imshow(frame, cmap="gray")
 
-        vs_regs = vs_to_regions(vs, regions_num, averages)
+        vs_regs = vs.to_regions(regions_num, means)
         reg = vs_regs[0]
         x = reg.x
         y = reg.y
-        c = np.ones(len(reg.x)) * reg.col
+        c = np.ones(len(reg.x)) * reg.mean
         for i in range(1, len(vs_regs)):
             reg = vs_regs[i]
             x = np.concatenate((x, reg.x))
             y = np.concatenate((y, reg.y))
-            c = np.concatenate((c, np.ones(len(reg.x)) * reg.col))
+            c = np.concatenate((c, np.ones(len(reg.x)) * reg.mean))
         plt.scatter(x, y, s=5, c=c)
         plt.colorbar()
-        plt.savefig(output_path / "expectation_vi_{}.png".format(regions_num), bbox_inches='tight', pad_inches=0)
+        plt.savefig(output_path / "inspexp_expectation_vi_{}.png".format(regions_num), bbox_inches='tight', pad_inches=0)
         plt.close()
 
-    return averages
-
-
-def norm_vs_chunks(vs, expectation, images_path, plot=False, output_path=None):
-    regions_num = len(expectation)
-    vs_regs = vs_to_regions(vs, regions_num, expectation)
-
-    if plot:
-        slice = CineMRISlice.from_full_id(vs.full_id)
-        image = sitk.ReadImage(str(slice.build_path(images_path)))
-        frame = sitk.GetArrayFromImage(image)[-2]
-        
-        plt.figure()
-        plt.imshow(frame, cmap="gray")
-    
-        reg = vs_regs[0]
-        x = reg.x
-        y = reg.y
-        c = reg.values / reg.col
-        for i in range(1, len(vs_regs)):
-            reg = vs_regs[i]
-            x = np.concatenate((x, reg.x))
-            y = np.concatenate((y, reg.y))
-            c = np.concatenate((c, reg.values / reg.col))
-        plt.scatter(x, y, s=5, c=c, cmap="jet")
-        plt.colorbar()
-        #plt.title(vs.patient_id)
-        plt.savefig(output_path / "{}.png".format(vs.full_id), bbox_inches='tight', pad_inches=0)
-        plt.close()
-    
-    return vs_regs
+    return {"means": means, "stds": stds}
 
 
 def gaussian_2d(sigma):
@@ -323,6 +231,22 @@ def norm_vs(vs, expected_vs, frame, output_path):
 
     return xs, ys, vs_norm
 
+# To remove outliers
+def get_vs_range(visceral_slides):
+    # Statistics useful for prediction
+    all_vs_values = []
+    for visceral_slide in visceral_slides:
+        all_vs_values.extend(visceral_slide.values)
+
+    vs_abs_max = np.max(all_vs_values)
+    vs_abs_min = np.min(all_vs_values)
+    vs_q1 = np.quantile(all_vs_values, 0.25)
+    vs_q3 = np.quantile(all_vs_values, 0.75)
+    vs_iqr = vs_q3 - vs_q1
+    vs_min = vs_q1 - 1.5 * vs_iqr
+    vs_max = vs_q3 + 1.5 * vs_iqr
+
+    return vs_min, vs_max
 
 
 if __name__ == '__main__':
@@ -356,49 +280,102 @@ if __name__ == '__main__':
     output_path.mkdir(exist_ok=True)
 
     # TODO: take 130
-    expectation = get_regions_expectation(insp_exp_control_path, chunks_num, None, True, inspexp_data, images_path, output_path)
+    """
+    cum_visceral_slides = load_visceral_slides(cum_control_path)
+    vs_values = []
+    for visceral_slide in cum_visceral_slides:
+        vs_values.extend(visceral_slide.values)
+
+    vs_min, vs_max = get_vs_range(cum_visceral_slides)
+
+    expectation = get_regions_expectation(cum_control_path, (vs_min, vs_max), chunks_num, None, True, None, images_path,
+                                          output_path)
+
+    with open("cumulative_vs_expectation.pkl", "w+b") as f:
+        pickle.dump(expectation, f)
+
+    with open("cumulative_vs_expectation.pkl", "r+b") as file:
+        expectation_dict = pickle.load(file)
+        means, stds = expectation_dict["means"], expectation_dict["stds"]
+
+    print("done")
+    """
+
+    """
+    print("Cum VS lower limit {}".format(vs_min))
+    print("Cum VS upper limit {}".format(vs_max))
+
+    vs_values = [vs for vs in vs_values if vs_min <= vs <= vs_max]
+    vs_values_log = np.log(vs_values)
+
+    plt.figure()
+    plt.boxplot(vs_values_log)
+    plt.savefig("vs_boxplot_cum_control_outl_removed_log", bbox_inches='tight', pad_inches=0)
+    plt.show()
+
+    plt.figure()
+    plt.hist(vs_values_log, bins=200)
+    plt.savefig("vs_hist_cum_control_outl_removed_log", bbox_inches='tight', pad_inches=0)
+    plt.show()
+    """
+
+    inspexp_visceral_slides = load_visceral_slides(insp_exp_control_path)
+    vs_values = []
+    for visceral_slide in inspexp_visceral_slides:
+        vs_values.extend(visceral_slide.values)
+
+    vs_min, vs_max = get_vs_range(inspexp_visceral_slides)
+    expectation = get_regions_expectation(insp_exp_control_path, (vs_min, vs_max), chunks_num, None, True, inspexp_data, images_path,
+                                          output_path)
+
     with open("insexp_vs_expectation.pkl", "w+b") as f:
         pickle.dump(expectation, f)
 
     with open("insexp_vs_expectation.pkl", "r+b") as file:
-        expectation1 = pickle.load(file)
+        expectation_dict = pickle.load(file)
+        means, stds = expectation_dict["means"], expectation_dict["stds"]
 
     print("done")
 
     """
-    visceral_slides = load_visceral_slides(cumulative_vs_path)
-    for i in range(len(visceral_slides)):
+    print("Inspexp VS lower limit {}".format(vs_min))
+    print("Inspexp VS upper limit {}".format(vs_max))
+
+    vs_values = [vs for vs in vs_values if 0 < vs <= vs_max]
+    vs_values_log = np.sqrt(vs_values)
+
+    plt.figure()
+    plt.boxplot(vs_values_log)
+    plt.savefig("vs_boxplot_inspexp_control_outl_removed_sqrt", bbox_inches='tight', pad_inches=0)
+    plt.show()
+
+    plt.figure()
+    plt.hist(vs_values_log, bins=200)
+    plt.savefig("vs_hist_inspexp_control_outl_removed_sqrt", bbox_inches='tight', pad_inches=0)
+    plt.show()
+    """
+
+    """
+    expectation = get_regions_expectation(cum_control_path, (vs_min, vs_max), chunks_num, None, True, None, images_path, output_path)
+
+    with open("cumulative_vs_expectation.pkl", "w+b") as f:
+        pickle.dump(expectation, f)
+
+    with open("cumulative_vs_expectation.pkl", "r+b") as file:
+        expectation_dict = pickle.load(file)
+        means, stds = expectation_dict["means"], expectation_dict["stds"]
+
+    print("done")
+
+    visceral_slides = load_visceral_slides(cum_control_path)
+    """
+
+    #for i in range(len(visceral_slides)):
+    """
+        for i in range(1):
         vs = visceral_slides[i]
-        vs_image = vs.build_path(images_path)
-        image = sitk.ReadImage(str(vs_image))
-        frame = sitk.GetArrayFromImage(image)[-2]
-
-        x1, y1 = vs.top_left_point
-        x2, y2 = vs.top_right_point
-        x3, y3 = vs.bottom_left_point
-        x4, y4 = vs.bottom_right_point
-
-        plt.figure()
-        plt.imshow(frame, cmap="gray")
-        plt.scatter(vs.x, vs.y, s=5, color="b")
-        plt.scatter(x1, y1, s=10, color="r")
-        plt.scatter(x2, y2, s=10, color="y")
-        plt.scatter(x3, y3, s=10, color="g")
-        plt.scatter(x4, y4, s=10, color="c")
-        plt.savefig(output_path / "{}.png".format(vs.full_id), bbox_inches='tight', pad_inches=0)
-        plt.close()
+        norm_vs_chunks(vs, means, stds, images_path, True, output_path)
     """
-
-
-    """
-    visceral_slides = load_visceral_slides(cumulative_vs_path)
-    pos_visceral_slides = [vs for vs in visceral_slides if vs.patient_id not in negative_patients_ids]
-
-    for i in range(len(pos_visceral_slides)):
-        vs = pos_visceral_slides[i]
-        norm_vs_chunks(vs, prior, images_path, True, output_path)
-    """
-
 
 
     """
