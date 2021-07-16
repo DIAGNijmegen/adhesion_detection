@@ -182,6 +182,41 @@ def write_slices_to_file(slices, file_path):
             file.write(full_id + "\n")
 
 
+def get_vs_range(visceral_slides):
+    """Returns visceral slide range with excluded outliers
+    """
+    # Statistics useful for prediction
+    all_vs_values = []
+    for visceral_slide in visceral_slides:
+        all_vs_values.extend(visceral_slide.values)
+
+    vs_abs_min = np.min(all_vs_values)
+    vs_abs_max = np.max(all_vs_values)
+    print("VS minumum : {}".format(vs_abs_min))
+    print("VS maximum : {}".format(vs_abs_max))
+
+    vs_q1 = np.quantile(all_vs_values, 0.25)
+    vs_q3 = np.quantile(all_vs_values, 0.75)
+    vs_iqr = vs_q3 - vs_q1
+    vs_min = vs_q1 - 1.5 * vs_iqr
+    vs_max = vs_q3 + 1.5 * vs_iqr
+
+    print("VS minumum, outliers removed range : {}".format(vs_min))
+    print("VS maximum, outliers removed range : {}".format(vs_max))
+
+    return vs_min, vs_max
+
+def get_avg_contour_size(visceral_slides):
+    widths = []
+    heights = []
+
+    for vs in visceral_slides:
+        widths.append(vs.width)
+        heights.append(vs.height)
+
+    return round(np.mean(widths)), round(np.mean(heights))
+
+
 def bb_size_stat(annotations, is_median=False):
     """
     Computes an average adhesion boundig box size

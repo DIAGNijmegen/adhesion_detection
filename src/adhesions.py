@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from config import *
 from cinemri.config import ARCHIVE_PATH
-from cinemri.contour import AbdominalContourPart, get_contour, get_abdominal_contour_top
+from cinemri.contour import AbdominalContourPart, get_contour
 from cinemri.definitions import CineMRISlice
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients

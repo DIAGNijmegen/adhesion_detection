@@ -9,33 +9,18 @@ from adhesions import AdhesionType, Adhesion, load_annotations
 from config import *
 from cinemri.config import ARCHIVE_PATH
 from cinemri.definitions import CineMRISlice
-from utils import bb_size_stat, load_visceral_slides, binning_intervals, get_inspexp_frames, adhesions_stat
-from contour import get_connected_regions, get_adhesions_prior_coords, get_abdominal_contour_top
+from utils import bb_size_stat, load_visceral_slides, binning_intervals, get_inspexp_frames, adhesions_stat, \
+    get_vs_range
+from contour import get_connected_regions, get_adhesions_prior_coords
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
-from enum import Enum, unique
 from sklearn.metrics import roc_curve, auc
 from vs_definitions import VSExpectationNormType
 
-VISCERAL_SLIDE_PATH = "../../data/visceral_slide_all/visceral_slide"
 PREDICTION_COLOR = (0, 0.8, 0.2)
 
-# TODO: rename
-def extract_visceral_slide_dict(annotations, visceral_slide_path):
-    visceral_slide_dict = {}
-    for annotation in annotations:
-        visceral_slide_results_path = annotation.build_path(visceral_slide_path, extension="")
-        if visceral_slide_results_path.exists():
-            # Load the computed visceral slide
-            visceral_slide_file_path = visceral_slide_results_path / VISCERAL_SLIDE_FILE
-            with open(str(visceral_slide_file_path), "r+b") as file:
-                visceral_slide_data = pickle.load(file)
-                visceral_slide_dict[annotation.full_id] = visceral_slide_data
 
-    return visceral_slide_dict
-
-
-def bb_from_region(region, mean_size):
+def bb_from_region(region, min_size):
     """
     Calculates bounding box based on the coordinates of the points in the region
     and mean annotations width and height
@@ -45,8 +30,8 @@ def bb_from_region(region, mean_size):
     region : list of list
        A list of contour points represented as 2d arrays
 
-    mean_size : tuple of float
-       Mean size of adhesions bounding boxes in annotations. The first values is width and the second is height
+    min_size : tuple of float
+       Min size of a bounding box to be created. The first values is width and the second is height
 
     Returns
     -------
@@ -55,23 +40,25 @@ def bb_from_region(region, mean_size):
     """
 
     # axis=0: x, axis=1: y
-    def compute_origin_and_len(region, mean_size, axis=0):
+    def compute_origin_and_len(region, min_size, axis=0):
+        """Computes the origin and bb lenght by a give axis and set the lenght to the
+        """
         region_centre = region[round(len(region) / 2) - 1]
 
         axis_min = np.min([coord[axis] for coord in region])
         axis_max = np.max([coord[axis] for coord in region])
         length = axis_max - axis_min + 1
 
-        if length < mean_size[axis]:
-            origin = region_centre[axis] - round(mean_size[axis] / 2)
-            length = mean_size[axis]
+        if length < min_size[axis]:
+            origin = region_centre[axis] - round(min_size[axis] / 2)
+            length = min_size[axis]
         else:
             origin = axis_min
 
         return origin, length
 
-    origin_x, width = compute_origin_and_len(region, mean_size, axis=0)
-    origin_y, height = compute_origin_and_len(region, mean_size, axis=1)
+    origin_x, width = compute_origin_and_len(region, min_size, axis=0)
+    origin_y, height = compute_origin_and_len(region, min_size, axis=1)
     return Adhesion([origin_x, origin_y, width, height])
 
 
@@ -595,24 +582,6 @@ def get_confidence_outcome(tps, fps, fns):
     return outcomes
 
 
-
-def get_vs_range(visceral_slides):
-    # Statistics useful for prediction
-    all_vs_values = []
-    for visceral_slide in visceral_slides:
-        all_vs_values.extend(visceral_slide.values)
-
-    vs_abs_max = np.max(all_vs_values)
-    vs_abs_min = np.min(all_vs_values)
-    vs_q1 = np.quantile(all_vs_values, 0.25)
-    vs_q3 = np.quantile(all_vs_values, 0.75)
-    vs_iqr = vs_q3 - vs_q1
-    vs_min = vs_q1 - 1.5 * vs_iqr
-    vs_max = vs_q3 + 1.5 * vs_iqr
-
-    return vs_min, vs_max
-
-
 def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size_median=False, vs_expectation=None,
                          expectation_norm_type=VSExpectationNormType.mean_div):
     """
@@ -694,7 +663,8 @@ def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size
         label = 1 if slice_full_id in annotations_dict else 0
         labels.append(label)
 
-    compute_slice_level_ROC(scores, labels, output_path)
+    auc = compute_slice_level_ROC(scores, labels, output_path)
+    print("Slice level AUC {}".format(auc))
 
 
 
@@ -784,7 +754,7 @@ def compute_slice_level_ROC(thresholds, labels, output_path):
     plt.savefig(output_path / "Slice_ROC.png", bbox_inches='tight', pad_inches=0)
     plt.show()
 
-    return  auc_val
+    return auc_val
 
 
 def plot_FROC(FP_per_image, sensitivity, output_path):
@@ -1020,7 +990,6 @@ def test():
     archive_path = ARCHIVE_PATH
     images_path = archive_path / IMAGES_FOLDER
     annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
-    visceral_slide_path = Path(VISCERAL_SLIDE_PATH)
     inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     full_segmentation_path = archive_path / FULL_SEGMENTATION_FOLDER / "merged_segmentation"
     # load inspiration and expiration data
@@ -1086,9 +1055,9 @@ def test_vs_calc_loading():
     visceral_slides = load_visceral_slides(cum_vs_path)
     visceral_slides.sort(key=lambda vs: vs.full_id, reverse=False)
 
-    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_no_avg_expectation" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_conf_min_vic2_vs2_5_roc_test"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_expectation" / "region_growing_range_conf_min_vic2_vs2_5_roc_test"
 
-    predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=False)
+    predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=False, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.mean_div)
     #predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=False)
 
     #vs_values_boxplot(insp_exp_vs_path)
