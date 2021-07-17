@@ -182,9 +182,10 @@ def write_slices_to_file(slices, file_path):
             file.write(full_id + "\n")
 
 
-def get_vs_range(visceral_slides):
+def get_vs_range(visceral_slides, negative_vs_needed):
     """Returns visceral slide range with excluded outliers
     """
+
     # Statistics useful for prediction
     all_vs_values = []
     for visceral_slide in visceral_slides:
@@ -204,7 +205,7 @@ def get_vs_range(visceral_slides):
     print("VS minumum, outliers removed range : {}".format(vs_min))
     print("VS maximum, outliers removed range : {}".format(vs_max))
 
-    return vs_min, vs_max
+    return (-np.inf, 0) if negative_vs_needed else (vs_min, vs_max)
 
 def get_avg_contour_size(visceral_slides):
     widths = []

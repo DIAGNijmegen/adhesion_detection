@@ -37,7 +37,7 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
 
     for index in range(1, coords_num):
         coord_curr = contour_subset_coords[index]
-        distance = get_distance(coord_curr, coord_prev)
+        distance = get_distance(coord_curr, coord_prev, axis=axis)
 
         if distance > connectivity_threshold:
             regions.append(np.array(current_region))
@@ -51,7 +51,7 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
             first_of_first = regions[0][0]
             last_of_last = current_region[-1]
 
-            distance = get_distance(first_of_first, last_of_last)
+            distance = get_distance(first_of_first, last_of_last, axis=axis)
 
             if distance > connectivity_threshold:
                 # First and last regions are separated

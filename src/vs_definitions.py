@@ -28,13 +28,26 @@ class Region:
         mean : float
            A mean of the region
         std : float
-           A standartd deviation of the region
+           A standard deviation of the region
         """
         self.x = np.atleast_1d(x)
         self.y = np.atleast_1d(y)
         self.values = np.atleast_1d(values)
         self.mean = mean
         self.std = std
+        self.points = np.column_stack((self.x, self.y, self.values))
+
+    @classmethod
+    def from_point(cls, point):
+        x, y, value = point[0], point[1], point[2]
+        region = cls(x, y, value)
+        return region
+
+    @classmethod
+    def from_points(cls, points):
+        x, y, values = points[:, 0], points[:, 1], points[:, 2]
+        region = cls(x, y, values)
+        return region
 
     def append(self, x, y, value):
         """
@@ -50,6 +63,24 @@ class Region:
         self.y = np.concatenate((self.y, [y]))
         self.values = np.concatenate((self.values, [value]))
 
+        self.points = np.column_stack((self.x, self.y, self.values))
+
+    def append_point(self, point):
+        """
+        Appends one coordinate and its values to the region
+        Parameters
+        ----------
+        point : tuple of (int, int, float)
+           A coordinate and the corresponding value to append
+        value : float
+           The corresponding value
+        """
+        self.x = np.concatenate((self.x, [point[0]]))
+        self.y = np.concatenate((self.y, [point[1]]))
+        self.values = np.concatenate((self.values, [point[2]]))
+
+        self.points = np.column_stack((self.x, self.y, self.values))
+
     def extend(self, x, y, values):
         """
         Appends one coordinate and its values to the region
@@ -64,8 +95,28 @@ class Region:
         self.y = np.concatenate((self.y, y))
         self.values = np.concatenate((self.values, values))
 
+        self.points = np.column_stack((self.x, self.y, self.values))
 
-# TODO: moveis_slice_vs_suitable
+    @property
+    def size(self):
+        if len(self.x) == 0:
+            return 0, 0
+
+        def compute_len(axis=0):
+            values = [point[axis] for point in self.points]
+            length = np.max(values) - np.min(values) + 1
+            return length
+
+        width = compute_len(axis=0)
+        height = compute_len(axis=1)
+        return width, height
+
+    def exceeded_size(self, size_limit):
+        width, height = self.size
+        return width >= size_limit[0] or height >= size_limit[1]
+
+
+# TODO: move is_slice_vs_suitable
 class VisceralSlide(Contour):
     """An object representing visceral slide for a Cine-MRI slice
     """

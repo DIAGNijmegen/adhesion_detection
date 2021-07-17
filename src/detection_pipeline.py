@@ -15,12 +15,17 @@ from contour import get_connected_regions, get_adhesions_prior_coords
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
 from sklearn.metrics import roc_curve, auc
-from vs_definitions import VSExpectationNormType
+from vs_definitions import VSExpectationNormType, Region
 
 PREDICTION_COLOR = (0, 0.8, 0.2)
 
 
-def bb_from_region(region, min_size):
+def get_predicted_bb_ranges(bb_mean_size, bb_size_std, std_coef=1.96):
+    bb_size_max = bb_mean_size[0] + std_coef * bb_size_std[0], bb_mean_size[1] + std_coef * bb_size_std[1]
+    return bb_mean_size, bb_size_max
+
+
+def bb_from_points(region, min_size):
     """
     Calculates bounding box based on the coordinates of the points in the region
     and mean annotations width and height
@@ -62,22 +67,14 @@ def bb_from_region(region, min_size):
     return Adhesion([origin_x, origin_y, width, height])
 
 
-def region_size(region):
+def bb_adjusted_region(region, bounding_box):
+    """
+    Finds a subset of points in the region that are inside the given bounding box
+    and returns the region and its start and end indices
+    """
 
-    def compute_len(region, axis=0):
-        axis_min = np.min([coord[axis] for coord in region])
-        axis_max = np.max([coord[axis] for coord in region])
-        length = axis_max - axis_min + 1
-        return length
-
-    width = compute_len(np.array(region), axis=0)
-    height = compute_len(np.array(region), axis=1)
-    return width, height
-
-
-def bb_adjusted_region(region, bb):
-    x_inside_bb = (bb.origin_x <= region[:, 0]) & (region[:, 0] <= bb.max_x)
-    y_inside_bb = (bb.origin_y <= region[:, 1]) & (region[:, 1] <= bb.max_y)
+    x_inside_bb = (bounding_box.origin_x <= region[:, 0]) & (region[:, 0] <= bounding_box.max_x)
+    y_inside_bb = (bounding_box.origin_y <= region[:, 1]) & (region[:, 1] <= bounding_box.max_y)
     inside_bb = x_inside_bb & y_inside_bb
     adjusted_region = region[inside_bb]
 
@@ -97,26 +94,28 @@ def bb_adjusted_region(region, bb):
 
 
 def find_min_vs(regions):
+    """
+    Finds minimum VS value in all regions and returns a region containing it, its index and
+    index of the min value inside the region
+    """
 
     min_region_ind = None
     min_slide_value = np.inf
     # Find minimum across region
     for (region_ind, region) in enumerate(regions):
-        region_values = region[:, 2]
-        region_min = np.min(region_values)
+        region_min = np.min(region.values)
         if region_min < min_slide_value:
             min_region_ind = region_ind
             min_slide_value = region_min
 
     region_of_prediction = regions[min_region_ind]
-    vs_values = region_of_prediction[:, 2]
-    vs_value_min_ind = np.argmin(vs_values)
+    vs_value_min_ind = np.argmin(region_of_prediction.values)
 
-    return region_of_prediction, min_region_ind, vs_values, vs_value_min_ind
+    return region_of_prediction, min_region_ind, vs_value_min_ind
 
 
+# TODO: fiix this or remove
 def adhesions_from_region_fixed_size(regions, bb_size, bb_size_max, vs_max):
-
     # Predict bounding boxes
     region_len = max(bb_size[0], bb_size[1])
     vicinity = round((region_len - 1) / 2)
@@ -129,14 +128,14 @@ def adhesions_from_region_fixed_size(regions, bb_size, bb_size_max, vs_max):
 
         # Generate bounding box from region
         bb_region = region_of_prediction[region_start:region_end]
-        bounding_box = bb_from_region(bb_region, bb_size)
+        bounding_box = bb_from_points(bb_region, bb_size)
 
         adjusted_region, start_index, end_index = bb_adjusted_region(region_of_prediction, bounding_box)
 
         # Later invert - subtract confidences from the max VS value
         # Take mean region vs as confidence
         confidence = vs_max - np.mean(adjusted_region[:, 2])
-        bounding_boxes.append([bounding_box, confidence])
+        bounding_boxes.append((bounding_box, confidence))
 
         # Cut out bounding box region
         # Remove the region of prediction from the array
@@ -153,90 +152,115 @@ def adhesions_from_region_fixed_size(regions, bb_size, bb_size_max, vs_max):
     return bounding_boxes
 
 
-def adhesions_with_region_growing(regions, bb_size, bb_size_max, vs_max, vicinity_ind=2.5, region_growing_ind=2.5, min_region_len=5):
-    region_len = max(bb_size[0], bb_size[1])
-    vicinity = region_len - 1
-    vicinity_max = vicinity_ind * vicinity
+def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, region_growing_ind=2.5, min_region_len=5):
+    """
+    Parameters
+    ----------
+    regions : list of Region
+       A list of connected regions on the contour to predict adhesions at
+    bb_size_min : tuple of float
+       A minimum size of a predicted bounding box
+    bb_size_max : tuple of float
+       A maximum size of a predicted bounding box
+    vs_max : float
+       A maximum value of the visceral slide in the considered range
+    region_growing_ind : float, default=2.5
+       A coefficient to determine the maximum (minimum) visceral slide value for prediction
+    min_region_len : int, default=5
+       A minimum number of points in the region to be sufficient for prediction
+
+    """
 
     bounding_boxes = []
     # While there are regions that are larger than  min_region_len
     while len(regions) > 0:
-        region_of_prediction, min_region_ind, vs_values, vs_value_min_ind = find_min_vs(regions)
-        min_slide_value = vs_values[vs_value_min_ind]
-        max_region_slide_value = min_slide_value * region_growing_ind if min_slide_value > 0 else min_slide_value / region_growing_ind
+        region_of_prediction, min_region_ind, vs_value_min_ind = find_min_vs(regions)
+        min_slide_value = region_of_prediction.values[vs_value_min_ind]
+        max_region_slide_value = min_slide_value * region_growing_ind if min_slide_value > 0 \
+            else min_slide_value / region_growing_ind
 
         # Looking for the regions boundaries
         start_ind = end_ind = vs_value_min_ind
         start_ind_found = end_ind_found = False
-        prediction_region = [region_of_prediction[vs_value_min_ind]]
+        prediction_region = Region.from_point(region_of_prediction.points[start_ind])
         while not (start_ind_found and end_ind_found):
+            # Check if visceral slide at the previous index can be added to the region
             new_start_ind = max(0, start_ind - 1)
-            start_value = vs_values[start_ind]
-
-            exceeded_size_limit = region_size(prediction_region)[0] >= bb_size_max[0] or region_size(prediction_region)[1] >= bb_size_max[1]
-            start_ind_found = start_value > max_region_slide_value or exceeded_size_limit or start_ind == 0
+            start_value = region_of_prediction.values[start_ind]
+            # If the VS value at the previous index is too large or the regions size exceeds maximum,
+            # do not change the start index
+            start_ind_found = start_value > max_region_slide_value or \
+                              prediction_region.exceeded_size(bb_size_max) or\
+                              start_ind == 0
+            # Otherwise add the point to the region
             if not start_ind_found:
                 start_ind = new_start_ind
-                prediction_region.append(region_of_prediction[start_ind])
+                prediction_region.append_point(region_of_prediction.points[start_ind])
 
-            new_end_ind = min(len(region_of_prediction) - 1, end_ind + 1)
-            end_value = vs_values[end_ind]
+            # Same steps for the end of the regions
+            new_end_ind = min(len(region_of_prediction.points) - 1, end_ind + 1)
+            end_value = region_of_prediction.values[end_ind]
 
-            exceeded_size_limit = region_size(prediction_region)[0] >= bb_size_max[0] or region_size(prediction_region)[
-                1] >= bb_size_max[1]
-            end_ind_found = end_value > max_region_slide_value or exceeded_size_limit or end_ind == (len(region_of_prediction) - 1)
+            end_ind_found = end_value > max_region_slide_value or \
+                            prediction_region.exceeded_size(bb_size_max) or \
+                            end_ind == (len(region_of_prediction.points) - 1)
             if not end_ind_found:
                 end_ind = new_end_ind
-                prediction_region.append(region_of_prediction[end_ind])
-
-            if new_start_ind == 0 and new_end_ind == (len(region_of_prediction) - 1):
+                prediction_region.append_point(region_of_prediction.points[end_ind])
+            # Stop if there are no points left in the regions
+            if new_start_ind == 0 and new_end_ind == (len(region_of_prediction.points) - 1):
                 start_ind_found = end_ind_found = True
 
-        # Only predict the bouding box if the region is large enough
+        # Only predict the bounding box if the region is large enough
         if end_ind - start_ind >= min_region_len:
             # Generate bounding box from region
-            bb_region = region_of_prediction[start_ind:end_ind]
-            bounding_box = bb_from_region(bb_region, bb_size)
+            bb_points = region_of_prediction.points[start_ind:end_ind]
+            bounding_box = bb_from_points(bb_points, bb_size_min)
 
-            adjusted_region, start_ind, end_ind = bb_adjusted_region(region_of_prediction, bounding_box)
+            # If the predicted bounding box is too small, enlarge it.
+            # This way we want to prevent the method from outputing small bounding boxes
+            adjusted_region, start_ind, end_ind = bb_adjusted_region(region_of_prediction.points, bounding_box)
             # Take mean region vs as confidence
             confidence = vs_max - min_slide_value
-            bounding_boxes.append([bounding_box, confidence])
+            bounding_boxes.append((bounding_box, confidence))
 
         # Cut out bounding box region
         # Remove the region of prediction from the array
         del regions[min_region_ind]
         # Add regions around the cutoff if they are large enough
-        region_before_bb = region_of_prediction[:start_ind]
-        if len(region_before_bb) > region_len:
+        region_before_bb = Region.from_points(region_of_prediction.points[:start_ind])
+        if region_before_bb.exceeded_size(bb_size_min):
             regions.append(region_before_bb)
 
-        region_after_bb = region_of_prediction[end_ind:]
-        if len(region_after_bb) > region_len:
+        region_after_bb = Region.from_points(region_of_prediction.points[end_ind:])
+        if region_after_bb.exceeded_size(bb_size_min):
             regions.append(region_after_bb)
 
     return bounding_boxes
 
 
-def bb_with_threshold(vs, bb_size, bb_size_max, vs_range, pred_func):
+def bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, pred_func):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
     specified threshold level
 
     Parameters
     ----------
-    x, y : ndarray of int
-       x-axis and y-axis components of abdominal cavity contour
-    slide_value : ndarray of float
-       Normalized values of visceral slide corresponding to the coordinates of abdominal cavity contour
-    bb_size : tuple of float
-       Mean size of adhesions bounding boxes in annotations. The first values is width and the second is height
+    vs : VisceralSlide
+       A visceral slide to make prediction for
+    bb_size_min : tuple of float
+       The minimum size of a bounding box to be predicted
+    bb_size_max : tuple of float
+       The maximum size of a bounding box to be predicted
+    vs_range : tuple of float
+       A range of visceral slide values without outliers
+    pred_func : func
+       A function to make a prediction
     Returns
     -------
     bounding_boxes : list of Adhesion
        A list of bounding boxes predicted based on visceral slide values
     """
-
 
     x, y, slide_value = vs.x, vs.y, vs.values
 
@@ -250,386 +274,99 @@ def bb_with_threshold(vs, bb_size, bb_size_max, vs_range, pred_func):
     contour_subset = np.column_stack((x, y, slide_value))
     contour_subset = contour_subset[prior_inds]
 
+    # Remove the outliers
     contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
+    # If no points are left, the VS values is too high in the regions where adhesions can be present
     if len(contour_subset) == 0:
         return []
 
     # Predict
     suitable_regions = get_connected_regions(contour_subset)
-    bounding_boxes = pred_func(suitable_regions, bb_size, bb_size_max, vs_range[1])
+    # Convert to array of Region instances
+    suitable_regions = [Region.from_points(region) for region in suitable_regions]
+    bounding_boxes = pred_func(suitable_regions, bb_size_min, bb_size_max, vs_range[1])
     return bounding_boxes
 
 
-# TODO: refactor or move to a more appropriate place
-def adhesion_likelihood(region, vs_min, vs_max, vs_threshold):
-    # Average
-
-    """
-    region_slides = [comp[2] for comp in region]
-    # or median?
-    mean_region_slide = np.median(region_slides)
-    likelihood = (vs_threshold - mean_region_slide) / (vs_threshold - vs_min)
-    """
-
-    # Region likelihood
-
-    likelihood = 1
-    for point in region:
-        likelihood *= (vs_max - point[2]) / (vs_max - vs_min)
-
-    return likelihood
-
-
-def visualize_gt_vs_prediction(prediction, annotation, x, y, slide_normalized, insp_frame, file_path=None):
-    """
-    Visualises ground truth annotations vs prediction together with visceral slide
-    on the inspiration frame
-
-    Parameters
-    ----------
-    annotation : AdhesionAnnotation
-        A ground truth annotation for a slice
-    prediction : list of (Adhesion, float)
-       A list of predicted bounding boxes and the corresponding confidence scores
-    x, y : ndarray of int
-       x-axis and y-axis components of abdominal cavity contour
-    slide_normalized : ndarray of float
-       Normalized values of visceral slide corresponding to the coordinates of abdominal cavity contour
-    insp_frame : 2d ndarray
-       An inspiration frame
-    file_path : Path
-       A Path where to save a file, default is None
-    """
-
-    plt.figure()
-    plt.imshow(insp_frame, cmap="gray")
-    # Plot viseral slide
-    plt.scatter(x, y, s=5, c=slide_normalized, cmap="jet")
-    plt.colorbar()
-    # Plot regions of slow slide
-    # plt.scatter(low_slide_x, low_slide_y, s=10, color="k", marker="x")
-    ax = plt.gca()
-
-    for adhesion, confidence in prediction:
-        adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
-                                  linewidth=1.5, edgecolor=PREDICTION_COLOR, facecolor='none')
-        ax.add_patch(adhesion_rect)
-        plt.text(adhesion.origin_x, adhesion.origin_y - 3, "{:.3f}".format(confidence), c=PREDICTION_COLOR, fontweight='semibold')
-
-    if annotation:
-        for adhesion in annotation.adhesions:
-            adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
-                                      linewidth=1.5, edgecolor='r', facecolor='none')
-            ax.add_patch(adhesion_rect)
-
-    plt.axis("off")
-
-    if file_path is not None:
-        plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
-    else:
-        plt.show()
-    
-    plt.close()
-
-# TODO: probably leave only prior coords when plotting
-def predict_and_visualize(visceral_slides, annotations_dict, images_path, output_path, bb_size_median=False,
-                          vs_expectation=None, expectation_norm_type=VSExpectationNormType.mean_div, inspexp_data=None):
-
-    output_path.mkdir(exist_ok=True, parents=True)
-
-    annotations = annotations_dict.values()
-    # Average bounding box size
-    bb_size = bb_size_stat(annotations, is_median=bb_size_median)
-
-    # Normalize with expectation
-    if vs_expectation:
-        for vs in visceral_slides:
-            vs.norm_with_expectation(vs_expectation[0], vs_expectation[1], expectation_norm_type)
-
-    # vary threshold level
-    # Get predictions by visceral slide level threshold
-    # If we normalize by motion by standardization, we are interested only in the negative range
-    negative_vs_needed = vs_expectation is not None and expectation_norm_type == VSExpectationNormType.standardize
-    vs_min, vs_max = (-np.inf, 0) if negative_vs_needed else get_vs_range(visceral_slides)
-
-    for vs in visceral_slides:
-        prediction = bb_with_threshold(vs, bb_size, (vs_min, vs_max), adhesions_with_region_growing)
-
-        if inspexp_data is None:
-            # Assume it is cumulative VS and take the one before the last one frame
-            slice_path = vs.build_path(images_path)
-            slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
-            frame = slice[-2]
-        else:
-            # Extract inspiration frame
-            try:
-                slice = CineMRISlice(vs.slice_id, vs.patient_id, vs.study_id)
-                frame, _ = get_inspexp_frames(slice, inspexp_data, images_path)
-            except:
-                print("Missing insp/exp data for the patient {}, study {}, slice {}".format(vs.patient_id,
-                                                                                            vs.study_id,
-                                                                                            vs.slice_id))
-
-        file_path = output_path / (vs.full_id + ".png")
-        annotation = annotations_dict[vs.full_id] if vs.full_id in annotations_dict else None
-        visualize_gt_vs_prediction(prediction, annotation, vs.x, vs.y, vs.values, frame, file_path)
-
-
-# TODO: should we also output confidence here?
-def predict(visceral_slides, bb_size, bb_size_max, vs_range):
-    """
-    Predicts adhesions based on visceral slide values for the provided full ids of slices
-
-    Parameters
-    ----------
-    full_ids : list of str
-       Full ids of slices in the format patientID_studyID_slice_ID
-    visceral_slides : dict
-       A dictionary that contains the coordinates of abdominal cavity contour and
-       the corresponding visceral slide
-    bb_size : tuple of float
-       Mean size of adhesions bounding boxes in annotations. The first values is width and the second is height
-
-    Returns
-    -------
-    prediction : dict
-       A dictionary with full ids of slices used as keys and predicted bounding boxes as values
-    """
-
-    predictions = {}
-
-    for vs in visceral_slides:
-        prediction = bb_with_threshold(vs, bb_size, bb_size_max, vs_range, adhesions_with_region_growing)
-        predictions[vs.full_id] = prediction
-
-    return predictions
-
-# Some annotations are very small - setup min annotation size
-# Min width and height - 15 +
-
-# TODO: understand adequate evaluation metric
-# Recall and precision since we do not have confidence score?
-# F1 score
-# Maybe confidence - inverse of length? Ask supervisors about it
-def evaluate(annotations, predictions, iou_threshold=0.1, visceral_slide_dict=None, images_path=None, inspexp_data=None):
-
-    tps = []
-    tp_num = 0
-    fps = []
-    fns = []
-    prediction_num = 0
-    for annotation in annotations:
-        prediction = predictions[annotation.full_id]
-        # Tracks which predictions has been assigned to a TP
-        hit_predictions_inds = []
-        tp_num += len(annotation.adhesions)
-        prediction_num += len(prediction)
-        # Loop over TPs
-        for adhesion in annotation.adhesions:
-            adhesion.adjust_size()
-
-            max_iou = 0
-            max_iou_ind = -1
-            # For simplicity for now one predicted bb can correspond to only one TP
-            for ind, bounding_box in enumerate(prediction):
-                curr_iou = adhesion.iou(bounding_box)
-                # Do not use predictions that have already been assigned to a TP
-                if curr_iou > max_iou and ind not in hit_predictions_inds:
-                    max_iou = curr_iou
-                    max_iou_ind = ind
-
-            # If a maximum IoU is greater than the threshold, consider a TP as found
-            if max_iou >= iou_threshold:
-                matching_pred = prediction[max_iou_ind]
-                tps.append((adhesion, matching_pred))
-                hit_predictions_inds.append(max_iou_ind)
-            # Otherwise add it as a false negative
-            else:
-                fns.append(adhesion)
-
-        # Get false positive
-        # Predictions that was not matched with a TP are FPs
-        tp_mask = np.full(len(prediction), True, dtype=bool)
-        tp_mask[hit_predictions_inds] = False
-        fps_left = np.array(prediction)[tp_mask]
-        fps.append(fps_left)
-
-        # Optionally visualise
-        if visceral_slide_dict is not None:
-            visceral_slide_data = visceral_slide_dict[annotation.full_id]
-            x, y = visceral_slide_data["x"], visceral_slide_data["y"]
-            visceral_slide = visceral_slide_data["slide"]
-            slide_normalized = np.abs(visceral_slide) / np.abs(visceral_slide).max()
-
-            # Extract inspiration frame
-            try:
-                patient_data = inspexp_data[annotation.patient_id]
-                study_data = patient_data[annotation.study_id]
-                inspexp_frames = study_data[annotation.slice_id]
-            except:
-                print("Missing insp/exp data for the patient {}, study {}, slice {}".format(annotation.patient_id,
-                                                                                           annotation.study_id,
-                                                                                           annotation.slice_id))
-
-            # load images
-            slice_path = annotation.build_path(images_path)
-            slice_array = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
-            insp_frame = slice_array[inspexp_frames[0]].astype(np.uint32)
-
-            visualize_gt_vs_prediction(annotation, prediction, x, y, slide_normalized, insp_frame)
-            print("vis")
-
-
-    # How many of predicted bbs are TP
-    precision = len(tps) / prediction_num
-    print("Precision {}".format(precision))
-
-    # How many of TP are found
-    recall = len(tps) / tp_num
-    print("Recall {}".format(recall))
-
-    f1_score = 2 * precision * recall / (precision + recall)
-    print("F1 score {}".format(f1_score))
-
-    return precision, recall, f1_score
-
-
-def get_prediction_outcome(annotations_dict, predictions, iou_threshold=0.1):
-    """
-    Determines TPs, FPS and FNs based on the GT annotations, predictions and IoU threshold
-    Parameters
-    ----------
-    annotations : list of AdhesionAnnotation
-    predictions : list of list
-       Bounding boxes and confidences
-    iou_threshold : float
-
-    Returns
-    -------
-    tps, fps, fns : list
-
-    """
-    tps = []
-    fps = []
-    fns = []
-
-    for slice_id, prediction in predictions.items():
-        if slice_id in annotations_dict:
-            annotation = annotations_dict[slice_id]
-            # Tracks which predictions has been assigned to a TP
-            hit_predictions_inds = []
-            # Loop over TPs
-            for adhesion in annotation.adhesions:
-                adhesion.adjust_size()
-
-                max_iou = 0
-                max_iou_ind = -1
-                # For simplicity for now one predicted bb can correspond to only one TP
-                for ind, (bounding_box, confidence) in enumerate(prediction):
-                    curr_iou = adhesion.iou(bounding_box)
-                    # Do not use predictions that have already been assigned to a TP
-                    if curr_iou > max_iou and ind not in hit_predictions_inds:
-                        max_iou = curr_iou
-                        max_iou_ind = ind
-
-                # If a maximum IoU is greater than the threshold, consider a TP as found
-                if max_iou >= iou_threshold:
-                    matching_pred = prediction[max_iou_ind]
-                    tps.append(matching_pred)
-                    hit_predictions_inds.append(max_iou_ind)
-                # Otherwise add it as a false negative
-                else:
-                    fns.append(adhesion)
-
-            # Get false positive
-            # Predictions that was not matched with a TP are FPs
-            tp_mask = np.full(len(prediction), True, dtype=bool)
-            tp_mask[hit_predictions_inds] = False
-            fps_left = np.array(prediction)[tp_mask]
-            fps += fps_left.tolist()
-        else:
-            # All predicted bounding boxes are FPs
-            fps += prediction
-
-    return tps, fps, fns
-
-
-def get_confidence_outcome(tps, fps, fns):
-    """
-    Determines whether prediction with a given confidence is true or false based on the TPs and FPs lists
-    Parameters
-    ----------
-    tps : list
-       A list of true positives
-    fps : list
-       A list of false positives
-
-    Returns
-    -------
-    outcomes : list
-       A list of tuple of confidence and whether its prediction is true
-    """
-    outcomes = []
-    for _, confidence in tps:
-        outcomes.append((1, confidence))
-        
-    for _, confidence in fps:
-        outcomes.append((0, confidence))
-
-    for _ in fns:
-        outcomes.append((1, 0))
-        
-    return outcomes
-
-
-def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size_median=False, vs_expectation=None,
-                         expectation_norm_type=VSExpectationNormType.mean_div):
+def predict(visceral_slides,
+            annotations_dict,
+            bb_size_median=False,
+            vs_expectation=None,
+            expectation_norm_type=VSExpectationNormType.mean_div):
     """
     Performs prediction by visceral slide threshold and evaluates it
 
     Parameters
     ----------
-    annotations
-    visceral_slide_path
+    visceral_slides : list of VisceralSlide
+       Visceral slides to predict adhesions
+    annotations_dict : dict
+       A dictionary of GT annotations in format "slice_full_id" : [adhesion : Adhesion]
+    bb_size_median : bool, default = False
+       A boolean flag indicating whether use median BB size in annotations for predicted bounding boxes limits
+    vs_expectation : tuple of list of float, optional
+       Lists of mean and standard deviations of visceral slide by contour parts
+    expectation_norm_type : VSExpectationNormType, default = VSExpectationNormType.mean_div
+       A method to normalize visceral slide
 
     Returns
     -------
-    metric :
-       Evaluation metric
+    predictions : dict
+       A dictionary of predictions in format "slice_full_id" : [(adhesion : Adhesion, confidence: float)]
     """
-    output_path.mkdir(exist_ok=True, parents=True)
 
     annotations = annotations_dict.values()
 
     # Average bounding box size
     bb_mean_size, bb_size_std = bb_size_stat(annotations, is_median=bb_size_median)
-    bb_size_max = bb_mean_size[0] + 1.96 * bb_size_std[0], bb_mean_size[1] + 1.96 * bb_size_std[1]
+    bb_size_min, bb_size_max = get_predicted_bb_ranges(bb_mean_size, bb_size_std)
 
     # Normalize with expectation
     if vs_expectation:
         for vs in visceral_slides:
-            vs.norm_with_expectation(vs_expectation[0], vs_expectation[1], expectation_norm_type)
+            means = vs_expectation[0]
+            stds = vs_expectation[1]
+            vs.norm_with_expectation(means, stds, expectation_norm_type)
 
     # vary threshold level
     # Get predictions by visceral slide level threshold
     negative_vs_needed = vs_expectation is not None and expectation_norm_type == VSExpectationNormType.standardize
-    vs_min, vs_max = (-np.inf, 0) if negative_vs_needed else get_vs_range(visceral_slides)
+    vs_range = get_vs_range(visceral_slides, negative_vs_needed)
 
-    predictions = predict(visceral_slides, bb_mean_size, bb_size_max, (vs_min, vs_max))
+    predictions = {}
+    for vs in visceral_slides:
+        prediction = bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, adhesions_with_region_growing)
+        predictions[vs.full_id] = prediction
 
-    tps, fps, fns = get_prediction_outcome(annotations_dict, predictions, 0.01)
+    return predictions
 
-    outcomes = get_confidence_outcome(tps, fps, fns)
 
-    total_patients = len(annotations)
+def evaluate(predictions, annotations_dict, output_path, iou_threshold=0.01):
+    """
+    Evaluates the predicted adhesions
+    Parameters
+    ----------
+    predictions : dict
+       A dictionary of predictions in format "slice_full_id" : [(adhesion : Adhesion, confidence: float)]
+    annotations_dict : dict
+       A dictionary of GT annotations in format "slice_full_id" : [adhesion : Adhesion]
+    output_path : Path
+       A path where to save visualised evaluation metrics
+    iou_threshold : float, default=0.01
+       IoU threshold to determine the hit
+    """
+    output_path.mkdir(exist_ok=True, parents=True)
 
-    adhesions_num = 0
-    for annotation in annotations:
-        adhesions_num += len(annotation.adhesions)
+    tps, fps, fns = get_prediction_outcome(annotations_dict, predictions, iou_threshold)
+    negative_slices_ids = [full_id for full_id in predictions.keys() if full_id not in annotations_dict]
+    outcomes, outcomes_negative = get_confidence_outcome(tps, fps, fns, negative_slices_ids)
 
-    FP_per_image, FP_per_normal_image, sensitivity, thresholds = y_to_FROC(outcomes, [], total_patients, 1)
+    slices_num = len(predictions)
+    negative_slices_num = len(negative_slices_ids)
+    fp_per_image, fp_per_normal_image, sensitivity, thresholds = y_to_FROC(outcomes, outcomes_negative, slices_num, negative_slices_num)
 
-    plot_FROC(FP_per_image, sensitivity, output_path)
+    plot_FROC(fp_per_image, sensitivity, output_path, "ROC all")
+    plot_FROC(fp_per_normal_image, sensitivity, output_path, "ROC negative")
 
     recall, precision, thresholds = compute_pr_curves(outcomes)
     ap, precision1, recall1 = compute_ap(recall, precision)
@@ -639,11 +376,11 @@ def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size
 
     print("Average precision {}".format(ap))
 
-    tp_conf = [tp[1] for tp in tps]
+    tp_conf = [tp[2] for tp in tps]
     mean_tp_conf = np.mean(tp_conf)
     print("Mean TP conf {}".format(mean_tp_conf))
 
-    fp_conf = [fp[1] for fp in fps]
+    fp_conf = [fp[2] for fp in fps]
     mean_fp_conf = np.mean(fp_conf)
     print("Mean FP conf {}".format(mean_fp_conf))
 
@@ -667,10 +404,111 @@ def predict_and_evaluate(visceral_slides, annotations_dict, output_path, bb_size
     print("Slice level AUC {}".format(auc))
 
 
+def get_prediction_outcome(annotations_dict, predictions, iou_threshold=0.1):
+    """
+    Determines TPs, FPS and FNs based on the GT annotations, predictions and IoU threshold
+    Parameters
+    ----------
+    annotations_dict : dict
+       A dictionary of GT annotations in format "slice_full_id" : [adhesion : Adhesion]
+    predictions : list of list
+       Bounding boxes and confidences
+    iou_threshold : float, default=0.01
+       IoU threshold to determine the hit
+
+    Returns
+    -------
+    tps, fps : list of tuple
+       A list of predicted TP(FP)s in format (slice_id, Adhesion, confidence)
+    fns : list of tuple
+       A list of predicted FNs in format (slice_id, confidence)
+    """
+    tps = []
+    fps = []
+    fns = []
+
+    for slice_id, prediction in predictions.items():
+        if slice_id in annotations_dict:
+            annotation = annotations_dict[slice_id]
+            # Tracks which predictions has been assigned to a TP
+            hit_predictions_inds = []
+            # Loop over TPs
+            for adhesion in annotation.adhesions:
+                adhesion.adjust_size()
+
+                max_iou = 0
+                max_iou_ind = -1
+                # For simplicity for now one predicted bb can correspond to only one TP
+                for ind, (bounding_box, _) in enumerate(prediction):
+                    curr_iou = adhesion.iou(bounding_box)
+                    # Do not use predictions that have already been assigned to a TP
+                    if curr_iou > max_iou and ind not in hit_predictions_inds:
+                        max_iou = curr_iou
+                        max_iou_ind = ind
+
+                # If a maximum IoU is greater than the threshold, consider a TP as found
+                if max_iou >= iou_threshold:
+                    matching_pred = prediction[max_iou_ind]
+                    tps.append((slice_id,) + matching_pred)
+                    hit_predictions_inds.append(max_iou_ind)
+                # Otherwise add it as a false negative
+                else:
+                    fns.append((slice_id, adhesion))
+
+            # Get false positive
+            # Predictions that was not matched with a TP are FPs
+            tp_mask = np.full(len(prediction), True, dtype=bool)
+            tp_mask[hit_predictions_inds] = False
+            fps_left = np.array(prediction)[tp_mask]
+            fps += [(slice_id, fp[0], fp[1]) for fp in fps_left]
+        else:
+            # All predicted bounding boxes are FPs
+            fps += [(slice_id, fp[0], fp[1]) for fp in prediction]
+
+    return tps, fps, fns
+
+
+def get_confidence_outcome(tps, fps, fns, negative_ids):
+    """
+    Determines whether prediction with a given confidence is true or false based on the TPs and FPs lists
+    Parameters
+    ----------
+    tps, fps : list of tuple
+       A list of predicted TP(FP)s in format (slice_id, Adhesion, confidence)
+    fns : list of tuple
+       A list of predicted FNs in format (slice_id, confidence)
+    negative_ids : list of str
+       A list of negative ids
+
+    Returns
+    -------
+    outcomes : list
+       A list of tuple of confidence and whether its prediction is true
+    outcomes_negative : list
+       A list of tuple of confidence and whether its prediction is true for negative slices only
+    """
+    outcomes = []
+    outcomes_negative = []
+    for _, _, confidence in tps:
+        outcomes.append((1, confidence))
+
+    for slice_id, _, confidence in fps:
+        outcomes.append((0, confidence))
+
+        if slice_id in negative_ids:
+            outcomes_negative.append((0, confidence))
+
+    for _ in fns:
+        outcomes.append((1, 0))
+
+    return outcomes, outcomes_negative
+
 
 def compute_pr_curves(outcomes):
-    # Compute precision and recall curves from list of predictions and confidence
-    # Sort Predictions
+    """
+    Computes precision and recall curves from list of predictions and confidence
+    """
+
     outcomes.sort()
     labels = []
     predictions = []
@@ -736,6 +574,9 @@ def compute_ap(recall, precision):
 
 
 def compute_slice_level_ROC(thresholds, labels, output_path):
+    """
+    Computes and plots a slice-level ROC
+    """
 
     fpr, tpr, thresholds = roc_curve(labels, thresholds)
     auc_val = auc(fpr, tpr)
@@ -757,14 +598,14 @@ def compute_slice_level_ROC(thresholds, labels, output_path):
     return auc_val
 
 
-def plot_FROC(FP_per_image, sensitivity, output_path):
+def plot_FROC(FP_per_image, sensitivity, output_path, title):
 
     plt.figure()
     plt.plot(FP_per_image, sensitivity)
     plt.xlabel("Mean number of FPs per image")
     plt.ylabel("TPs fraction")
     plt.ylim([0, 1])
-    plt.savefig(output_path / "FROC.png", bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / "{}.png".format(title), bbox_inches='tight', pad_inches=0)
     plt.show()
 
 
@@ -779,9 +620,107 @@ def plot_precision_recall(values, confidence, output_path, metric="Precision"):
     plt.savefig(output_path / "{}.png".format(metric), bbox_inches='tight', pad_inches=0)
     plt.show()
 
-# determine bounding box as rect with origin in min x, min y and bottom right angle max x, max y
-# for this setup min number of points in the cluster and connectivity threshold
-# also IoU - 0.1?
+
+def visualize_gt_vs_prediction(prediction, annotation, x, y, values, insp_frame, file_path=None):
+    """
+    Visualises ground truth annotations vs prediction together with visceral slide
+    on the inspiration frame
+
+    Parameters
+    ----------
+    annotation : AdhesionAnnotation
+        A ground truth annotation for a slice
+    prediction : list of (Adhesion, float)
+       A list of predicted bounding boxes and the corresponding confidence scores
+    x, y : ndarray of int
+       x-axis and y-axis components of abdominal cavity contour
+    values : ndarray of float
+       Values of visceral slide corresponding to the coordinates of abdominal cavity contour
+    insp_frame : ndarray
+       An inspiration frame
+    file_path : Path, optional
+       A Path where to save a file, default is None
+    """
+
+    plt.figure()
+    plt.imshow(insp_frame, cmap="gray")
+    # Plot visceral slide
+    plt.scatter(x, y, s=5, c=values, cmap="jet")
+    plt.colorbar()
+    ax = plt.gca()
+
+    for adhesion, confidence in prediction:
+        adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
+                                  linewidth=1.5, edgecolor=PREDICTION_COLOR, facecolor='none')
+        ax.add_patch(adhesion_rect)
+        plt.text(adhesion.origin_x, adhesion.origin_y - 3, "{:.3f}".format(confidence), c=PREDICTION_COLOR,
+                 fontweight='semibold')
+
+    if annotation:
+        for adhesion in annotation.adhesions:
+            adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
+                                      linewidth=1.5, edgecolor='r', facecolor='none')
+            ax.add_patch(adhesion_rect)
+
+    plt.axis("off")
+
+    if file_path is not None:
+        plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
+    else:
+        plt.show()
+
+    plt.close()
+
+
+# TODO: probably leave only prior coords when plotting
+def visualize(visceral_slides,
+              annotations_dict,
+              predictions,
+              images_path,
+              output_path,
+              inspexp_data=None):
+    """
+
+    Parameters
+    ----------
+    visceral_slides : list of VisceralSlide
+       Visceral slides to predict adhesions
+    annotations_dict : dict
+       A dictionary of GT annotations in format "slice_full_id" : [adhesion : Adhesion]
+    predictions : dict
+       A dictionary of predictions in format "slice_full_id" : [(adhesion : Adhesion, confidence: float)]
+    images_path : Path
+       A path to CineMRI slices
+    output_path : Path
+       A path where to save visualised prediction vs GT
+    inspexp_data : dict, optional
+       A dictionary with inspiration/ expiration frames ids data
+    """
+
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    for vs in visceral_slides:
+        prediction = predictions[vs.full_id]
+
+        if inspexp_data is None:
+            # Assume it is cumulative VS and take the one before the last one frame
+            slice_path = vs.build_path(images_path)
+            slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+            frame = slice[-2]
+        else:
+            # Extract inspiration frame
+            try:
+                slice = CineMRISlice(vs.slice_id, vs.patient_id, vs.study_id)
+                frame, _ = get_inspexp_frames(slice, inspexp_data, images_path)
+            except:
+                print("Missing insp/exp data for the patient {}, study {}, slice {}".format(vs.patient_id,
+                                                                                            vs.study_id,
+                                                                                            vs.slice_id))
+
+        file_path = output_path / (vs.full_id + ".png")
+        annotation = annotations_dict[vs.full_id] if vs.full_id in annotations_dict else None
+        visualize_gt_vs_prediction(prediction, annotation, vs.x, vs.y, vs.values, frame, file_path)
+
 
 # TODO: document
 # Plots normalized visceral slide values against adhesion frequency
@@ -986,45 +925,6 @@ def vs_values_boxplot(visceral_slide_path):
     plt.show()
 
 
-def test():
-    archive_path = ARCHIVE_PATH
-    images_path = archive_path / IMAGES_FOLDER
-    annotations_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
-    inspexp_file_path = archive_path / METADATA_FOLDER / INSPEXP_FILE_NAME
-    full_segmentation_path = archive_path / FULL_SEGMENTATION_FOLDER / "merged_segmentation"
-    # load inspiration and expiration data
-    with open(inspexp_file_path) as inspexp_file:
-        inspexp_data = json.load(inspexp_file)
-
-    adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
-    annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
-    
-    output = Path("threshold_prediction_09_example")
-    #cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_rest_reg_pos")
-    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
-
-    """
-    int_nums = [100, 200, 300, 400, 500, 600, 653, 700, 800, 900, 1000, 1500, 2000]
-    int_nums = [200, 653]
-    for int_num in int_nums:
-        vs_value_distr(cumulative_vs_path, int_num)
-        values, adh_likelihood, not_adh_likelihood = vs_adhesion_likelihood(cumulative_vs_path, annotations_path, int_num, plot=True)
-        #print(adh_likelihood.sum())
-        #print(not_adh_likelihood.sum())
-    """
-
-
-    int_num = 653
-    values, adh_likelihood, not_adh_likelihood = vs_adhesion_likelihood(cumulative_vs_path, annotations_path, int_num)
-    likelihood_data = {"values": values, "adh_like": adh_likelihood, "not_adh_like": not_adh_likelihood}
-
-    predict_and_visualize(annotations[:2], cumulative_vs_path, images_path, output, likelihood_data, 0.5, threshold=0.9)
-    #prediction_by_threshold(annotations, cumulative_vs_path, output, likelihood_data, 0.5, threshold=0.2)
-
-
-    #bb_with_threshold(annotations, visceral_slide_path, inspexp_data, images_path)
-
-
 def test_vs_calc_loading():
     detection_path = Path(DETECTION_PATH)
     images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
@@ -1055,9 +955,13 @@ def test_vs_calc_loading():
     visceral_slides = load_visceral_slides(cum_vs_path)
     visceral_slides.sort(key=lambda vs: vs.full_id, reverse=False)
 
-    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_expectation" / "region_growing_range_conf_min_vic2_vs2_5_roc_test"
+    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_no_avg_expectation" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_conf_min_vic2_vs2_5_roc_test"
 
-    predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=False, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.mean_div)
+    predictions = predict(visceral_slides, annotations_dict, bb_size_median=False)
+    evaluate(predictions, annotations_dict, output)
+    visualize(visceral_slides, annotations_dict, predictions, images_path, output)
+
+    #predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=False, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.mean_div)
     #predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=False)
 
     #vs_values_boxplot(insp_exp_vs_path)
@@ -1071,7 +975,6 @@ def test_vs_calc_loading():
     # extract visceral slides, look at the statistics
 
     #
-
     pass
 
 
