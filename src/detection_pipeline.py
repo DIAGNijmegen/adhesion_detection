@@ -7,7 +7,6 @@ from matplotlib.patches import Rectangle
 from pathlib import Path
 from adhesions import AdhesionType, Adhesion, load_annotations
 from config import *
-from cinemri.config import ARCHIVE_PATH
 from cinemri.definitions import CineMRISlice
 from utils import bb_size_stat, load_visceral_slides, binning_intervals, get_inspexp_frames, adhesions_stat, \
     get_vs_range
@@ -16,6 +15,7 @@ from froc.deploy_FROC import y_to_FROC
 from scipy import stats
 from sklearn.metrics import roc_curve, auc
 from vs_definitions import VSExpectationNormType, Region
+from enum import Enum, unique
 
 PREDICTION_COLOR = (0, 0.8, 0.2)
 
@@ -152,7 +152,7 @@ def adhesions_from_region_fixed_size(regions, bb_size, bb_size_max, vs_max):
     return bounding_boxes
 
 
-def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, region_growing_ind=2.5, min_region_len=5):
+def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, region_growing_ind=5, min_region_len=5):
     """
     Parameters
     ----------
@@ -176,6 +176,7 @@ def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, reg
     while len(regions) > 0:
         region_of_prediction, min_region_ind, vs_value_min_ind = find_min_vs(regions)
         min_slide_value = region_of_prediction.values[vs_value_min_ind]
+        #max_region_slide_value = np.sqrt(min_slide_value) if min_slide_value < 1 else min_slide_value**2
         max_region_slide_value = min_slide_value * region_growing_ind if min_slide_value > 0 \
             else min_slide_value / region_growing_ind
 
@@ -239,6 +240,21 @@ def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, reg
     return bounding_boxes
 
 
+def find_prior_subset(vs):
+    x, y, slide_value = vs.x, vs.y, vs.values
+
+    # Filter out the region in which no adhesions can be present
+    x_prior, y_prior = get_adhesions_prior_coords(x, y)
+
+    coords = np.column_stack((x, y)).tolist()
+    prior_coords = np.column_stack((x_prior, y_prior)).tolist()
+    prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
+
+    contour_subset = np.column_stack((x, y, slide_value))
+    contour_subset = contour_subset[prior_inds]
+    return contour_subset
+
+
 def bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, pred_func):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
@@ -262,17 +278,7 @@ def bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, pred_func):
        A list of bounding boxes predicted based on visceral slide values
     """
 
-    x, y, slide_value = vs.x, vs.y, vs.values
-
-    # Filter out the region in which no adhesions can be present
-    x_prior, y_prior = get_adhesions_prior_coords(x, y)
-
-    coords = np.column_stack((x, y)).tolist()
-    prior_coords = np.column_stack((x_prior, y_prior)).tolist()
-    prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
-
-    contour_subset = np.column_stack((x, y, slide_value))
-    contour_subset = contour_subset[prior_inds]
+    contour_subset = find_prior_subset(vs)
 
     # Remove the outliers
     contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
@@ -290,9 +296,8 @@ def bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, pred_func):
 
 def predict(visceral_slides,
             annotations_dict,
-            bb_size_median=False,
-            vs_expectation=None,
-            expectation_norm_type=VSExpectationNormType.mean_div):
+            negative_vs_needed,
+            bb_size_median=False):
     """
     Performs prediction by visceral slide threshold and evaluates it
 
@@ -321,20 +326,22 @@ def predict(visceral_slides,
     bb_mean_size, bb_size_std = bb_size_stat(annotations, is_median=bb_size_median)
     bb_size_min, bb_size_max = get_predicted_bb_ranges(bb_mean_size, bb_size_std)
 
-    # Normalize with expectation
-    if vs_expectation:
-        for vs in visceral_slides:
-            means = vs_expectation[0]
-            stds = vs_expectation[1]
-            vs.norm_with_expectation(means, stds, expectation_norm_type)
+    # Adjust annotations centers
+    for vs in visceral_slides:
+        if vs.full_id in annotations_dict:
+            annotation = annotations_dict[vs.full_id]
+            for adhesion in annotation.adhesions:
+                if not adhesion.intersects_contour(vs.x, vs.y) and annotation.full_id != "CM0020_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311131653190024186.0.0.0":
+                    new_center = adhesion.contour_point_closes_to_center(np.column_stack((vs.x, vs.y)))
+                    adhesion.adjust_center(new_center)
 
     # vary threshold level
     # Get predictions by visceral slide level threshold
-    negative_vs_needed = vs_expectation is not None and expectation_norm_type == VSExpectationNormType.standardize
     vs_range = get_vs_range(visceral_slides, negative_vs_needed)
 
     predictions = {}
     for vs in visceral_slides:
+        #vs.zeros_fix()
         prediction = bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, adhesions_with_region_growing)
         predictions[vs.full_id] = prediction
 
@@ -857,13 +864,16 @@ def vs_value_distr(visceral_slide_path,
     plt.show()
 
 
-def vs_adhesion_boxplot(visceral_slide_path,
+def vs_adhesion_boxplot(visceral_slides,
                         annotations_path,
+                        output_path,
                         adhesion_types=[AdhesionType.anteriorWall,
-                                        AdhesionType.abdominalCavityContour]):
+                                        AdhesionType.abdominalCavityContour],
+                        prior_only=False):
+
+    output_path.mkdir(exist_ok=True, parents=True)
 
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
-    visceral_slides = load_visceral_slides(visceral_slide_path)
 
     points_in_annotations = []
     points_not_in_annotations = []
@@ -871,26 +881,49 @@ def vs_adhesion_boxplot(visceral_slide_path,
     # Calculate frequencies in
     for vs in visceral_slides:
         has_annotation = vs.full_id in annotations_dict
+        if prior_only:
+            contour_subset = find_prior_subset(vs)
+        else:
+            contour_subset = np.column_stack((vs.x, vs.y, vs.values))
+
         if not has_annotation:
-            points_not_in_annotations.extend(vs.values)
+            points_not_in_annotations.extend(contour_subset[:, 2])
         else:
             annotation = annotations_dict[vs.full_id]
+
+            # Adjust annotations centers if necessary
+            for adhesion in annotation.adhesions:
+                if not adhesion.intersects_contour(contour_subset[:, 0], contour_subset[:, 1]) and annotation.full_id != "CM0020_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311131653190024186.0.0.0":
+                    new_center = adhesion.contour_point_closes_to_center(contour_subset[:, :2])
+                    adhesion.adjust_center(new_center)
+
+                adhesion.adjust_size()
+
             # For each point check if it intersects any adhesion
-            for x, y, vs in zip(vs.x, vs.y, vs.values):
+            for coord in contour_subset:
                 intersects = False
                 for adhesion in annotation.adhesions:
-                    intersects = adhesion.contains_point(x, y)
+                    intersects = adhesion.contains_point(coord[0], coord[1])
                     if intersects:
                         break
 
                 if intersects:
-                    points_in_annotations.append(vs)
+                    points_in_annotations.append(coord[2])
                 else:
-                    points_not_in_annotations.append(vs)
+                    points_not_in_annotations.append(coord[2])
 
+    # Boxplot
+    title = "adh_boxplot_prior" if prior_only else "adh_boxplot_all"
     plt.figure()
     plt.boxplot(points_in_annotations)
-    plt.savefig("adh_boxplot_inspexp_norm_avg", bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.show()
+
+    # Histogram
+    title = "adh_hist_prior" if prior_only else "adh_hist_all"
+    plt.figure()
+    plt.hist(points_in_annotations, bins=50)
+    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
     plt.show()
 
     print("Adhesions VS stat:")
@@ -898,9 +931,18 @@ def vs_adhesion_boxplot(visceral_slide_path,
     print("25% precentile {}".format(np.percentile(points_in_annotations, 25)))
     print("75% precentile {}".format(np.percentile(points_in_annotations, 75)))
 
+    # Boxplot
+    title = "no_adh_boxplot_prior" if prior_only else "no_adh_boxplot_all"
     plt.figure()
     plt.boxplot(points_not_in_annotations)
-    plt.savefig("no_adh_boxplot_inspexp_norm_avg", bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.show()
+
+    # Histogram
+    title = "no_adh_hist_prior" if prior_only else "no_adh_hist_all"
+    plt.figure()
+    plt.hist(points_not_in_annotations, bins=200)
+    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
     plt.show()
 
     print("No Adhesions VS stat:")
@@ -912,16 +954,44 @@ def vs_adhesion_boxplot(visceral_slide_path,
     print("T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
 
 
-def vs_values_boxplot(visceral_slide_path):
+@unique
+class VSTransform(Enum):
+    none = 0
+    log = 1
+    sqrt = 1
 
-    visceral_slides = load_visceral_slides(visceral_slide_path)
+def vs_values_boxplot(visceral_slides, output_path, vs_min=-np.inf, vs_max=np.inf, transform=VSTransform.none, prior_only=False):
+
+    output_path.mkdir(exist_ok=True, parents=True)
+
     vs_values = []
     for visceral_slide in visceral_slides:
-        vs_values.extend(visceral_slide.values)
+        # Leave out regions which cannot have adhesions if the option is specified
+        if prior_only:
+            prior_subset = find_prior_subset(visceral_slide)
+            cur_vs_values = [vs for vs in prior_subset[:, 2] if vs_min <= vs <= vs_max]
+            vs_values.extend(cur_vs_values)
+        else:
+            cur_vs_values = [vs for vs in visceral_slide.values if vs_min <= vs <= vs_max]
+            vs_values.extend(cur_vs_values)
 
+    if transform == VSTransform.log:
+        vs_values = np.log(vs_values)
+    elif transform == VSTransform.sqrt:
+        vs_values = np.sqrt(vs_values)
+
+    # Boxplot
+    title = "vs_boxplot_prior" if prior_only else "vs_boxplot_all"
     plt.figure()
     plt.boxplot(vs_values)
-    plt.savefig("vs_boxplot_inspexp_norm_avg", bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.show()
+
+    # Histogram
+    title = "vs_hist_prior" if prior_only else "vs_hist_all"
+    plt.figure()
+    plt.hist(vs_values, bins=200)
+    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
     plt.show()
 
 
@@ -949,23 +1019,36 @@ def test_vs_calc_loading():
     adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
     annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
 
-    adhesions_stat(annotations)
+    #adhesions_stat(annotations)
 
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
     visceral_slides = load_visceral_slides(cum_vs_path)
     visceral_slides.sort(key=lambda vs: vs.full_id, reverse=False)
 
-    output = Path(DETECTION_PATH) / "predictions" / "cum_avg_no_avg_expectation" / "cum_vs_warp_contour_norm_avg_rest_region_growing_range_conf_min_vic2_vs2_5_roc_test"
+    # Normalize by expectation
+    norm_by_exp = False
+    if norm_by_exp:
+        expectation_norm_type = VSExpectationNormType.standardize
+        means = insp_exp_vs_expectation[0]
+        stds = insp_exp_vs_expectation[1]
+        for vs in visceral_slides:
+            vs.norm_with_expectation(means, stds, expectation_norm_type)
 
-    predictions = predict(visceral_slides, annotations_dict, bb_size_median=False)
-    evaluate(predictions, annotations_dict, output)
-    visualize(visceral_slides, annotations_dict, predictions, images_path, output)
+    output_path = Path(DETECTION_PATH) / "main_experiments" / "cum_avg_motion_no_expectation" / "test"
+
+    vs_stat = False
+    if vs_stat:
+        vs_values_boxplot(visceral_slides, output_path)
+        vs_values_boxplot(visceral_slides, output_path, prior_only=True)
+        vs_adhesion_boxplot(visceral_slides, annotations_path, output_path)
+        vs_adhesion_boxplot(visceral_slides, annotations_path, output_path, prior_only=True)
+
+    predictions = predict(visceral_slides, annotations_dict, negative_vs_needed=False)
+    evaluate(predictions, annotations_dict, output_path)
+    visualize(visceral_slides, annotations_dict, predictions, images_path, output_path)
 
     #predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=False, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.mean_div)
     #predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=False)
-
-    #vs_values_boxplot(insp_exp_vs_path)
-    #vs_adhesion_boxplot(insp_exp_vs_path, annotations_path)
 
     #int_num = 653
     #vs_value_distr(cum_vs_path, int_num)

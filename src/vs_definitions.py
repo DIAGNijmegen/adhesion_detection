@@ -131,6 +131,11 @@ class VisceralSlide(Contour):
         self.slice_id = slice_id
         self.full_id = SEPARATOR.join([patient_id, study_id, slice_id])
 
+    def zeros_fix(self):
+        # Replace zeros with highest non 0
+        zero_placeholder = np.min([value for value in self.values if value > 0])
+        self.values = np.array([value if value > 0 else zero_placeholder for value in self.values])
+
     def to_regions(self, means, stds=None):
         """
         Splits visceral slide into chunks starting from the bottom left point of the contour

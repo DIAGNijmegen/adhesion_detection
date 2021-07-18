@@ -21,14 +21,11 @@ from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST
 from segmentation import segment_abdominal_cavity
 from utils import slices_from_full_ids_file, patients_from_full_ids
 
-# TODO: maybe in future rewrite the pipeline to extract the full segmentation needed for cumulative visceral slide
-# TODO: How do we evaluate registration?
 NNUNET_INPUT_FOLDER = "nnUNet_input"
 PREDICTED_MASKS_FOLDER = "nnUNet_masks"
 RESULTS_FOLDER = "visceral_slide"
 
 
-# TODO: probably also add an option to load saved segmentation since it I run it for the whole dataset
 def get_patients_ids(train_test_split, mode):
     """
     Filters patients ids based on the data split for nn-UNet training and mode ("all", "train", "test")

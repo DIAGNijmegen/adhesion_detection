@@ -10,6 +10,7 @@ from utils import load_visceral_slides, binning_intervals, contour_stat, get_ins
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import SimpleITK as sitk
+from detection_pipeline import vs_values_boxplot
 
 
 def get_regions_expectation(vs_path, vs_range, regions_num=120, heathly_inds=None, plot=False, inspexp_data=None, images_path=None, output_path=None):
@@ -79,12 +80,19 @@ if __name__ == '__main__':
     masks_path = detection_path / FULL_SEGMENTATION_FOLDER
     insp_exp_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
     inspexp_file_path = detection_path / METADATA_FOLDER / INSPEXP_FILE_NAME
+    output_path = detection_path / "control_vs_stat"
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
     cum_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
 
+    visceral_slides = load_visceral_slides(insp_exp_control_path)
+    vs_min, vs_max = get_vs_range(visceral_slides, False)
+    vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max)
+    vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, prior_only=True)
+
+    """
     cum_visceral_slides = load_visceral_slides(cum_control_path)
 
     width, height = get_avg_contour_size(cum_visceral_slides)
@@ -118,7 +126,7 @@ if __name__ == '__main__':
         means, stds = expectation_dict["means"], expectation_dict["stds"]
 
     print("done")
-
+    """
 
     """
     print("Cum VS lower limit {}".format(vs_min))

@@ -102,6 +102,12 @@ class Adhesion:
             self.origin_y = max(center[1] - round(min_height / 2), 0)
             self.height = min_height
 
+    def adjust_center(self, new_center):
+        delta_x = self.center[0] - new_center[0]
+        delta_y = self.center[1] - new_center[1]
+
+        self.origin_x -= delta_x
+        self.origin_y -= delta_y
 
     def contains_point(self, x, y, tolerance=0):
 
@@ -138,6 +144,11 @@ class Adhesion:
                 break
 
         return intersects
+
+    def contour_point_closes_to_center(self, contour_coords):
+        diff = (contour_coords[:, 0] - self.center[0])**2 + (contour_coords[:, 1] - self.center[1])**2
+        closest_point_index = np.argmin(diff)
+        return contour_coords[closest_point_index]
 
     def iou(self, adhesion):
         """

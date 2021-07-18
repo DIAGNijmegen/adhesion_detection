@@ -199,8 +199,8 @@ def get_vs_range(visceral_slides, negative_vs_needed):
     vs_q1 = np.quantile(all_vs_values, 0.25)
     vs_q3 = np.quantile(all_vs_values, 0.75)
     vs_iqr = vs_q3 - vs_q1
-    vs_min = vs_q1 - 1.5 * vs_iqr
-    vs_max = vs_q3 + 1.5 * vs_iqr
+    vs_min = max(vs_abs_min, vs_q1 - 1.5 * vs_iqr)
+    vs_max = min(vs_abs_max, vs_q3 + 1.5 * vs_iqr)
 
     print("VS minumum, outliers removed range : {}".format(vs_min))
     print("VS maximum, outliers removed range : {}".format(vs_max))
