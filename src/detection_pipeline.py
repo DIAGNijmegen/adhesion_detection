@@ -152,7 +152,7 @@ def adhesions_from_region_fixed_size(regions, bb_size, bb_size_max, vs_max):
     return bounding_boxes
 
 
-def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, region_growing_ind=5, min_region_len=5):
+def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, region_growing_ind=2.5, min_region_len=5):
     """
     Parameters
     ----------
@@ -182,34 +182,44 @@ def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, reg
 
         # Looking for the regions boundaries
         start_ind = end_ind = vs_value_min_ind
-        start_ind_found = end_ind_found = False
+        start_ind_found = start_ind == 0
+        end_ind_found = end_ind == len(region_of_prediction.points) - 1
         prediction_region = Region.from_point(region_of_prediction.points[start_ind])
         while not (start_ind_found and end_ind_found):
-            # Check if visceral slide at the previous index can be added to the region
-            new_start_ind = max(0, start_ind - 1)
-            start_value = region_of_prediction.values[start_ind]
             # If the VS value at the previous index is too large or the regions size exceeds maximum,
             # do not change the start index
-            start_ind_found = start_value > max_region_slide_value or \
-                              prediction_region.exceeded_size(bb_size_max) or\
-                              start_ind == 0
             # Otherwise add the point to the region
             if not start_ind_found:
-                start_ind = new_start_ind
-                prediction_region.append_point(region_of_prediction.points[start_ind])
+                # Check if visceral slide at the previous index can be added to the region
+                new_start_ind = max(0, start_ind - 1)
+                start_value = region_of_prediction.values[new_start_ind]
 
-            # Same steps for the end of the regions
-            new_end_ind = min(len(region_of_prediction.points) - 1, end_ind + 1)
-            end_value = region_of_prediction.values[end_ind]
+                if start_value < max_region_slide_value:
+                    start_ind = new_start_ind
+                    prediction_region.append_point(region_of_prediction.points[start_ind])
 
-            end_ind_found = end_value > max_region_slide_value or \
-                            prediction_region.exceeded_size(bb_size_max) or \
-                            end_ind == (len(region_of_prediction.points) - 1)
+                    start_ind_found = prediction_region.exceeded_size(bb_size_max) or \
+                                      start_ind == 0
+                else:
+                    start_ind_found = True
+
+            #end_value < region_of_prediction.values[end_ind - 1]
             if not end_ind_found:
-                end_ind = new_end_ind
-                prediction_region.append_point(region_of_prediction.points[end_ind])
+                # Same steps for the end of the regions
+                new_end_ind = min(len(region_of_prediction.points) - 1, end_ind + 1)
+                end_value = region_of_prediction.values[new_end_ind]
+
+                if end_value < max_region_slide_value:
+                    end_ind = new_end_ind
+                    prediction_region.append_point(region_of_prediction.points[end_ind])
+
+                    end_ind_found = prediction_region.exceeded_size(bb_size_max) or \
+                                    end_ind == (len(region_of_prediction.points) - 1)
+                else:
+                    end_ind_found = True
+
             # Stop if there are no points left in the regions
-            if new_start_ind == 0 and new_end_ind == (len(region_of_prediction.points) - 1):
+            if start_ind == 0 and end_ind == (len(region_of_prediction.points) - 1):
                 start_ind_found = end_ind_found = True
 
         # Only predict the bounding box if the region is large enough
@@ -222,7 +232,7 @@ def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, reg
             # This way we want to prevent the method from outputing small bounding boxes
             adjusted_region, start_ind, end_ind = bb_adjusted_region(region_of_prediction.points, bounding_box)
             # Take mean region vs as confidence
-            confidence = vs_max - min_slide_value
+            confidence = vs_max - np.mean(adjusted_region[:, 2])
             bounding_boxes.append((bounding_box, confidence))
 
         # Cut out bounding box region
@@ -233,7 +243,7 @@ def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, reg
         if region_before_bb.exceeded_size(bb_size_min):
             regions.append(region_before_bb)
 
-        region_after_bb = Region.from_points(region_of_prediction.points[end_ind:])
+        region_after_bb = Region.from_points(region_of_prediction.points[(end_ind+1):])
         if region_after_bb.exceeded_size(bb_size_min):
             regions.append(region_after_bb)
 
@@ -958,7 +968,7 @@ def vs_adhesion_boxplot(visceral_slides,
 class VSTransform(Enum):
     none = 0
     log = 1
-    sqrt = 1
+    sqrt = 2
 
 def vs_values_boxplot(visceral_slides, output_path, vs_min=-np.inf, vs_max=np.inf, transform=VSTransform.none, prior_only=False):
 
@@ -1034,7 +1044,7 @@ def test_vs_calc_loading():
         for vs in visceral_slides:
             vs.norm_with_expectation(means, stds, expectation_norm_type)
 
-    output_path = Path(DETECTION_PATH) / "main_experiments" / "cum_avg_motion_no_expectation" / "test"
+    output_path = Path(DETECTION_PATH) / "main_experiments" / "cum_avg_motion_no_expectation" / "rgi2_5_mrl5_stop_decrease"
 
     vs_stat = False
     if vs_stat:
