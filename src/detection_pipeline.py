@@ -152,7 +152,13 @@ def adhesions_from_region_fixed_size(regions, bb_size, bb_size_max, vs_max):
     return bounding_boxes
 
 
-def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, region_growing_ind=2.5, min_region_len=5):
+def adhesions_with_region_growing(regions,
+                                  bb_size_min,
+                                  bb_size_max,
+                                  vs_max,
+                                  region_growing_ind=2.5,
+                                  min_region_len=5,
+                                  decrease_tolerance=np.inf):
     """
     Parameters
     ----------
@@ -184,6 +190,7 @@ def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, reg
         start_ind = end_ind = vs_value_min_ind
         start_ind_found = start_ind == 0
         end_ind_found = end_ind == len(region_of_prediction.points) - 1
+        start_decrease_num = end_decrease_num = 0
         prediction_region = Region.from_point(region_of_prediction.points[start_ind])
         while not (start_ind_found and end_ind_found):
             # If the VS value at the previous index is too large or the regions size exceeds maximum,
@@ -194,26 +201,33 @@ def adhesions_with_region_growing(regions, bb_size_min, bb_size_max, vs_max, reg
                 new_start_ind = max(0, start_ind - 1)
                 start_value = region_of_prediction.values[new_start_ind]
 
+                if start_value < region_of_prediction.values[start_ind]:
+                    start_decrease_num += 1
+
                 if start_value < max_region_slide_value:
                     start_ind = new_start_ind
                     prediction_region.append_point(region_of_prediction.points[start_ind])
 
                     start_ind_found = prediction_region.exceeded_size(bb_size_max) or \
+                                      start_decrease_num == decrease_tolerance or \
                                       start_ind == 0
                 else:
                     start_ind_found = True
 
-            #end_value < region_of_prediction.values[end_ind - 1]
             if not end_ind_found:
                 # Same steps for the end of the regions
                 new_end_ind = min(len(region_of_prediction.points) - 1, end_ind + 1)
                 end_value = region_of_prediction.values[new_end_ind]
+
+                if end_value < region_of_prediction.values[end_ind]:
+                    end_decrease_num += 1
 
                 if end_value < max_region_slide_value:
                     end_ind = new_end_ind
                     prediction_region.append_point(region_of_prediction.points[end_ind])
 
                     end_ind_found = prediction_region.exceeded_size(bb_size_max) or \
+                                    start_decrease_num == decrease_tolerance or \
                                     end_ind == (len(region_of_prediction.points) - 1)
                 else:
                     end_ind_found = True
