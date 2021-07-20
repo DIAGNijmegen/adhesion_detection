@@ -10,10 +10,10 @@ from utils import load_visceral_slides, binning_intervals, contour_stat, get_ins
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import SimpleITK as sitk
-from detection_pipeline import vs_values_boxplot
+from detection_pipeline import vs_values_boxplot, VSTransform
 
 
-def get_regions_expectation(vs_path, vs_range, regions_num=120, heathly_inds=None, plot=False, inspexp_data=None, images_path=None, output_path=None):
+def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTransform.none, heathly_inds=None, plot=False, inspexp_data=None, images_path=None, output_path=None):
     neg_visceral_slides = load_visceral_slides(vs_path)
 
     # Filter out visceral slides if list of ids is provided
@@ -40,8 +40,13 @@ def get_regions_expectation(vs_path, vs_range, regions_num=120, heathly_inds=Non
         # Remove the outliers
         values = np.array([value for value in values if vs_range[0] <= value <= vs_range[1]])
 
+        if transform == VSTransform.log:
+            values = np.log(values)
+        elif transform == VSTransform.sqrt:
+            values = np.sqrt(values)
+
         means.append(np.mean(values))
-        stds.append(np.mean(values))
+        stds.append(np.std(values))
 
     if plot:
         vs = neg_visceral_slides[0]
@@ -92,7 +97,7 @@ if __name__ == '__main__':
     vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max)
     vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, prior_only=True)
 
-    """
+
     cum_visceral_slides = load_visceral_slides(cum_control_path)
 
     width, height = get_avg_contour_size(cum_visceral_slides)
@@ -104,20 +109,24 @@ if __name__ == '__main__':
     point_in_chunk = 5
     chunks_num = round(avg_contour_len / point_in_chunk)
 
+
     output_path = Path("corner points v2")
     output_path.mkdir(exist_ok=True)
 
     # TODO: take 130
+
     cum_visceral_slides = load_visceral_slides(cum_control_path)
     vs_values = []
     for visceral_slide in cum_visceral_slides:
         vs_values.extend(visceral_slide.values)
 
-    vs_min, vs_max = get_vs_range(cum_visceral_slides)
+    vs_min, vs_max = get_vs_range(cum_visceral_slides, False)
 
-    expectation = get_regions_expectation(cum_control_path, (vs_min, vs_max), chunks_num, None, True, None, images_path,
+    expectation = get_regions_expectation(cum_control_path, (vs_min, vs_max), chunks_num, VSTransform.none, None, True, None, images_path,
                                           output_path)
 
+    print("done")
+    """
     with open("cumulative_vs_expectation.pkl", "w+b") as f:
         pickle.dump(expectation, f)
 
@@ -125,7 +134,7 @@ if __name__ == '__main__':
         expectation_dict = pickle.load(file)
         means, stds = expectation_dict["means"], expectation_dict["stds"]
 
-    print("done")
+    
     """
 
     """
@@ -152,8 +161,8 @@ if __name__ == '__main__':
     for visceral_slide in inspexp_visceral_slides:
         vs_values.extend(visceral_slide.values)
 
-    vs_min, vs_max = get_vs_range(inspexp_visceral_slides)
-    expectation = get_regions_expectation(insp_exp_control_path, (vs_min, vs_max), chunks_num, None, True, inspexp_data, images_path,
+    vs_min, vs_max = get_vs_range(inspexp_visceral_slides, False)
+    expectation = get_regions_expectation(insp_exp_control_path, (vs_min, vs_max), chunks_num, VSTransform.sqrt, None, True, inspexp_data, images_path,
                                           output_path)
 
     with open("insexp_vs_expectation.pkl", "w+b") as f:
@@ -165,6 +174,7 @@ if __name__ == '__main__':
 
     print("done")
     """
+
 
     """
     print("Inspexp VS lower limit {}".format(vs_min))

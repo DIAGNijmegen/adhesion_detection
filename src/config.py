@@ -70,6 +70,9 @@ PATIENTS_SPLIT_FILE_NAME = "patients_split.json"
 # Visceral slide expectation
 CUMULATIVE_VS_EXPECTATION_FILE = "cumulative_vs_expectation.pkl"
 INSPEXP_VS_EXPECTATION_FILE = "insexp_vs_expectation.pkl"
+# SQRT transformed
+CUMULATIVE_VS_EXPECTATION_FILE_SQRT = "cumulative_vs_expectation_sqrt.pkl"
+INSPEXP_VS_EXPECTATION_FILE_SQRT = "insexp_vs_expectation_sqrt.pkl"
 
 # K-fold split files
 DETECTION_PATIENT_FOLD_FILE_NAME = "detection_patients_folds.json"
