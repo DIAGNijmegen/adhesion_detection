@@ -16,10 +16,8 @@ from scipy import stats
 from sklearn.metrics import roc_curve, auc
 from vs_definitions import VSExpectationNormType, Region
 from enum import Enum, unique
-from sklearn.linear_model import LogisticRegression
 from sklearn.metrics import accuracy_score
 import statsmodels.api as sm
-
 
 PREDICTION_COLOR = (0, 0.8, 0.2)
 
@@ -163,7 +161,7 @@ def adhesions_with_region_growing(regions,
                                   bb_size_min,
                                   bb_size_max,
                                   vs_max,
-                                  lr,
+                                  lr=None,
                                   region_growing_ind=2.5,
                                   min_region_len=5,
                                   decrease_tolerance=np.inf):
@@ -253,10 +251,12 @@ def adhesions_with_region_growing(regions,
             # If the predicted bounding box is too small, enlarge it.
             # This way we want to prevent the method from outputting small bounding boxes
             adjusted_region, start_ind, end_ind = bb_adjusted_region(region_of_prediction.points, bounding_box)
-            # Take mean region vs as confidence
-            negative_bb_features = [1, bounding_box.center[0], np.mean(adjusted_region[:, 2])]
-            #confidence = vs_max - min_slide_value # np.mean(adjusted_region[:, 2])
-            confidence = lr.predict(np.array(negative_bb_features).reshape(1, -1))[0]
+            if lr is not None:
+                negative_bb_features = extract_features(bounding_box, adjusted_region)
+                confidence = lr.predict(np.array(negative_bb_features).reshape(1, -1))[0]
+            else:
+                # Take mean region vs as confidence
+                confidence = vs_max - np.mean(adjusted_region[:, 2]) # min_slide_value
             bounding_boxes.append((bounding_box, confidence))
 
         # Cut out bounding box region
@@ -289,7 +289,7 @@ def find_prior_subset(vs):
     return contour_subset
 
 
-def bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, lr, pred_func):
+def bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, pred_func, lr=None):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
     specified threshold level
@@ -331,7 +331,7 @@ def bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, lr, pred_func):
 def predict(visceral_slides,
             annotations_dict,
             negative_vs_needed,
-            lr,
+            lr=None,
             bb_size_median=False):
     """
     Performs prediction by visceral slide threshold and evaluates it
@@ -377,7 +377,7 @@ def predict(visceral_slides,
     predictions = {}
     for vs in visceral_slides:
         #vs.zeros_fix()
-        prediction = bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, lr, adhesions_with_region_growing)
+        prediction = bb_with_threshold(vs, bb_size_min, bb_size_max, vs_range, adhesions_with_region_growing, lr)
         predictions[vs.full_id] = prediction
 
     return predictions
@@ -1030,6 +1030,11 @@ def vs_values_boxplot(visceral_slides, output_path, vs_min=-np.inf, vs_max=np.in
     plt.show()
 
 
+def extract_features(adhesion_bb, adhesion_region):
+    vs_values_region = adhesion_region[:, 2]
+    adhesion_features = [1, adhesion_bb.height, np.mean(vs_values_region), len(adhesion_region)]
+    return adhesion_features
+
 # Train LR for now on the whole data set and apply to the whole dataset
 # For this get all adhesions BB in annotations,
 # then sample the same num of bb in regions that do not have adhesions (work only with prior region for this)
@@ -1069,9 +1074,7 @@ def trainLR(visceral_slides, annotations_dict):
             for adhesion in annotation.adhesions:
                 if adhesion.intersects_contour(vs.x, vs.y):
                     adhesion_region, _, _ = bb_adjusted_region(vs_region, adhesion)
-                    vs_values_region = adhesion_region[:, 2]
-                    adhesion_features = [1, adhesion.center[0], np.mean(vs_values_region)]
-
+                    adhesion_features = extract_features(adhesion, adhesion_region)
                     positive_samples.append(adhesion_features)
         else:
             # Sample negative bbs
@@ -1092,23 +1095,11 @@ def trainLR(visceral_slides, annotations_dict):
                 adhesion_region, _, _ = bb_adjusted_region(vs_region, negative_bb)
                 if len(adhesion_region) > 0:
                     samples_num += 1
-                    vs_values_region = adhesion_region[:, 2]
-                    negative_bb_features = [1, negative_bb.center[0], np.mean(vs_values_region)]
-
+                    negative_bb_features = extract_features(negative_bb, adhesion_region)
                     negative_samples.append(negative_bb_features)
 
     samples = np.concatenate((negative_samples, positive_samples))
     labels = np.concatenate((np.zeros(len(negative_samples)), np.ones(len(positive_samples))))
-    """
-    clf = LogisticRegression(random_state=0).fit(samples, labels)
-    print(clf.predict_proba(samples[:20, :]))
-    print(clf.predict_proba(samples[-20:, :]))
-
-    print(clf.score(samples, labels))
-
-    thresholds = clf.predict_proba(samples)[:, 1]
-    compute_slice_level_ROC(thresholds, labels, Path("./"))
-    """
 
     clf = sm.Logit(labels, samples).fit()
     print(clf.summary2())
@@ -1142,27 +1133,28 @@ def test_vs_calc_loading():
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
+    cumulative_vs = True
+    norm_by_exp = False
+    vs_stat = True
+    kfold = False
+    expectation_norm_type = VSExpectationNormType.standardize
+    transform = VSTransform.sqrt
+
+    output_path = Path(DETECTION_PATH) / "main_experiments" / "cum_avg_motion_no_expectation" / "rgi2_5_mrl5_conf_min1"
+
+    vs_path = cum_vs_path if cumulative_vs else insp_exp_vs_path
+    expectation = cum_vs_expectation if cumulative_vs else insp_exp_vs_expectation
+
     annotations_path = detection_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
-    annotations = load_annotations(annotations_path, adhesion_types=adhesion_types)
-
-    #adhesions_stat(annotations)
-
-    output_path = Path(DETECTION_PATH) / "main_experiments" / "cum_avg_motion_no_expectation" / "rgi2_5_mrl5_test_lr"
-
     annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
-    visceral_slides = load_visceral_slides(cum_vs_path)
-    # visceral_slides.sort(key=lambda vs: vs.full_id, reverse=False)
+    visceral_slides = load_visceral_slides(vs_path)
 
-    transform = VSTransform.sqrt
     # Normalize by expectation
-    norm_by_exp = False
     if norm_by_exp:
-        expectation_norm_type = VSExpectationNormType.standardize
-        means = cum_vs_expectation[0]
-        stds = cum_vs_expectation[1]
+        means = expectation[0]
+        stds = expectation[1]
         for vs in visceral_slides:
-
             if transform == VSTransform.log:
                 vs.values = np.log(vs.values)
             elif transform == VSTransform.sqrt:
@@ -1170,8 +1162,6 @@ def test_vs_calc_loading():
 
             vs.norm_with_expectation(means, stds, expectation_norm_type)
 
-
-    vs_stat = False
     if vs_stat:
         vs_values_boxplot(visceral_slides, output_path)
         vs_values_boxplot(visceral_slides, output_path, prior_only=True)
@@ -1179,36 +1169,33 @@ def test_vs_calc_loading():
         vs_adhesion_boxplot(visceral_slides, annotations_path, output_path, prior_only=True)
 
     # load 5-fold cv split, filter out and run
-    detection_slices_kfold_file = detection_path / METADATA_FOLDER / DETECTION_SLICE_FOLD_FILE_NAME
-    with open(detection_slices_kfold_file) as f:
-        kfolds = json.load(f)
+    if kfold:
+        detection_slices_kfold_file = detection_path / METADATA_FOLDER / DETECTION_SLICE_FOLD_FILE_NAME
+        with open(detection_slices_kfold_file) as f:
+            kfolds = json.load(f)
 
-    all_predictions = {}
-    for fold in kfolds:
-        train_ids = fold["train"]
-        val_ids = fold["val"]
+        all_predictions = {}
+        for fold in kfolds:
+            train_ids = fold["train"]
+            val_ids = fold["val"]
 
-        train_visceral_slides = [vs for vs in visceral_slides if vs.full_id in train_ids]
-        val_visceral_slides = [vs for vs in visceral_slides if vs.full_id in val_ids]
+            train_visceral_slides = [vs for vs in visceral_slides if vs.full_id in train_ids]
+            val_visceral_slides = [vs for vs in visceral_slides if vs.full_id in val_ids]
 
-        lr = trainLR(train_visceral_slides, annotations_dict)
-        predictions = predict(val_visceral_slides, annotations_dict, negative_vs_needed=False, lr=lr)
-        all_predictions.update(predictions)
+            lr = trainLR(train_visceral_slides, annotations_dict)
+            predictions = predict(val_visceral_slides, annotations_dict, negative_vs_needed=False, lr=lr)
+            all_predictions.update(predictions)
 
-    evaluate(all_predictions, annotations_dict, output_path)
-    visualize(visceral_slides, annotations_dict, all_predictions, images_path, output_path)
+        evaluate(all_predictions, annotations_dict, output_path)
+        if cumulative_vs:
+            visualize(visceral_slides, annotations_dict, all_predictions, images_path, output_path)
+        else:
+            visualize(visceral_slides, annotations_dict, all_predictions, images_path, output_path, inspexp_data)
+    else:
+        predictions = predict(visceral_slides, annotations_dict, negative_vs_needed=False)
+        evaluate(predictions, annotations_dict, output_path)
+        visualize(visceral_slides, annotations_dict, predictions, images_path, output_path)
 
-    #predict_and_evaluate(visceral_slides, annotations_dict, output, bb_size_median=False, vs_expectation=cum_vs_expectation, expectation_norm_type=VSExpectationNormType.mean_div)
-    #predict_and_visualize(visceral_slides, annotations_dict, images_path, output, bb_size_median=False)
-
-    #int_num = 653
-    #vs_value_distr(cum_vs_path, int_num)
-    #values, adh_likelihood, not_adh_likelihood = vs_adhesion_likelihood(cum_vs_path, annotations_path, int_num, plot=True)
-
-    # How to integrate folds? Read full ids of slices per fold and filter out
-    # extract visceral slides, look at the statistics
-
-    pass
 
 
 if __name__ == '__main__':
