@@ -17,7 +17,7 @@ from config import DETECTION_PATH, VS_CONTROL_FOLDER, AVG_NORM_FOLDER, CUMULATIV
 from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY, VISCERAL_SLIDE_FILE, MASKS_FOLDER, DF_REST_FOLDER, DF_CAVITY_FOLDER, DF_COMPLETE_FOLDER, \
-    DF_CONTOUR_FOLDER
+    DF_CONTOUR_FOLDER, VICINITY_NORM_FOLDER, VS_FOLDER
 from segmentation import segment_abdominal_cavity
 from utils import slices_from_full_ids_file, patients_from_full_ids
 
@@ -378,7 +378,7 @@ def compute_cumulative_visceral_slide(images_path, masks_path, slices, output_pa
        A path where to save computed visceral slide
     """
 
-    output_path.mkdir(exist_ok=True)
+    output_path.mkdir(exist_ok=True, parents=True)
     visceral_slide_detector = CumulativeVisceralSlideDetectorReg()
 
     for slice in slices:
@@ -564,26 +564,29 @@ def test():
     detection_path = Path(DETECTION_PATH)
 
     # Train
-    """
+
     insp_exp_input_path = detection_path / "output" / "vs_input" / "train" / "insp_exp"
-    insp_exp_output_path = detection_path / "output_folder_insp_exp"
+    insp_exp_output_path = detection_path / VS_FOLDER / VICINITY_NORM_FOLDER / INS_EXP_VS_FOLDER
 
     cum_input_path = detection_path / "output" / "vs_input" / "train" / "cumulative"
-    cum_output_path = detection_path / "output_folder_cum"
+    cum_output_path = detection_path / VS_FOLDER / VICINITY_NORM_FOLDER / CUMULATIVE_VS_FOLDER
     
-    compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.average_anterior_wall)
-    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.average_anterior_wall)
-    """
+    compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.contour_vicinity, VSNormField.complete)
+    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.contour_vicinity,
+                               normalization_df=VSNormField.complete)
 
+    """
     # Control
     insp_exp_input_path = detection_path / "output" / "vs_input" / "control" / "insp_exp"
-    insp_exp_output_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
+    insp_exp_output_path = detection_path / VS_CONTROL_FOLDER / VICINITY_NORM_FOLDER / INS_EXP_VS_FOLDER
 
     cum_input_path = detection_path / "output" / "vs_input" / "control" / "cumulative"
-    cum_output_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
+    cum_output_path = detection_path / VS_CONTROL_FOLDER / VICINITY_NORM_FOLDER / CUMULATIVE_VS_FOLDER
 
-    compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.average_anterior_wall)
-    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.average_anterior_wall)
+    compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.contour_vicinity, VSNormField.complete)
+    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.contour_vicinity,
+                               normalization_df=VSNormField.complete)
+    """
 
     print("done")
 

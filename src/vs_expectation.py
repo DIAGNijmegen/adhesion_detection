@@ -52,6 +52,12 @@ def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTran
         vs = neg_visceral_slides[0]
         slice = CineMRISlice.from_full_id(vs.full_id)
 
+        title = "inspexp_expectation_vi" if inspexp_data is None else "cumulative_vi"
+        if transform == VSTransform.log:
+            title += "_log"
+        elif transform == VSTransform.sqrt:
+            title += "_sqrt"
+
         if inspexp_data is None:
             image = sitk.ReadImage(str(slice.build_path(images_path)))
             frame = sitk.GetArrayFromImage(image)[-2]
@@ -73,7 +79,7 @@ def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTran
             c = np.concatenate((c, np.ones(len(reg.x)) * reg.mean))
         plt.scatter(x, y, s=5, c=c)
         plt.colorbar()
-        plt.savefig(output_path / "inspexp_expectation_vi_{}.png".format(regions_num), bbox_inches='tight', pad_inches=0)
+        plt.savefig(output_path / "{}_{}.png".format(title, regions_num), bbox_inches='tight', pad_inches=0)
         plt.close()
 
     return {"means": means, "stds": stds}
@@ -83,64 +89,78 @@ if __name__ == '__main__':
     detection_path = Path(DETECTION_PATH)
     images_path = detection_path / IMAGES_FOLDER / CONTROL_FOLDER
     masks_path = detection_path / FULL_SEGMENTATION_FOLDER
-    insp_exp_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
+    insp_exp_control_path = detection_path / VS_CONTROL_FOLDER / VICINITY_NORM_FOLDER / INS_EXP_VS_FOLDER
     inspexp_file_path = detection_path / METADATA_FOLDER / INSPEXP_FILE_NAME
-    output_path = detection_path / "control_vs_stat"
+    output_path = detection_path / "control_vs_stat_vicinity"
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
-    cum_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
+    cum_control_path = detection_path / VS_CONTROL_FOLDER / VICINITY_NORM_FOLDER / CUMULATIVE_VS_FOLDER
 
-    visceral_slides = load_visceral_slides(insp_exp_control_path)
+    cumulative_vs = True
+    transform = VSTransform.sqrt
+    plot_distr = False
+    compute_stat = True
+
+    vs_path = cum_control_path if cumulative_vs else insp_exp_control_path
+    output_path = output_path / "cumulative" if cumulative_vs else output_path / "inspexp"
+
+    visceral_slides = load_visceral_slides(vs_path)
     vs_min, vs_max = get_vs_range(visceral_slides, False)
-    vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max)
-    vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, prior_only=True)
 
-
-    cum_visceral_slides = load_visceral_slides(cum_control_path)
-
-    width, height = get_avg_contour_size(cum_visceral_slides)
-    print(width)
-    print(height)
-    print(width / height)
-
-    avg_contour_len = contour_stat(masks_path)
-    point_in_chunk = 5
-    chunks_num = round(avg_contour_len / point_in_chunk)
-
-
-    output_path = Path("corner points v2")
-    output_path.mkdir(exist_ok=True)
-
-    # TODO: take 130
-
-    cum_visceral_slides = load_visceral_slides(cum_control_path)
-    vs_values = []
-    for visceral_slide in cum_visceral_slides:
-        vs_values.extend(visceral_slide.values)
-
-    vs_min, vs_max = get_vs_range(cum_visceral_slides, False)
-
-    expectation = get_regions_expectation(cum_control_path, (vs_min, vs_max), chunks_num, VSTransform.none, None, True, None, images_path,
-                                          output_path)
-
-    print("done")
-    """
-    with open("cumulative_vs_expectation.pkl", "w+b") as f:
-        pickle.dump(expectation, f)
-
-    with open("cumulative_vs_expectation.pkl", "r+b") as file:
-        expectation_dict = pickle.load(file)
-        means, stds = expectation_dict["means"], expectation_dict["stds"]
-
-    
-    """
-
-    """
     print("Cum VS lower limit {}".format(vs_min))
     print("Cum VS upper limit {}".format(vs_max))
 
+    if plot_distr:
+        # Distribution for all
+        vs_values_boxplot(visceral_slides, output_path)
+        # Distribution for prior region
+        vs_values_boxplot(visceral_slides, output_path, prior_only=True)
+        # Distribution for all outliers removed
+        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max)
+        # Distribution for prior region outliers removed
+        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, prior_only=True)
+        # Distribution for all sqrt transfrom
+        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.sqrt)
+        # Distribution for prior region sqrt transfrom
+        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.sqrt, prior_only=True)
+        # Distribution for all sqrt transfrom
+        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.log)
+        # Distribution for prior region sqrt transfrom
+        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.log, prior_only=True)
+
+    if compute_stat:
+        avg_contour_len = contour_stat(masks_path)
+        point_in_chunk = 5
+        chunks_num = round(avg_contour_len / point_in_chunk)
+
+        output_path = Path("vs_expectation")
+        output_path.mkdir(exist_ok=True)
+
+        vs_min, vs_max = get_vs_range(visceral_slides, False)
+
+        if cumulative_vs:
+            inspexp_data = None
+
+        expectation = get_regions_expectation(vs_path, (vs_min, vs_max), chunks_num, transform, None, True, inspexp_data, images_path,
+                                              output_path)
+
+
+        pkl_title = "cumulative_vs_expectation_vicinity" if cumulative_vs else "inspexp_vs_expectation_vicinity"
+        if transform == VSTransform.log:
+            pkl_title += "_log"
+        elif transform == VSTransform.sqrt:
+            pkl_title += "_sqrt"
+
+        with open(pkl_title + ".pkl", "w+b") as f:
+            pickle.dump(expectation, f)
+
+        with open(pkl_title + ".pkl", "r+b") as file:
+            expectation_dict = pickle.load(file)
+            means, stds = expectation_dict["means"], expectation_dict["stds"]
+
+    """
     vs_values = [vs for vs in vs_values if vs_min <= vs <= vs_max]
     vs_values_log = np.log(vs_values)
 

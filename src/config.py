@@ -28,6 +28,7 @@ DF_CONTOUR_FOLDER = "df_contour"
 VS_FOLDER = "visceral_slide"
 VS_CONTROL_FOLDER = "visceral_slide_control"
 AVG_NORM_FOLDER = "avg_norm"
+VICINITY_NORM_FOLDER = "vicinity_norm"
 CUMULATIVE_VS_FOLDER = "cumulative"
 INS_EXP_VS_FOLDER = "insp_exp"
 
@@ -67,12 +68,18 @@ NEGATIVE_SLICES_CONTROL_NAME = "negative_slices_control.txt"
 BB_ANNOTATED_SLICES_FILE_NAME = "bb_annotations_full_ids.txt"
 DETECTION_SLICES_FILE_NAME = "detection_train_full_ids.txt"
 PATIENTS_SPLIT_FILE_NAME = "patients_split.json"
-# Visceral slide expectation
+# Visceral slide expectation abdominal motion norm
 CUMULATIVE_VS_EXPECTATION_FILE = "cumulative_vs_expectation.pkl"
 INSPEXP_VS_EXPECTATION_FILE = "insexp_vs_expectation.pkl"
-# SQRT transformed
+# SQRT transformed abdominal motion norm
 CUMULATIVE_VS_EXPECTATION_FILE_SQRT = "cumulative_vs_expectation_sqrt.pkl"
 INSPEXP_VS_EXPECTATION_FILE_SQRT = "insexp_vs_expectation_sqrt.pkl"
+# Visceral slide expectation vicinity norm
+CUMULATIVE_VS_EXPECTATION_VICINITY_FILE = "cumulative_vs_expectation_vicinity.pkl"
+INSPEXP_VS_EXPECTATION_VICINITY_FILE = "inspexp_vs_expectation_vicinity.pkl"
+# SQRT transformed vicinity norm
+CUMULATIVE_VS_EXPECTATION_VICINITY_FILE_SQRT = "cumulative_vs_expectation_vicinity_sqrt.pkl"
+INSPEXP_VS_EXPECTATION_VICINITY_FILE_SQRT = "inspexp_vs_expectation_vicinity_sqrt.pkl"
 
 # K-fold split files
 DETECTION_PATIENT_FOLD_FILE_NAME = "detection_patients_folds.json"

@@ -209,6 +209,8 @@ def adhesions_with_region_growing(regions,
 
                 if start_value < region_of_prediction.values[start_ind]:
                     start_decrease_num += 1
+                else:
+                    start_decrease_num = 0
 
                 if start_value < max_region_slide_value:
                     start_ind = new_start_ind
@@ -227,6 +229,8 @@ def adhesions_with_region_growing(regions,
 
                 if end_value < region_of_prediction.values[end_ind]:
                     end_decrease_num += 1
+                else:
+                    end_decrease_num = 0
 
                 if end_value < max_region_slide_value:
                     end_ind = new_end_ind
@@ -256,7 +260,7 @@ def adhesions_with_region_growing(regions,
                 confidence = lr.predict(np.array(negative_bb_features).reshape(1, -1))[0]
             else:
                 # Take mean region vs as confidence
-                confidence = vs_max - np.mean(adjusted_region[:, 2]) # min_slide_value
+                confidence = vs_max - np.mean(adjusted_region[:, 2]) #min_slide_value
             bounding_boxes.append((bounding_box, confidence))
 
         # Cut out bounding box region
@@ -720,6 +724,7 @@ def visualize(visceral_slides,
               predictions,
               images_path,
               output_path,
+              prior=False,
               inspexp_data=None):
     """
 
@@ -761,7 +766,13 @@ def visualize(visceral_slides,
 
         file_path = output_path / (vs.full_id + ".png")
         annotation = annotations_dict[vs.full_id] if vs.full_id in annotations_dict else None
-        visualize_gt_vs_prediction(prediction, annotation, vs.x, vs.y, vs.values, frame, file_path)
+
+        if prior:
+            prior_subset = find_prior_subset(vs)
+            x, y, values = prior_subset[:, 0], prior_subset[:, 1], prior_subset[:, 2]
+        else:
+            x, y, values = vs.x, vs.y, vs.values
+        visualize_gt_vs_prediction(prediction, annotation, x, y, values, frame, file_path)
 
 
 # TODO: document
@@ -1011,22 +1022,33 @@ def vs_values_boxplot(visceral_slides, output_path, vs_min=-np.inf, vs_max=np.in
             vs_values.extend(cur_vs_values)
 
     if transform == VSTransform.log:
+        vs_values = [vs for vs in vs_values if vs >0]
         vs_values = np.log(vs_values)
     elif transform == VSTransform.sqrt:
         vs_values = np.sqrt(vs_values)
 
+    def title_suffix():
+        suffix = "_prior" if prior_only else "_all"
+        suffix += "_outl_removed" if vs_max < np.inf else ""
+        if transform == VSTransform.log:
+            suffix += "_log"
+        elif transform == VSTransform.sqrt:
+            suffix += "_sqrt"
+
+        return suffix
+
+    bp_tile = "vs_boxplot" + title_suffix()
     # Boxplot
-    title = "vs_boxplot_prior" if prior_only else "vs_boxplot_all"
     plt.figure()
     plt.boxplot(vs_values)
-    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / bp_tile, bbox_inches='tight', pad_inches=0)
     plt.show()
 
+    hs_tile = "vs_hist" + title_suffix()
     # Histogram
-    title = "vs_hist_prior" if prior_only else "vs_hist_all"
     plt.figure()
     plt.hist(vs_values, bins=200)
-    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / hs_tile, bbox_inches='tight', pad_inches=0)
     plt.show()
 
 
@@ -1035,19 +1057,6 @@ def extract_features(adhesion_bb, adhesion_region):
     adhesion_features = [1, adhesion_bb.height, np.mean(vs_values_region), len(adhesion_region)]
     return adhesion_features
 
-# Train LR for now on the whole data set and apply to the whole dataset
-# For this get all adhesions BB in annotations,
-# then sample the same num of bb in regions that do not have adhesions (work only with prior region for this)
-# Extract features
-# - min VS value in the box
-# - max VS value in the box
-# - mean VS value in the box
-# - width
-# - height
-# - center x
-# - center y
-# Train LR
-# Apply LR to classify predicted BB
 def trainLR(visceral_slides, annotations_dict):
 
     # Get bounding boxes stat
@@ -1114,36 +1123,44 @@ def trainLR(visceral_slides, annotations_dict):
 def test_vs_calc_loading():
     np.random.seed(99)
 
+    cumulative_vs = True
+    anterior_motion_norm = True
+    norm_by_exp = False
+    vs_stat = True
+    kfold = False
+    expectation_norm_type = VSExpectationNormType.mean_div
+    transform = VSTransform.none
+    negative_vs_needed = norm_by_exp and expectation_norm_type == VSExpectationNormType.standardize
+    vis_prior = not anterior_motion_norm
+
+    output_path = Path(DETECTION_PATH) / "vicinity_experiments" / "inspexp_expectation_stand" / "rgi7_mrl3_sqrt_conf_lr_height_width_len"
+
     detection_path = Path(DETECTION_PATH)
     images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
-    cum_vs_path = detection_path / VS_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
-    cum_vs_expectation_path = detection_path / METADATA_FOLDER / CUMULATIVE_VS_EXPECTATION_FILE_SQRT
-    with open(cum_vs_expectation_path, "r+b") as file:
-        cum_vs_expectation_dict = pickle.load(file)
-        cum_vs_expectation = cum_vs_expectation_dict["means"], cum_vs_expectation_dict["stds"]
+    vs_folder_root = AVG_NORM_FOLDER if anterior_motion_norm else VICINITY_NORM_FOLDER
+    vs_folder = CUMULATIVE_VS_FOLDER if cumulative_vs else INS_EXP_VS_FOLDER
 
-    insp_exp_vs_path = detection_path / VS_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
-    insp_exp_vs_expectation_path = detection_path / METADATA_FOLDER / INSPEXP_VS_EXPECTATION_FILE_SQRT
-    with open(insp_exp_vs_expectation_path, "r+b") as file:
-        insp_exp_vs_expectation_dict = pickle.load(file)
-        insp_exp_vs_expectation = insp_exp_vs_expectation_dict["means"], insp_exp_vs_expectation_dict["stds"]
+    if anterior_motion_norm:
+        if cumulative_vs:
+            control_stat_file = CUMULATIVE_VS_EXPECTATION_FILE_SQRT if transform == VSTransform.sqrt else CUMULATIVE_VS_EXPECTATION_FILE
+        else:
+            control_stat_file = INSPEXP_VS_EXPECTATION_FILE_SQRT if transform == VSTransform.sqrt else INSPEXP_VS_EXPECTATION_FILE
+    else:
+        if cumulative_vs:
+            control_stat_file = CUMULATIVE_VS_EXPECTATION_VICINITY_FILE_SQRT if transform == VSTransform.sqrt else CUMULATIVE_VS_EXPECTATION_VICINITY_FILE
+        else:
+            control_stat_file = INSPEXP_VS_EXPECTATION_VICINITY_FILE_SQRT if transform == VSTransform.sqrt else INSPEXP_VS_EXPECTATION_VICINITY_FILE
+
+    vs_path = detection_path / VS_FOLDER / vs_folder_root / vs_folder
+    vs_expectation_path = detection_path / METADATA_FOLDER / control_stat_file
+    with open(vs_expectation_path, "r+b") as file:
+        vs_expectation_dict = pickle.load(file)
+        expectation = vs_expectation_dict["means"], vs_expectation_dict["stds"]
 
     inspexp_file_path = detection_path / METADATA_FOLDER / INSPEXP_FILE_NAME
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
-
-    cumulative_vs = True
-    norm_by_exp = False
-    vs_stat = True
-    kfold = False
-    expectation_norm_type = VSExpectationNormType.standardize
-    transform = VSTransform.sqrt
-
-    output_path = Path(DETECTION_PATH) / "main_experiments" / "cum_avg_motion_no_expectation" / "rgi2_5_mrl5_conf_min1"
-
-    vs_path = cum_vs_path if cumulative_vs else insp_exp_vs_path
-    expectation = cum_vs_expectation if cumulative_vs else insp_exp_vs_expectation
 
     annotations_path = detection_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
     adhesion_types = [AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour]
@@ -1161,6 +1178,8 @@ def test_vs_calc_loading():
                 vs.values = np.sqrt(vs.values)
 
             vs.norm_with_expectation(means, stds, expectation_norm_type)
+
+    vs_min_stat(visceral_slides, annotations_dict)
 
     if vs_stat:
         vs_values_boxplot(visceral_slides, output_path)
@@ -1183,19 +1202,43 @@ def test_vs_calc_loading():
             val_visceral_slides = [vs for vs in visceral_slides if vs.full_id in val_ids]
 
             lr = trainLR(train_visceral_slides, annotations_dict)
-            predictions = predict(val_visceral_slides, annotations_dict, negative_vs_needed=False, lr=lr)
+            predictions = predict(val_visceral_slides, annotations_dict, negative_vs_needed=negative_vs_needed, lr=lr)
             all_predictions.update(predictions)
 
         evaluate(all_predictions, annotations_dict, output_path)
         if cumulative_vs:
-            visualize(visceral_slides, annotations_dict, all_predictions, images_path, output_path)
+            visualize(visceral_slides, annotations_dict, all_predictions, images_path, output_path, vis_prior)
         else:
-            visualize(visceral_slides, annotations_dict, all_predictions, images_path, output_path, inspexp_data)
+            visualize(visceral_slides, annotations_dict, all_predictions, images_path, output_path, vis_prior, inspexp_data)
     else:
-        predictions = predict(visceral_slides, annotations_dict, negative_vs_needed=False)
+        predictions = predict(visceral_slides, annotations_dict, negative_vs_needed=negative_vs_needed)
         evaluate(predictions, annotations_dict, output_path)
-        visualize(visceral_slides, annotations_dict, predictions, images_path, output_path)
+        if cumulative_vs:
+            visualize(visceral_slides, annotations_dict, predictions, images_path, output_path, vis_prior)
+        else:
+            visualize(visceral_slides, annotations_dict, predictions, images_path, output_path, vis_prior, inspexp_data)
 
+
+def vs_min_stat(visceral_slides, annotations_dict):
+    negative_mins = []
+    positive_mins = []
+
+    for vs in visceral_slides:
+        vs_region = find_prior_subset(vs)
+        vs_region_min = np.min(vs_region[:, 2])
+        if vs.full_id in annotations_dict:
+            negative_mins.append(vs_region_min)
+        else:
+            positive_mins.append(vs_region_min)
+
+    print("Mean min positive VS {}".format(np.mean(negative_mins)))
+    print("Mean min negative VS {}".format(np.mean(positive_mins)))
+
+    t_test = stats.ttest_ind(negative_mins, positive_mins, equal_var=True)
+    print("Equal variances T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
+
+    t_test = stats.ttest_ind(negative_mins, positive_mins, equal_var=False)
+    print("Non equal variances T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
 
 
 if __name__ == '__main__':
