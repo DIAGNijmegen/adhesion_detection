@@ -143,7 +143,6 @@ def adhesions_with_region_growing(regions,
                                   conf_type=ConfidenceType.mean,
                                   region_growing_ind=None,
                                   min_region_len=5,
-                                  location=AdhesionType.unset,
                                   lr=None,
                                   decrease_tolerance=np.inf):
     """
@@ -234,19 +233,13 @@ def adhesions_with_region_growing(regions,
             # Generate bounding box from region
             bb_points = region_of_prediction.points[start_ind:end_ind]
             bounding_box = bb_from_points(bb_points, bb_size_min)
-            bounding_box.type = location
 
             # If the predicted bounding box is too small, enlarge it.
             # This way we want to prevent the method from outputting small bounding boxes
             adjusted_region, start_ind, end_ind = bb_adjusted_region(region_of_prediction.points, bounding_box)
             if lr is not None:
-                model, means, stds = lr
-                negative_bb_features = np.array(extract_features(bounding_box, adjusted_region))
-                negative_bb_features = (negative_bb_features - means) / stds
-                bb_tensor = torch.FloatTensor([negative_bb_features])
-                y_pred = model(bb_tensor)
-                confidence = y_pred.detach().numpy()[0][0]
-                #confidence = lr.predict(np.array(negative_bb_features).reshape(1, -1))[0]
+                negative_bb_features = extract_features(bounding_box, adjusted_region)
+                confidence = lr.predict(np.array(negative_bb_features).reshape(1, -1))[0]
             else:
                 # Take mean region vs as confidence
                 confidence = np.mean(adjusted_region[:, 2]) if conf_type == ConfidenceType.mean else min_slide_value
@@ -287,6 +280,7 @@ def bb_with_threshold(vs,
                       bb_size_min,
                       bb_size_max,
                       vs_range,
+                      pred_func,
                       conf_type=ConfidenceType.mean,
                       region_growing_ind=None,
                       min_region_len=5,
@@ -305,32 +299,28 @@ def bb_with_threshold(vs,
        The maximum size of a bounding box to be predicted
     vs_range : tuple of float
        A range of visceral slide values without outliers
+    pred_func : func
+       A function to make a prediction
     Returns
     -------
     bounding_boxes : list of Adhesion
        A list of bounding boxes predicted based on visceral slide values
     """
 
-    def bbs_in_subregion(vs, option, location):
-        contour_subset = find_prior_subset(vs, option)
+    contour_subset = find_prior_subset(vs)
 
-        # Remove the outliers
-        contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
-        # If no points are left, the VS values is too high in the regions where adhesions can be present
-        if len(contour_subset) == 0:
-            return []
+    # Remove the outliers
+    contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
+    # If no points are left, the VS values is too high in the regions where adhesions can be present
+    if len(contour_subset) == 0:
+        return []
 
-        # Predict
-        suitable_regions = get_connected_regions(contour_subset)
-        # Convert to array of Region instances
-        suitable_regions = [Region.from_points(region) for region in suitable_regions]
-        bounding_boxes = adhesions_with_region_growing(suitable_regions, bb_size_min, bb_size_max, vs_range, conf_type, region_growing_ind, min_region_len, location, lr)
-        return bounding_boxes
-
-    anterior_wall_bbs = bbs_in_subregion(vs, PriorOptions.remove_pelvis, AdhesionType.anteriorWall)
-    pelvis_bbs = bbs_in_subregion(vs, PriorOptions.remove_anterior_wall, AdhesionType.pelvis)
-
-    return anterior_wall_bbs + pelvis_bbs
+    # Predict
+    suitable_regions = get_connected_regions(contour_subset)
+    # Convert to array of Region instances
+    suitable_regions = [Region.from_points(region) for region in suitable_regions]
+    bounding_boxes = pred_func(suitable_regions, bb_size_min, bb_size_max, vs_range, conf_type, region_growing_ind, min_region_len, lr)
+    return bounding_boxes
 
 
 def predict(visceral_slides,
@@ -381,6 +371,7 @@ def predict(visceral_slides,
                                        bb_size_min,
                                        bb_size_max,
                                        vs_range,
+                                       adhesions_with_region_growing,
                                        conf_type,
                                        region_growing_ind,
                                        min_region_len,
@@ -1172,7 +1163,7 @@ class AdhesionsDataset(Dataset):
 
 def extract_features(adhesion_bb, adhesion_region):
     vs_values_region = adhesion_region[:, 2]
-    adhesion_features = [adhesion_bb.type.value, adhesion_bb.width, adhesion_bb.height, np.min(vs_values_region), np.max(vs_values_region), len(adhesion_region)]
+    adhesion_features = [adhesion_bb.type.value, adhesion_bb.width, adhesion_bb.height, np.mean(vs_values_region), len(adhesion_region)]
     return adhesion_features
 
 
@@ -1194,8 +1185,6 @@ def trainLR(visceral_slides, annotations_dict):
 
     positive_samples = []
     negative_samples = []
-    positive_labels = []
-    negative_labels = []
     for ind, vs in enumerate(visceral_slides):
         if vs.full_id in annotations_dict:
             annotation = annotations_dict[vs.full_id]
@@ -1206,11 +1195,6 @@ def trainLR(visceral_slides, annotations_dict):
                     adhesion_region, _, _ = bb_adjusted_region(vs_region, adhesion)
                     adhesion_features = extract_features(adhesion, adhesion_region)
                     positive_samples.append(adhesion_features)
-                    positive_labels.append(1)
-                    # Upsample adhesions to anteriror wall
-                    if adhesion.type == AdhesionType.anteriorWall:
-                        positive_samples.append(adhesion_features)
-                        positive_labels.extend([1])
         else:
             # Sample negative bbs
             # get VS prior region
@@ -1227,7 +1211,7 @@ def trainLR(visceral_slides, annotations_dict):
                         bb_height = int(np.round(bb_mean_size[1] + bb_size_std[1] * np.random.normal(size=1)[0]))
                         origin_x = int(bb_center[0] - round(bb_width / 2))
                         origin_y = int(bb_center[1] - round(bb_height / 2))
-                        negative_bb = Adhesion([origin_x, origin_y, bb_width, bb_height], type)
+                        negative_bb = Adhesion([origin_x, origin_y, bb_width, bb_height, type])
 
                         adhesion_region, _, _ = bb_adjusted_region(vs_region, negative_bb)
                         if len(adhesion_region) > 0:
@@ -1238,24 +1222,18 @@ def trainLR(visceral_slides, annotations_dict):
                 return samples
 
             anterior_wall_region = find_prior_subset(vs, option=PriorOptions.remove_pelvis)
-            anterior_wall_samples = sample_negative(anterior_wall_region, AdhesionType.anteriorWall, 3)
+            anterior_wall_samples = sample_negative(anterior_wall_region, AdhesionType.anteriorWall, 2)
             negative_samples.extend(anterior_wall_samples)
-            negative_labels.extend(np.zeros(len(anterior_wall_samples)).tolist())
 
             pelvis_region = find_prior_subset(vs, option=PriorOptions.remove_anterior_wall)
-            pelvis_samples = sample_negative(pelvis_region, AdhesionType.pelvis, 3)
+            pelvis_samples = sample_negative(pelvis_region, AdhesionType.pelvis, 2)
             negative_samples.extend(pelvis_samples)
-            negative_labels.extend(np.zeros(len(pelvis_samples)).tolist())
 
 
-    samples = np.concatenate((negative_samples, positive_samples, positive_samples, positive_samples))
-    # Standardise data
-    means = samples.mean(axis=0)
-    stds = samples.std(axis=0)
-    samples = (samples - means) / stds
-    labels = np.concatenate((negative_labels, positive_labels, positive_labels, positive_labels))
+    samples = np.concatenate((negative_samples, positive_samples, positive_samples))
+    labels = np.concatenate((np.zeros(len(negative_samples)), np.ones(2*len(positive_samples))))
 
-    model = Feedforward(len(samples[0]), 30)
+    model = Feedforward(len(samples[0]), 20)
     criterion = torch.nn.BCELoss()
     optimizer = torch.optim.SGD(model.parameters(), lr=0.01)
 
@@ -1267,10 +1245,10 @@ def trainLR(visceral_slides, annotations_dict):
     print('Train loss before training', before_train.item())
 
     dataset = AdhesionsDataset(samples, labels)
-    dataloader = DataLoader(dataset, batch_size=64, shuffle=True)
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=64, shuffle=True)
 
     model.train()
-    epoch = 75
+    epoch = 100
     for epoch in range(epoch):
         for x, y in dataloader:
             optimizer.zero_grad()
@@ -1310,7 +1288,7 @@ def trainLR(visceral_slides, annotations_dict):
     plot_ROCs([(fpr, tpr, auc_val)], "Adhesion classification ROC")
     """
 
-    return model, means, stds
+    return model
 
 
 def filter_dataset(annotations_dict, visceral_slides, positive_patients):
@@ -1461,6 +1439,8 @@ def run_detection_pipeline(config, detection_path, output_path):
 
             lr = trainLR(train_visceral_slides, annotations_dict)
 
+
+            
             predictions = predict(val_visceral_slides, annotations_dict, config.negative_vs_needed, config.conf_type,
                                   config.region_growing_ind, config.min_region_len, lr)
             all_predictions.update(predictions)
@@ -1549,7 +1529,6 @@ def compare_experiments(configs, experiments_path, output_path, metrics_to_plot=
 
 def test_vs_calc_loading():
     np.random.seed(99)
-    torch.random.manual_seed(99)
 
     config = DetectionConfig()
     config.conf_type = ConfidenceType.mean
@@ -1557,7 +1536,7 @@ def test_vs_calc_loading():
     config.exp_name = "mean"
     config.kfold = True
     detection_path = Path(DETECTION_PATH)
-    experiments_path = Path(DETECTION_PATH) / "experiments_perc"
+    experiments_path = Path(DETECTION_PATH) / "experiments"
 
     run_detection_pipeline(config, detection_path, experiments_path)
 
