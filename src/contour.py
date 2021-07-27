@@ -1,5 +1,6 @@
 import numpy as np
 from cinemri.contour import AbdominalContourPart, Contour
+from enum import Enum, unique
 
 
 def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=-1):
@@ -66,7 +67,14 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
     return regions
 
 
-def get_adhesions_prior_coords(x, y):
+@unique
+class PriorOptions(Enum):
+    full = 0
+    remove_pelvis = 1
+    remove_anterior_wall = 2
+
+
+def get_adhesions_prior_coords(x, y, option=PriorOptions.full):
     prior_coords = np.column_stack((x, y))
 
     contour = Contour(x, y)
@@ -77,15 +85,19 @@ def get_adhesions_prior_coords(x, y):
     prior_coords = [coord for coord in prior_coords.tolist() if coord not in top_coords]
 
     # remove pelvis
-    #x_bottom, y_bottom = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
-    #pelvis_coords = np.column_stack((x_bottom, y_bottom)).tolist()
-    #prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
+    if option == PriorOptions.remove_pelvis:
+        x_pelvis, y_pelvis = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
+        pelvis_coords = np.column_stack((x_pelvis, y_pelvis)).tolist()
+        prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
 
     # We remove top 1/2 of anterior wall coordinates
     x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
     anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall))
-    y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
-    anterior_wall_coords = [coord for coord in anterior_wall_coords.tolist() if coord[1] < y_anterior_wall_cutoff]
+    if option != PriorOptions.remove_anterior_wall:
+        y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
+        anterior_wall_coords = [coord for coord in anterior_wall_coords.tolist() if coord[1] < y_anterior_wall_cutoff]
+    else:
+        anterior_wall_coords = anterior_wall_coords.tolist()
     prior_coords = [coord for coord in prior_coords if coord not in anterior_wall_coords]
 
     # We remove posterior wall coordinates
