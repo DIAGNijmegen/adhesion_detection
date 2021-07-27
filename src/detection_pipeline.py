@@ -27,6 +27,15 @@ class ConfidenceType(Enum):
     min = 1
 
 
+@unique
+class EvaluationMetrics(Enum):
+    froc_all = 0
+    froc_negative = 1
+    precision = 2
+    recall = 3
+    slice_roc = 4
+
+
 def get_predicted_bb_ranges(bb_mean_size, bb_size_std, std_coef=1.96):
     bb_size_max = bb_mean_size[0] + std_coef * bb_size_std[0], bb_mean_size[1] + std_coef * bb_size_std[1]
     return bb_mean_size, bb_size_max
@@ -127,7 +136,7 @@ def find_min_vs(regions):
 def adhesions_with_region_growing(regions,
                                   bb_size_min,
                                   bb_size_max,
-                                  vs_max,
+                                  vs_range,
                                   conf_type=ConfidenceType.mean,
                                   region_growing_ind=None,
                                   min_region_len=5,
@@ -231,7 +240,7 @@ def adhesions_with_region_growing(regions,
             else:
                 # Take mean region vs as confidence
                 confidence = np.mean(adjusted_region[:, 2]) if conf_type == ConfidenceType.mean else min_slide_value
-                confidence = vs_max - confidence
+                confidence = (vs_range[1] - vs_range[0] - confidence) / (vs_range[1] - vs_range[0])
             bounding_boxes.append((bounding_box, confidence))
 
         # Cut out bounding box region
@@ -307,7 +316,7 @@ def bb_with_threshold(vs,
     suitable_regions = get_connected_regions(contour_subset)
     # Convert to array of Region instances
     suitable_regions = [Region.from_points(region) for region in suitable_regions]
-    bounding_boxes = pred_func(suitable_regions, bb_size_min, bb_size_max, vs_range[1], conf_type, region_growing_ind, min_region_len, lr)
+    bounding_boxes = pred_func(suitable_regions, bb_size_min, bb_size_max, vs_range, conf_type, region_growing_ind, min_region_len, lr)
     return bounding_boxes
 
 
@@ -443,7 +452,7 @@ def save_evaluation_metrics(froc, pr_curves, ap, slice_roc, conf_stat, output_pa
         pickle.dump(metrics_dict, f)
 
 
-def read_evaluation_metrics(file_path):
+def load_evaluation_metrics(file_path):
 
     with open(file_path, "rb") as f:
         metrics_dict = pickle.load(f)
@@ -462,18 +471,18 @@ def read_evaluation_metrics(file_path):
 
         ap = metrics_dict["ap"]
 
-    return froc, pr_curves, ap, slice_roc, conf_stat
+    return froc, pr_curves, slice_roc, ap, conf_stat
 
 
 def plot_evaluation_metrics(froc, pr_curves, slice_roc, output_path):
 
-    plot_FROC(froc[0], froc[2], output_path, "FROC all")
-    plot_FROC(froc[1], froc[2], output_path, "FROC negative")
+    plot_FROCs([(froc[0], froc[2])], output_path, "FROC all")
+    plot_FROCs([(froc[1], froc[2])], output_path, "FROC negative")
 
-    plot_precision_recall(pr_curves[0], pr_curves[2], output_path)
-    plot_precision_recall(pr_curves[1], pr_curves[2], output_path, "Recall")
+    plot_precisions_recalls([(pr_curves[0], pr_curves[2])], output_path)
+    plot_precisions_recalls([(pr_curves[1], pr_curves[2])], output_path, "Recall")
 
-    plot_ROC(slice_roc[0], slice_roc[1], slice_roc[2], output_path=output_path)
+    plot_ROCs([slice_roc], output_path=output_path)
 
 
 def get_prediction_outcome(annotations_dict, predictions, iou_threshold=0.1):
@@ -665,44 +674,65 @@ def compute_ap(recall, precision):
     return ap, mpre, mrec
 
 
-def plot_ROC(fpr, tpr, auc_val, title='Slice level ROC', output_path=None):
+def plot_ROCs(rocs_data, title='Slice level ROC', output_path=None, legends=None):
     """
     Plots a slice-level ROC
     """
     plt.figure()
-    lw = 2
-    plt.plot(fpr, tpr, color='darkorange',
-             lw=lw, label='ROC curve (area = %0.2f)' % auc_val)
-    plt.plot([0, 1], [0, 1], color='navy', lw=lw, linestyle='--')
+    if legends is not None:
+        for roc_data, legend in zip(rocs_data, legends):
+            plt.plot(roc_data[0], roc_data[1], lw=2, label='{}, AUC = {:.2f}%'.format(legend, roc_data[2]))
+    else:
+        for roc_data in rocs_data:
+            plt.plot(roc_data[0], roc_data[1], lw=2, label='AUC = {:.2f}%'.format(roc_data[2]))
+
+    plt.plot([0, 1], [0, 1], color='black', lw=2, linestyle='--')
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
     plt.xlabel('False Positive Rate')
     plt.ylabel('True Positive Rate')
     plt.title(title)
-    plt.legend(loc="lower right")
+    if legends is not None:
+        plt.legend(loc="lower right")
     if output_path is not None:
         plt.savefig(output_path / "Slice_ROC.png", bbox_inches='tight', pad_inches=0)
     plt.show()
 
 
-def plot_FROC(FP_per_image, sensitivity, output_path, title):
+def plot_FROCs(frocs, output_path, title, legends=None):
 
     plt.figure()
-    plt.plot(FP_per_image, sensitivity)
+    if legends is not None:
+        for froc, legend in zip(frocs, legends):
+            plt.plot(froc[0], froc[1], lw=2, label=legend)
+    else:
+        for froc in frocs:
+            plt.plot(froc[0], froc[1])
+
     plt.xlabel("Mean number of FPs per image")
-    plt.ylabel("TPs fraction")
+    plt.ylabel("Sensitivity")
     plt.ylim([0, 1])
     plt.xscale('log')
+    if legends is not None:
+        plt.legend(loc="lower right")
     plt.savefig(output_path / "{}.png".format(title), bbox_inches='tight', pad_inches=0)
     plt.show()
 
 
-def plot_precision_recall(values, confidence, output_path, metric="Precision"):
+def plot_precisions_recalls(curves, output_path, metric="Precision", legends=None):
 
     plt.figure()
-    plt.plot(confidence, values)
+    if legends is not None:
+        for curve, legend in zip(curves, legends):
+            plt.plot(curve[1], curve[0], label=legend)
+    else:
+        for curve in curves:
+            plt.plot(curve[1], curve[0])
+
     plt.xlabel("Confidence")
     plt.ylabel(metric)
+    if legends is not None:
+        plt.legend(loc="lower left")
     if metric == "Recall":
         plt.ylim([0, 1])
     plt.savefig(output_path / "{}.png".format(metric), bbox_inches='tight', pad_inches=0)
@@ -1162,7 +1192,7 @@ def trainLR(visceral_slides, annotations_dict):
 
     fpr, tpr, _ = roc_curve(labels, thresholds)
     auc_val = auc(fpr, tpr)
-    plot_ROC(fpr, tpr, auc_val, "Adhesion classification ROC")
+    plot_ROCs([(fpr, tpr, auc_val)], "Adhesion classification ROC")
 
     return clf
 
@@ -1202,6 +1232,7 @@ class DetectionConfig:
         self.min_region_len = 5
         self.exp_prefix = ""
         self.lr_suffix = ""
+        self.exp_name = ""
 
 
 def get_experiment_path(config, output_path):
@@ -1334,17 +1365,6 @@ def run_detection_pipeline(config, detection_path, output_path):
                       inspexp_data)
 
 
-def test_vs_calc_loading():
-    np.random.seed(99)
-
-    config = DetectionConfig()
-    #config.conf_type = ConfidenceType.min
-    config.kfold = True
-    detection_path = Path(DETECTION_PATH)
-    output_path = Path(DETECTION_PATH)
-    run_detection_pipeline(config, detection_path, output_path)
-
-
 def vs_min_stat(visceral_slides, annotations_dict):
     negative_mins = []
     positive_mins = []
@@ -1365,6 +1385,81 @@ def vs_min_stat(visceral_slides, annotations_dict):
 
     t_test = stats.ttest_ind(negative_mins, positive_mins, equal_var=False)
     print("Non equal variances T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
+
+
+def compare_experiments(configs, experiments_path, output_path, metrics_to_plot=[EvaluationMetrics.froc_all,
+                                                                                 EvaluationMetrics.precision,
+                                                                                 EvaluationMetrics.recall,
+                                                                                 EvaluationMetrics.slice_roc]):
+
+    output_path.mkdir(exist_ok=True)
+
+    frocs_all = []
+    frocs_neg = []
+    precisions = []
+    recalls = []
+    slice_rocs = []
+    experiment_names = []
+
+    for config in configs:
+        metrics_path = get_experiment_path(config, experiments_path) / EVALUATION_METRICS_FILE
+        froc, pr_curve, slice_roc, _, _ = load_evaluation_metrics(metrics_path)
+
+        frocs_all.append((froc[0], froc[2]))
+        frocs_neg.append((froc[1], froc[2]))
+        precisions.append((pr_curve[0], pr_curve[2]))
+        recalls.append((pr_curve[1], pr_curve[2]))
+        slice_rocs.append(slice_roc)
+
+        experiment_names.append(config.exp_name)
+
+    if EvaluationMetrics.froc_all in metrics_to_plot:
+        plot_FROCs(frocs_all, output_path, "Frocs all", experiment_names)
+
+    if EvaluationMetrics.froc_negative in metrics_to_plot:
+        plot_FROCs(frocs_neg, output_path, "Frocs negative", experiment_names)
+
+    if EvaluationMetrics.precision in metrics_to_plot:
+        plot_precisions_recalls(precisions, output_path, legends=experiment_names)
+
+    if EvaluationMetrics.recall in metrics_to_plot:
+        plot_precisions_recalls(recalls, output_path, metric="Recall", legends=experiment_names)
+
+    if EvaluationMetrics.slice_roc in metrics_to_plot:
+        plot_ROCs(slice_rocs, output_path=output_path, legends=experiment_names)
+
+
+def test_vs_calc_loading():
+    np.random.seed(99)
+
+    config = DetectionConfig()
+    config.conf_type = ConfidenceType.mean
+    config.norm_by_exp = True
+    config.exp_name = "mean"
+    #config.kfold = True
+
+    detection_path = Path(DETECTION_PATH)
+    experiments_path = Path(DETECTION_PATH) / "experiments"
+
+    run_detection_pipeline(config, detection_path, experiments_path)
+
+    config1 = DetectionConfig()
+    config1.conf_type = ConfidenceType.min
+    config1.norm_by_exp = True
+    config1.exp_name = "min"
+
+    run_detection_pipeline(config1, detection_path, experiments_path)
+
+    config2 = DetectionConfig()
+    config2.norm_by_exp = True
+    config2.kfold = True
+    config2.exp_name = "lr"
+
+    run_detection_pipeline(config2, detection_path, experiments_path)
+
+    output_path = experiments_path / "comparison_mean_div"
+    compare_experiments([config, config1, config2], experiments_path, output_path)
+
 
 
 if __name__ == '__main__':
