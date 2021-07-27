@@ -82,7 +82,7 @@ def positive_stat(annotations_file_path, patients_metadata_file, mapping_path):
 
     print("Statistics of annotation that intersect the abdominal cavity contour:")
     annotations = load_annotations(annotations_file_path,
-                                   adhesion_types=[AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour])
+                                   adhesion_types=[AdhesionType.anteriorWall, AdhesionType.pelvis])
     positive_annotations_stat(annotations, patients, mapping)
 
     print("Statistics of annotation that intersect the anterior wall:")
@@ -102,7 +102,7 @@ def segmentation_pos_stat(annotations_file_path, segmentation_path):
 
     annotations_contour = load_annotations(annotations_file_path,
                                            adhesion_types=[AdhesionType.anteriorWall,
-                                                           AdhesionType.abdominalCavityContour])
+                                                           AdhesionType.pelvis])
     patients_contour_ids = np.unique([annotation.patient_id for annotation in annotations_contour])
     print("{} patients with BB annotations, who have annotations that intersect contour".format(len(patients_contour_ids)))
 
@@ -168,7 +168,7 @@ def segmentation_pos_stat(annotations_file_path, segmentation_path):
 
 # Extract full ids of slices with BB annotations that have adhesions intersecting contour
 def bb_annotations_to_full_ids_file(bb_annotations_path, output_file_path, adhesion_types=[AdhesionType.anteriorWall,
-                                                                                           AdhesionType.abdominalCavityContour]):
+                                                                                           AdhesionType.pelvis]):
 
     annotations = load_annotations(bb_annotations_path,
                                    adhesion_types=adhesion_types)

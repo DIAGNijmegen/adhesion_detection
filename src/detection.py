@@ -338,7 +338,7 @@ def extract_negative_samples(annotations_type_path, inspexp_path, images_path, m
 def annotations_to_yolov5(annotations_path,
                           labels_path,
                           adhesion_types=[AdhesionType.anteriorWall.value,
-                                          AdhesionType.abdominalCavityContour.value,
+                                          AdhesionType.pelvis.value,
                                           AdhesionType.inside.value]):
     """
     Convert adhesions annotations to YOLOv5 format
@@ -386,7 +386,7 @@ def extract_detection_input_subset(detection_input_whole_path,
                                    detection_input_subset_path,
                                    annotations_path,
                                    adhesion_types=[AdhesionType.anteriorWall.value,
-                                                   AdhesionType.abdominalCavityContour.value,
+                                                   AdhesionType.pelvis.value,
                                                    AdhesionType.inside.value]):
     """
     Extract a subset of detection data filtered by adhesion type
@@ -822,7 +822,7 @@ if __name__ == '__main__':
 
     #npy_to_jpg(detection_contour_npy_path, detection_contour_jpg_path)
 
-    #contour_types = [AdhesionType.anteriorWall.value, AdhesionType.abdominalCavityContour.value]
+    #contour_types = [AdhesionType.anteriorWall.value, AdhesionType.pelvis.value]
     """
     extract_detection_input_subset(detection_input_whole_path,
                                    detection_input_contour_path,

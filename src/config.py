@@ -43,6 +43,9 @@ PATIENTS_METADATA_FILE_OLD_NAME = "patients_old.json"
 PATIENTS_MAPPING_FILE_NAME = "patient_id_mapping.json"
 INSPEXP_FILE_NAME = "inspexp.json"
 
+# Output files
+EVALUATION_METRICS_FILE = "metrics.pkl"
+
 # JSON keys
 TRAIN_PATIENTS_KEY = "train_patients"
 TEST_PATIENTS_KEY = "test_patients"
