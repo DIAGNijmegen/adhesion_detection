@@ -1225,12 +1225,12 @@ class DetectionConfig:
         self.transform = VSTransform.none
         self.negative_vs_needed = self.norm_by_exp and self.expectation_norm_type == VSExpectationNormType.standardize
         self.vis_prior = True # not anterior_motion_norm
-        #self.adhesion_types = [AdhesionType.anteriorWall, AdhesionType.pelvis]
-        self.adhesion_types = [AdhesionType.pelvis]
+        self.adhesion_types = [AdhesionType.anteriorWall, AdhesionType.pelvis]
+        #self.adhesion_types = [AdhesionType.pelvis]
         self.conf_type = ConfidenceType.mean
         self.region_growing_ind = 2.5
         self.min_region_len = 5
-        self.exp_prefix = "ant_wall_removed"
+        self.exp_prefix = ""
         self.lr_suffix = ""
         self.exp_name = ""
 
