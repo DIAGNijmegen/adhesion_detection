@@ -1225,12 +1225,12 @@ class DetectionConfig:
         self.transform = VSTransform.none
         self.negative_vs_needed = self.norm_by_exp and self.expectation_norm_type == VSExpectationNormType.standardize
         self.vis_prior = True # not anterior_motion_norm
-        self.adhesion_types = [AdhesionType.anteriorWall, AdhesionType.pelvis]
-        #self.adhesion_types = [AdhesionType.pelvis]
+        #self.adhesion_types = [AdhesionType.anteriorWall, AdhesionType.pelvis]
+        self.adhesion_types = [AdhesionType.pelvis]
         self.conf_type = ConfidenceType.mean
         self.region_growing_ind = 2.5
         self.min_region_len = 5
-        self.exp_prefix = ""
+        self.exp_prefix = "ant_wall_removed"
         self.lr_suffix = ""
         self.exp_name = ""
 
@@ -1392,7 +1392,7 @@ def compare_experiments(configs, experiments_path, output_path, metrics_to_plot=
                                                                                  EvaluationMetrics.recall,
                                                                                  EvaluationMetrics.slice_roc]):
 
-    output_path.mkdir(exist_ok=True)
+    output_path.mkdir(exist_ok=True, parents=True)
 
     frocs_all = []
     frocs_neg = []
@@ -1432,14 +1432,15 @@ def compare_experiments(configs, experiments_path, output_path, metrics_to_plot=
 def test_vs_calc_loading():
     np.random.seed(99)
 
+    detection_path = Path(DETECTION_PATH)
+    experiments_path = Path(DETECTION_PATH) / "experiments"
+
+    """
     config = DetectionConfig()
     config.conf_type = ConfidenceType.mean
     config.norm_by_exp = True
     config.exp_name = "mean"
-    #config.kfold = True
-
-    detection_path = Path(DETECTION_PATH)
-    experiments_path = Path(DETECTION_PATH) / "experiments"
+    config.transform = VSTransform.sqrt
 
     run_detection_pipeline(config, detection_path, experiments_path)
 
@@ -1447,18 +1448,87 @@ def test_vs_calc_loading():
     config1.conf_type = ConfidenceType.min
     config1.norm_by_exp = True
     config1.exp_name = "min"
+    config1.transform = VSTransform.sqrt
 
     run_detection_pipeline(config1, detection_path, experiments_path)
 
     config2 = DetectionConfig()
-    config2.norm_by_exp = True
     config2.kfold = True
+    config2.norm_by_exp = True
     config2.exp_name = "lr"
+    config2.transform = VSTransform.sqrt
 
     run_detection_pipeline(config2, detection_path, experiments_path)
 
-    output_path = experiments_path / "comparison_mean_div"
+    output_path = experiments_path / "comparison" / "pelvis_ant_motion_norm_cum_mean_div_sqrt"
     compare_experiments([config, config1, config2], experiments_path, output_path)
+    """
+
+
+    config = DetectionConfig()
+    config.conf_type = ConfidenceType.mean
+    config.exp_name = "unnrom_mean"
+
+    config1 = DetectionConfig()
+    config1.conf_type = ConfidenceType.mean
+    config1.norm_by_exp = True
+    config1.exp_name = "mean_div_mean"
+
+    config2 = DetectionConfig()
+    config2.conf_type = ConfidenceType.mean
+    config2.norm_by_exp = True
+    config2.exp_name = "mean_div_mean_sqrt"
+    config2.transform = VSTransform.sqrt
+
+    output_path = experiments_path / "comparison" / "pelvis_ant_motion_norm_cum"
+    compare_experiments([config, config1, config2], experiments_path, output_path)
+
+    """
+    config1 = DetectionConfig()
+    config1.kfold = True
+    config1.norm_by_exp = True
+    config1.exp_name = "cum_mean_div"
+
+    config2 = DetectionConfig()
+    config2.kfold = True
+    config2.norm_by_exp = True
+    config2.transform = VSTransform.sqrt
+    config2.exp_name = "cum_mean_div_sqrt"
+
+    config3 = DetectionConfig()
+    config3.cumulative_vs = False
+    config3.norm_by_exp = True
+    config3.min_region_len = 3
+    config3.region_growing_ind = 7
+    config3.kfold = True
+    config3.transform = VSTransform.sqrt
+    config3.exp_name = "insexp_mean_div_sqrt"
+
+    config4 = DetectionConfig()
+    config4.cumulative_vs = False
+    config4.norm_by_exp = True
+    config4.conf_type = ConfidenceType.min
+    config4.expectation_norm_type = VSExpectationNormType.standardize
+    config4.min_region_len = 5
+    config4.region_growing_ind = 5
+    config4.exp_name = "insexp_stand"
+
+    
+    config5 = DetectionConfig()
+    config5.cumulative_vs = False
+    config5.norm_by_exp = True
+    config5.kfold = True
+    config5.expectation_norm_type = VSExpectationNormType.standardize
+    config5.transform = VSTransform.sqrt
+    config5.exp_name = "stand_sqrt"
+    config5.min_region_len = 3
+    config5.region_growing_ind = 7
+
+    output_path = experiments_path / "comparison" / "ant_motion_norm"
+    compare_experiments([config1, config2, config3, config4], experiments_path, output_path)
+    """
+
+
 
 
 
