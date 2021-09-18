@@ -77,9 +77,9 @@ def get_adhesions_prior_coords(x, y):
     prior_coords = [coord for coord in prior_coords.tolist() if coord not in top_coords]
 
     # remove pelvis
-    #x_bottom, y_bottom = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
-    #pelvis_coords = np.column_stack((x_bottom, y_bottom)).tolist()
-    #prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
+   # x_bottom, y_bottom = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
+   # pelvis_coords = np.column_stack((x_bottom, y_bottom)).tolist()
+   # prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
 
     # We remove top 1/2 of anterior wall coordinates
     x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
@@ -94,7 +94,6 @@ def get_adhesions_prior_coords(x, y):
     prior_coords = np.array([coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()])
 
     return prior_coords[:, 0], prior_coords[:, 1]
-
 
 from pathlib import Path
 from cinemri.config import ARCHIVE_PATH

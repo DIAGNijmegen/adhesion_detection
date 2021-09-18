@@ -17,7 +17,7 @@ from config import DETECTION_PATH, VS_CONTROL_FOLDER, AVG_NORM_FOLDER, CUMULATIV
 from cinemri.config import ARCHIVE_PATH
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
     TEST_PATIENTS_KEY, VISCERAL_SLIDE_FILE, MASKS_FOLDER, DF_REST_FOLDER, DF_CAVITY_FOLDER, DF_COMPLETE_FOLDER, \
-    DF_CONTOUR_FOLDER, VICINITY_NORM_FOLDER, VS_FOLDER
+    DF_CONTOUR_FOLDER, VICINITY_NORM_FOLDER, UNNORM_FOLDER, VS_FOLDER, VS_TEST_FOLDER
 from segmentation import segment_abdominal_cavity
 from utils import slices_from_full_ids_file, patients_from_full_ids
 
@@ -563,8 +563,22 @@ def compute_fast_cumulative_vs(input_path,
 def test():
     detection_path = Path(DETECTION_PATH)
 
-    # Train
+    insp_exp_input_path = detection_path / "output" / "vs_input" / "test" / "insp_exp"
+    insp_exp_output_path = detection_path / VS_TEST_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
 
+    cum_input_path = detection_path / "output" / "vs_input" / "test" / "cumulative"
+    cum_output_path = detection_path / VS_TEST_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
+
+    #compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.none,
+     #                       VSNormField.complete)
+    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.average_anterior_wall,
+                               normalization_df=VSNormField.complete)
+
+
+    #Train unnorm
+
+    # Train
+    """
     insp_exp_input_path = detection_path / "output" / "vs_input" / "train" / "insp_exp"
     insp_exp_output_path = detection_path / VS_FOLDER / VICINITY_NORM_FOLDER / INS_EXP_VS_FOLDER
 
@@ -574,6 +588,7 @@ def test():
     compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.contour_vicinity, VSNormField.complete)
     compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.contour_vicinity,
                                normalization_df=VSNormField.complete)
+    """
 
     """
     # Control

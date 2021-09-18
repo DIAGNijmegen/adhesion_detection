@@ -274,7 +274,9 @@ def extract_vs_input(full_ids_file, images_folder, segmentation_folder, insp_exp
     output_folder.mkdir(exist_ok=True, parents=True)
     patients = patients_from_full_ids_file(full_ids_file)
 
-    extract_insp_exp_dfs(patients, images_folder, segmentation_folder, insp_exp_path, output_folder)
+    if insp_exp_path is not None:
+        extract_insp_exp_dfs(patients, images_folder, segmentation_folder, insp_exp_path, output_folder)
+
     extract_cumulative_dfs(patients, images_folder, segmentation_folder, output_folder)
 
 
@@ -299,7 +301,7 @@ def extract(argv):
     full_ids_file_path = Path(args.ids_file)
     images_path = Path(args.images)
     masks_path = Path(args.masks)
-    insp_exp_file_path = Path(args.insp_exp)
+    insp_exp_file_path = Path(args.insp_exp) if args.insp_exp else None
     output_path = Path(args.output)
 
     extract_vs_input(full_ids_file_path, images_path, masks_path, insp_exp_file_path, output_path)

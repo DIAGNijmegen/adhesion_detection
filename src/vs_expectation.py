@@ -52,7 +52,7 @@ def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTran
         vs = neg_visceral_slides[0]
         slice = CineMRISlice.from_full_id(vs.full_id)
 
-        title = "inspexp_expectation_vi" if inspexp_data is None else "cumulative_vi"
+        title = "cum_expectation_vi" if inspexp_data is None else "inspexp_expectation_vi"
         if transform == VSTransform.log:
             title += "_log"
         elif transform == VSTransform.sqrt:
@@ -77,8 +77,11 @@ def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTran
             x = np.concatenate((x, reg.x))
             y = np.concatenate((y, reg.y))
             c = np.concatenate((c, np.ones(len(reg.x)) * reg.mean))
-        plt.scatter(x, y, s=5, c=c)
+        plt.scatter(x, y, s=5, c=c, cmap="jet")
         plt.colorbar()
+        x_bl, y_bl = vs.bottom_left_point
+        plt.scatter(x_bl, y_bl, s=25, c="white")
+        plt.axis("off")
         plt.savefig(output_path / "{}_{}.png".format(title, regions_num), bbox_inches='tight', pad_inches=0)
         plt.close()
 
@@ -89,14 +92,14 @@ if __name__ == '__main__':
     detection_path = Path(DETECTION_PATH)
     images_path = detection_path / IMAGES_FOLDER / CONTROL_FOLDER
     masks_path = detection_path / FULL_SEGMENTATION_FOLDER
-    insp_exp_control_path = detection_path / VS_CONTROL_FOLDER / VICINITY_NORM_FOLDER / INS_EXP_VS_FOLDER
+    insp_exp_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
     inspexp_file_path = detection_path / METADATA_FOLDER / INSPEXP_FILE_NAME
-    output_path = detection_path / "control_vs_stat_vicinity"
+    output_path = detection_path / "control_vs_stat_avg_norm"
     # load inspiration and expiration data
     with open(inspexp_file_path) as inspexp_file:
         inspexp_data = json.load(inspexp_file)
 
-    cum_control_path = detection_path / VS_CONTROL_FOLDER / VICINITY_NORM_FOLDER / CUMULATIVE_VS_FOLDER
+    cum_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
 
     cumulative_vs = True
     transform = VSTransform.sqrt

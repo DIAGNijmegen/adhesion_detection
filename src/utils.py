@@ -14,10 +14,11 @@ from config import *
 from cinemri.config import ARCHIVE_PATH
 from cinemri.utils import get_patients, get_image_orientation
 from cinemri.contour import get_contour
-from cinemri.definitions import Patient, CineMRISlice, Study
+from cinemri.definitions import Patient, CineMRISlice, Study, AnatomicalPlane
 import shutil
 import matplotlib.pyplot as plt
 from vs_definitions import VisceralSlide
+from collections import Counter
 
 # Splits the (start, end) range into n intervals and return the middle value of each interval
 def binning_intervals(start=0, end=1, n=1000):
@@ -182,7 +183,7 @@ def write_slices_to_file(slices, file_path):
             file.write(full_id + "\n")
 
 
-def get_vs_range(visceral_slides, negative_vs_needed):
+def get_vs_range(visceral_slides, negative_vs_needed, verbose=True):
     """Returns visceral slide range with excluded outliers
     """
 
@@ -193,17 +194,25 @@ def get_vs_range(visceral_slides, negative_vs_needed):
 
     vs_abs_min = np.min(all_vs_values)
     vs_abs_max = np.max(all_vs_values)
-    print("VS minumum : {}".format(vs_abs_min))
-    print("VS maximum : {}".format(vs_abs_max))
+    if verbose:
+        print("VS minumum : {}".format(vs_abs_min))
+        print("VS maximum : {}".format(vs_abs_max))
 
     vs_q1 = np.quantile(all_vs_values, 0.25)
     vs_q3 = np.quantile(all_vs_values, 0.75)
     vs_iqr = vs_q3 - vs_q1
+
+    if verbose:
+        print("VS first quantile : {}".format(vs_q1))
+        print("VS third quantile : {}".format(vs_q3))
+        print("VS IQR : {}".format(vs_iqr))
+
     vs_min = min(vs_abs_min, vs_q1 - 1.5 * vs_iqr) if negative_vs_needed else max(vs_abs_min, vs_q1 - 1.5 * vs_iqr)
     vs_max = min(vs_abs_max, vs_q3 + 1.5 * vs_iqr)
 
-    print("VS minumum, outliers removed range : {}".format(vs_min))
-    print("VS maximum, outliers removed range : {}".format(vs_max))
+    if verbose:
+        print("VS minumum, outliers removed range : {}".format(vs_min))
+        print("VS maximum, outliers removed range : {}".format(vs_max))
 
     return (vs_min, 0) if negative_vs_needed else (vs_min, vs_max)
 
@@ -547,46 +556,7 @@ def test():
     patients_metadata = metadata_path / PATIENTS_METADATA_FILE_NAME
     mapping_path = archive_path / METADATA_FOLDER / PATIENTS_MAPPING_FILE_NAME
 
-    detection_path = Path(DETECTION_PATH) / IMAGES_FOLDER / TEST_FOLDER
-
-    patients = get_patients(detection_path)
-    slices_full_ids = slices_full_ids_from_patients(patients)
-    full_ids_to_file(slices_full_ids, Path("test_full_ids.txt"))
-
-    
-    """
-    patients = patients_from_metadata(patients_metadata)
-    max_stud_num = 0
-    for patient in patients:
-        max_stud_num = max(max_stud_num, len(patient.studies))
-        
-    print("Maximum number of studies {}".format(max_stud_num))
-    """
-
-    """
-    patients = patients_from_metadata("patients.json")
-
-    print(len(patients))
-
-    patients_few_studies = [patient for patient in patients if len(patient.studies) > 1]
-    patients_few_studies_ids = [(p.id, len(p.studies)) for p in patients_few_studies]
-    print(len(patients_few_studies_ids))
-    print(patients_few_studies_ids)
-
-    studies = []
-    for p in patients:
-        studies += p.studies
-
-    studies_no_date = [s for s in studies if s.date is None]
-    studies_no_date_ids = [(s.patient_id, s.id, len(s.slices)) for s in studies_no_date]
-    print(len(studies_no_date_ids))
-    print(studies_no_date_ids)
-    print("done")
-    """
-
-    # full_segmentation_path = archive_path / FULL_SEGMENTATION_FOLDER
-    # contour_stat(full_segmentation_path)
-    # train_test_split(archive_path, subset_path, train_proportion=1)
+    detection_path = Path(DETECTION_PATH) / IMAGES_FOLDER / "test_final"
 
 
 if __name__ == '__main__':

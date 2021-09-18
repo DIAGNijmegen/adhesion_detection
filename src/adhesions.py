@@ -16,6 +16,8 @@ from cinemri.utils import get_patients
 from utils import interval_overlap, load_visceral_slides, get_inspexp_frames
 from visceral_slide_pipeline import load_visceral_slide
 from contour import get_adhesions_prior_coords
+from collections import Counter
+from utils import patients_from_full_ids, load_visceral_slides
 
 # Folder to save visualized annotations
 ANNOTATIONS_VIS_FOLDER = "vis_annotations"
@@ -587,7 +589,7 @@ def show_annotation(annotation, images_path):
         plt.show()
 
 
-def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, normalize=False, title=None, file_name=None):
+def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, prior=False, normalize=False, title=None, file_name=None):
     """
     Plots absolute value of visceral slide normalized by the absolute maximum together with adhesions annotations
     over the frame of a cine-MRI slice for which visceral slide was computed and saves to a file
@@ -608,21 +610,22 @@ def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, normal
        A file name to save the plot
     """
 
-    x_prior, y_prior = get_adhesions_prior_coords(x, y)
+    if prior:
+        x_prior, y_prior = get_adhesions_prior_coords(x, y)
 
-    coords = np.column_stack((x, y)).tolist()
-    prior_coords = np.column_stack((x_prior, y_prior)).tolist()
-    prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
+        coords = np.column_stack((x, y)).tolist()
+        prior_coords = np.column_stack((x_prior, y_prior)).tolist()
+        prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
 
-    x = x[prior_inds]
-    y = y[prior_inds]
-    slide_vis = visceral_slide[prior_inds]
+        x = x[prior_inds]
+        y = y[prior_inds]
+        visceral_slide = visceral_slide[prior_inds]
 
-    slide_vis = slide_vis / np.max(slide_vis) if normalize else slide_vis
+    visceral_slide = visceral_slide / np.max(visceral_slide) if normalize else visceral_slide
 
     plt.figure()
     plt.imshow(frame, cmap="gray")
-    plt.scatter(x, y, s=5, c=slide_vis, cmap="jet")
+    plt.scatter(x, y, s=5, c=visceral_slide, cmap="jet")
     ax = plt.gca()
     if annotation:
         for adhesion in annotation.adhesions:
@@ -708,7 +711,7 @@ def save_annotated_gifs(annotations, image_path, target_path):
         slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
 
         vis_path = annotation.build_path(target_path, extension="")
-        vis_path.mkdir(exist_ok=True)
+        vis_path.mkdir(exist_ok=True, parents=True)
 
         # Make a separate folder for .png files
         png_path = vis_path / "pngs"
@@ -830,6 +833,41 @@ def vis_annotation_and_computed_vs(annotations_path,
         # Visualise
         annotated_visc_slide_path = output_path / (annotation.full_id + ".png") if save else None
         show_vs_with_annotation(x, y, visceral_slide, insp_frame, annotation, file_name=annotated_visc_slide_path)
+
+
+def vis_computed_cum_vs(visceral_slides,
+                        images_path,
+                        output_path,
+                        inspexp_data=None,
+                        save=True):
+    """
+    Computes and visualise visceral slide for all annotated slices and saves as .png images is save flag is True
+    Parameters
+    ----------
+    annotations_path, images_path, masks_path, inspexp_file_path : Path
+        Paths to annotations, images, masks and inspiration/expiration files
+    output_path : Path
+        A Path to save visualised annotation and visceral slide over a frame for which visceral slide is computed
+    save : bool
+        A boolean flag indicating whether to save or show visualisation
+    """
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    # load slices with visceral slide and annotations
+    for vs in visceral_slides:
+
+        if inspexp_data is None:
+            # Assume it is cumulative VS and take the one before the last one frame
+            slice_path = vs.build_path(images_path)
+            slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+            frame = slice[-2]
+        else:
+            slice = CineMRISlice(vs.slice_id, vs.patient_id, vs.study_id)
+            frame, _ = get_inspexp_frames(slice, inspexp_data, images_path)
+
+        annotated_visc_slide_path = output_path / (vs.full_id + ".png") if save else None
+        show_vs_with_annotation(vs.x, vs.y, vs.values, frame, prior=True, file_name=annotated_visc_slide_path)
+
 
 # TODO: restore all method here
 # def vis_cumulative_vs_for_annotations():
@@ -1003,38 +1041,17 @@ def verify_abdominal_wall(x, y, frame, slice_id, target_path, type=AbdominalCont
 
 def test():
     archive_path = Path(ARCHIVE_PATH)
+    detection_path = Path(DETECTION_PATH)
+    images_path = archive_path / IMAGES_FOLDER
+    images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
     metadata_path = archive_path / METADATA_FOLDER
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
     full_segmentation_path = archive_path / FULL_SEGMENTATION_FOLDER / "merged_segmentation"
-    full_segmentation_path = Path(DETECTION_PATH) / "full_segmentation"
-    bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE
-    images_path = archive_path / IMAGES_FOLDER
+    full_segmentation_path = Path(DETECTION_PATH) / "test_segmentation"
+    bb_annotation_path = metadata_path / "annotations_test.json"
 
-
-    # detection_path = Path("../../data/cinemri_mha/detection_new") / IMAGES_FOLDER
-    ie_file = metadata_path / INSPEXP_FILE_NAME
-    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
-    # output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_det_full_df")
-    detection_path = Path(DETECTION_PATH) / IMAGES_FOLDER / TRAIN_FOLDER
-    cumulative_vs_path = Path(DETECTION_PATH) / "output_folder_cum"
-    output_path = Path(DETECTION_PATH) / "visualization/cum_vs_warp_contour_norm_avg_rest1"
-    bb_expanded_annotation_path = Path(DETECTION_PATH) / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
-    bb_expanded_annotation_path = Path(DETECTION_PATH) / METADATA_FOLDER / "annotations_expanded1.json"
-
-    extract_adhesions_metadata(bb_annotation_path, full_segmentation_path, metadata_path, bb_expanded_annotation_path)
-
-    """
-    vis_annotation_on_cumulative_vs(cumulative_vs_path, detection_path, bb_expanded_annotation_path, output_path,
-                                    adhesion_types=[AdhesionType.anteriorWall,
-                                                    AdhesionType.pelvis],
-                                    save=True)
-    """
-
-    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, cumulative_vs_path, Path("posterior"), AbdominalContourPart.posterior_wall)
-    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
-     #                          Path("anterior"), AbdominalContourPart.anterior_wall)
-    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
-     #                          Path("prior"), AbdominalContourPart.posterior_wall)
+    bb_expanded_annotation_path = detection_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
+    bb_expanded_annotation_path = detection_path / METADATA_FOLDER / "annotations_test_expanded.json"
 
 
 if __name__ == '__main__':
