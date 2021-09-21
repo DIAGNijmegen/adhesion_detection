@@ -8,8 +8,8 @@ from pathlib import Path
 from adhesions import AdhesionType, Adhesion, load_annotations, vis_computed_cum_vs
 from config import *
 from cinemri.definitions import CineMRISlice
-from utils import bb_size_stat, load_visceral_slides, binning_intervals, get_inspexp_frames, adhesions_stat, \
-    get_vs_range
+from utils import load_visceral_slides, binning_intervals, get_inspexp_frames
+from stat import bb_size_stat, adhesions_stat, get_vs_range
 from contour import get_connected_regions, get_adhesions_prior_coords
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats

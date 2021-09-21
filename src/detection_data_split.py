@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from enum import Enum, unique
 from utils import patients_from_metadata, patients_from_full_ids_file, slices_full_ids_from_patients, \
-    get_segm_patients_ids, slices_from_full_ids_file, full_ids_to_file
+    get_patients_ids_at_path, slices_from_full_ids_file, full_ids_to_file
 from cinemri.definitions import Patient, CineMRIMotionType, CineMRISlice, CineMRISlicePos
 from cinemri.utils import get_patients
 from adhesions import AdhesionAnnotation, AdhesionType
@@ -602,7 +602,7 @@ def detection_folds(patient_split, negative_split, folds_num=5, output_file=None
 def segmentation_folds(detection_folds_file, segm_path, patients_split, output_file):
     detection_folds = load_folds(detection_folds_file)
     train_patients = get_patient_ids(PatientTypes.train, patients_split)
-    segm_patients_ids = get_segm_patients_ids(segm_path)
+    segm_patients_ids = get_patients_ids_at_path(segm_path)
 
     additional_segm_ids = list(set(segm_patients_ids).difference(train_patients))
     additional_folds = kfold_by_group([additional_segm_ids], [False], len(detection_folds))

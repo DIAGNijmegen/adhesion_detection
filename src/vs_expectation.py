@@ -1,12 +1,11 @@
-import math
 import numpy as np
 import pickle
 import json
 from pathlib import Path
 from cinemri.definitions import CineMRISlice
 from config import *
-from utils import load_visceral_slides, binning_intervals, contour_stat, get_inspexp_frames, get_avg_contour_size, \
-    get_vs_range
+from utils import load_visceral_slides, get_inspexp_frames
+from stat import contour_mean_len, get_vs_range
 import matplotlib.pyplot as plt
 import matplotlib.cm as cm
 import SimpleITK as sitk
@@ -134,7 +133,7 @@ if __name__ == '__main__':
         vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.log, prior_only=True)
 
     if compute_stat:
-        avg_contour_len = contour_stat(masks_path)
+        avg_contour_len = contour_mean_len(masks_path)
         point_in_chunk = 5
         chunks_num = round(avg_contour_len / point_in_chunk)
 

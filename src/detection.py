@@ -7,6 +7,8 @@
 # 5. See if there are any insights from YOLOv5 training results
 # 6. Build custom pipeline
 
+# TODO: delete or extract visualisation
+
 import random
 import json
 import shutil

@@ -1021,13 +1021,6 @@ def verify_abdominal_wall(x, y, frame, slice_id, target_path, type=AbdominalCont
 
 
     """
-        if type == AbdominalContourPart.top:
-        x_abdominal_wall, y_abdominal_wall = get_abdominal_contour_top(x, y)
-    else:
-        x_abdominal_wall, y_abdominal_wall = get_abdominal_wall_coord(x, y, type)
-    """
-
-    """
     ax = fig.add_subplot(122)
     plt.imshow(frame, cmap="gray")
     plt.axis('off')

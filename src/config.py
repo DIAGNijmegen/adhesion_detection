@@ -1,9 +1,10 @@
+import os
 
 # Constants
 SEPARATOR = "_"
 
 # Paths
-DETECTION_PATH = "/Users/emartynova/Documents/AIForHealth/Project/data/cinemri_mha_detection"
+DETECTION_PATH = os.getenv("DETECTION_PATH")
 
 # Folders
 # General
@@ -65,8 +66,10 @@ NEGATIVE_SLICES_FILE_NAME = "negative_slices_detection.txt"
 NEGATIVE_SPLIT_FILE_NAME = "negative_split.json"
 NEGATIVE_SLICES_TRAIN_NAME = "negative_slices_train.txt"
 NEGATIVE_SLICES_TEST_NAME = "negative_slices_test.txt"
+
 # IDs sampled automatically
 NEGATIVE_SLICES_TRAIN_SEGM_NAME = "negative_slices_train_segm.txt"
+
 # IDs manually filtered by position
 NEGATIVE_SLICES_TRAIN_SEGM_MANUAL_NAME = "negative_slices_train_segm_manual.txt"
 TEST_SLICES_NAME = "test_slices.txt"
@@ -75,15 +78,19 @@ NEGATIVE_SLICES_CONTROL_NAME = "negative_slices_control.txt"
 BB_ANNOTATED_SLICES_FILE_NAME = "bb_annotations_full_ids.txt"
 DETECTION_SLICES_FILE_NAME = "detection_train_full_ids.txt"
 PATIENTS_SPLIT_FILE_NAME = "patients_split.json"
+
 # Visceral slide expectation abdominal motion norm
 CUMULATIVE_VS_EXPECTATION_FILE = "cumulative_vs_expectation.pkl"
 INSPEXP_VS_EXPECTATION_FILE = "insexp_vs_expectation.pkl"
+
 # SQRT transformed abdominal motion norm
 CUMULATIVE_VS_EXPECTATION_FILE_SQRT = "cumulative_vs_expectation_sqrt.pkl"
 INSPEXP_VS_EXPECTATION_FILE_SQRT = "insexp_vs_expectation_sqrt.pkl"
+
 # Visceral slide expectation vicinity norm
 CUMULATIVE_VS_EXPECTATION_VICINITY_FILE = "cumulative_vs_expectation_vicinity.pkl"
 INSPEXP_VS_EXPECTATION_VICINITY_FILE = "inspexp_vs_expectation_vicinity.pkl"
+
 # SQRT transformed vicinity norm
 CUMULATIVE_VS_EXPECTATION_VICINITY_FILE_SQRT = "cumulative_vs_expectation_vicinity_sqrt.pkl"
 INSPEXP_VS_EXPECTATION_VICINITY_FILE_SQRT = "inspexp_vs_expectation_vicinity_sqrt.pkl"

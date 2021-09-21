@@ -667,11 +667,6 @@ def test():
 
     #extract_frames(subset_path, diag_nnUNet_path)
 
-    """
-    unique_shapes = find_unique_shapes(archive_path, "cavity_segmentations")
-    print("Unique scan dimensions in the dataset")
-    print(unique_shapes)
-    """
 
     #extract_segmentation_data(archive_path, subset_path)
 
