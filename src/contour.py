@@ -1,4 +1,6 @@
+# Functions related to contour analysis
 import numpy as np
+from enum import Enum, unique
 from cinemri.contour import AbdominalContourPart, Contour
 
 
@@ -66,9 +68,30 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
     return regions
 
 
-def get_adhesions_prior_coords(x, y):
-    prior_coords = np.column_stack((x, y))
+@unique
+class Evaluation(Enum):
+    joint = 0
+    anterior_wall = 1
+    pelvis = 2
 
+
+def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
+    """
+    Extracts the subset of abdominal cavity contour where adhesions can be located
+    Parameters
+    ----------
+    x, y : list of int
+       The coordinates of a contour
+    evaluation : Evaluation, default = Evaluation.joint
+       The type of evaluation of adhesion detection algorithm
+
+    Returns
+    -------
+    x, y : list of int
+       The coordinates of the subset of abdominal cavity contour where adhesions can be located
+    """
+
+    prior_coords = np.column_stack((x, y))
     contour = Contour(x, y)
 
     # Remove top coordinates
@@ -76,25 +99,30 @@ def get_adhesions_prior_coords(x, y):
     top_coords = np.column_stack((x_top, y_top)).tolist()
     prior_coords = [coord for coord in prior_coords.tolist() if coord not in top_coords]
 
-    # remove pelvis
-   # x_bottom, y_bottom = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
-   # pelvis_coords = np.column_stack((x_bottom, y_bottom)).tolist()
-   # prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
-
-    # We remove top 1/2 of anterior wall coordinates
-    x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
-    anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall))
-    y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
-    anterior_wall_coords = [coord for coord in anterior_wall_coords.tolist() if coord[1] < y_anterior_wall_cutoff]
-    prior_coords = [coord for coord in prior_coords if coord not in anterior_wall_coords]
-
-    # We remove posterior wall coordinates
+    # Remove posterior wall coordinates
     x_posterior_wall, y_posterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.posterior_wall)
     posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
     prior_coords = np.array([coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()])
 
+    if evaluation == Evaluation.anterior_wall:
+        # remove pelvis
+        x_bottom, y_bottom = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
+        pelvis_coords = np.column_stack((x_bottom, y_bottom)).tolist()
+        prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
+
+    # We remove top 1/2 of anterior wall coordinates
+    x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
+    anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall)).tolist()
+    if evaluation != Evaluation.pelvis:
+        # If anterior wall is included into evaluation, remove only its top half
+        y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
+        anterior_wall_coords = [coord for coord in anterior_wall_coords if coord[1] < y_anterior_wall_cutoff]
+    prior_coords = [coord for coord in prior_coords if coord not in anterior_wall_coords]
+
     return prior_coords[:, 0], prior_coords[:, 1]
 
+
+# TODO: move to visualisation or delete
 from pathlib import Path
 from cinemri.config import ARCHIVE_PATH
 from utils import load_visceral_slides
