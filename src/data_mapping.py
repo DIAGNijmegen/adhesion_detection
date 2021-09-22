@@ -1,11 +1,23 @@
+# Functions to handle the updated patients mapping, which specified a correct patient id for each old patient id
+# extracted as patient_id_mapping.json
 import json
-from pathlib import Path
-from cinemri.config import ARCHIVE_PATH
-from config import METADATA_FOLDER, BB_ANNOTATIONS_FILE, PATIENTS_METADATA_FILE_NAME, PATIENTS_METADATA_FILE_OLD_NAME, \
-    PATIENTS_MAPPING_FILE_NAME, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE, IMAGES_FOLDER
-
 
 def map_bb_annotations(annotations_path, mapping_path, mapped_file_path):
+    """
+    Fixes patients ids in a file with adhesion annotation with bounding box
+    Parameters
+    ----------
+    annotations_path : Path
+       A path to a metadata file with adhesion annotation with bounding box
+    mapping_path : Path
+       A path to a file with mapping of old patient ids to correct one
+    mapped_file_path : Path
+       A path where to save updated bounding box annotations
+
+    Returns
+    -------
+
+    """
     # Read json
     with open(mapping_path) as f:
         mapping = json.load(f)
@@ -30,6 +42,13 @@ def map_bb_annotations(annotations_path, mapping_path, mapped_file_path):
 
 
 def investigate_anon_mapping(mapping_path):
+    """
+    Check how many patients from the old dataset (ANON) has more than one studies
+    Parameters
+    ----------
+    mapping_path : Path
+       A path to a file with mapping of old patient ids to correct one
+    """
     # Read json
     with open(mapping_path) as f:
         mapping = json.load(f)
@@ -42,10 +61,19 @@ def investigate_anon_mapping(mapping_path):
             inverse_dict[mapped_key] = [key]
         else:
             inverse_dict[mapped_key] += key
-            print("Patient {} has not a single mapping".format(mapped_key))
+            print("Patient {} has multiple mapping".format(mapped_key))
 
 
 def rename_image_folders(mapping_path, images_path):
+    """
+    Renames patient folders according to the new mapping
+    Parameters
+    ----------
+    mapping_path : Path
+       A path to a file with mapping of old patient ids to correct one
+    images_path : Path
+       A path to a folder that contain patients folders
+    """
     # Read json
     with open(mapping_path) as f:
         mapping = json.load(f)
@@ -58,24 +86,6 @@ def rename_image_folders(mapping_path, images_path):
         old_folder.rename(mapped_folder)
 
     print("done")
-
-
-if __name__ == '__main__':
-    archive_path = ARCHIVE_PATH
-    annotation_path = archive_path / METADATA_FOLDER / ANNOTATIONS_TYPE_FILE
-    annotation_expanded_path = archive_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
-    mapping_path = archive_path / METADATA_FOLDER / PATIENTS_MAPPING_FILE_NAME
-    mapped_file_path = archive_path / METADATA_FOLDER / "annotations_type_mapped.json"
-    patients_metadata_file_path = archive_path / METADATA_FOLDER / PATIENTS_METADATA_FILE_NAME
-    patients_metadata_old_file_path = archive_path / METADATA_FOLDER / PATIENTS_METADATA_FILE_OLD_NAME
-    images_path = archive_path / "segmentation_paramedian"
-
-    #map_bb_annotations(annotation_path, mapping_path, mapped_file_path)
-    #investigate_anon_mapping(mapping_path)
-    #rename_image_folders(mapping_path, images_path)
-
-    positive_stat(annotation_expanded_path, patients_metadata_old_file_path, mapping_path)
-
 
 
 
