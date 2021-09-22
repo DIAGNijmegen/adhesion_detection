@@ -3,6 +3,7 @@ from scipy import ndimage
 from pathlib import Path
 from data_conversion import convert_2d_image_to_pseudo_3d
 
+
 # fill in binary holes in nnUNet prediction
 def fill_in_holes(masks_path):
     """
@@ -22,11 +23,3 @@ def fill_in_holes(masks_path):
         mask = ndimage.binary_fill_holes(mask)
         mask_pseudo_3d = convert_2d_image_to_pseudo_3d(mask, is_seg=True)
         sitk.WriteImage(mask_pseudo_3d, str(mask_path))
-
-
-def test():
-    masks_path = Path("../../data/visceral_slide/nnUNet_masks")
-    fill_in_holes(masks_path)
-
-if __name__ == '__main__':
-    test()

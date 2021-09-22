@@ -39,19 +39,44 @@ class Region:
 
     @classmethod
     def from_point(cls, point):
+        """
+        Initialises a Region object from a single point
+        Parameters
+        ----------
+        point : tuple
+           (x, y, value) - the coordinates of the point and the value at this point
+
+        Returns
+        -------
+        region : Region
+           A region that consists of a single point
+        """
         x, y, value = point[0], point[1], point[2]
         region = cls(x, y, value)
         return region
 
     @classmethod
     def from_points(cls, points):
+        """
+        Initialises a Region object from points
+        Parameters
+        ----------
+        points : ndarray
+            An array of points coordinates and values at a point. The first column - coordinates by x axis,
+            the second - coordinates by y axis, the third - values
+
+        Returns
+        -------
+        region : Region
+            A region that consists of a single point
+        """
         x, y, values = points[:, 0], points[:, 1], points[:, 2]
         region = cls(x, y, values)
         return region
 
     def append(self, x, y, value):
         """
-        Appends one coordinate and its values to the region
+        Appends one coordinate and its value to the region
         Parameters
         ----------
         x, y : int
@@ -99,6 +124,8 @@ class Region:
 
     @property
     def size(self):
+        """ Size of a rectangle that encloses the region
+        """
         if len(self.x) == 0:
             return 0, 0
 
@@ -111,17 +138,41 @@ class Region:
         height = compute_len(axis=1)
         return width, height
 
-    def exceeded_size(self, size_limit):
+    def exceeded_size(self, size):
+        """
+        Checks if the size of a rectangle that encloses the region is larger than a given size
+        Parameters
+        ----------
+        size : tuple
+           A size to compare with
+
+        Returns
+        -------
+        flag: bool
+           A boolean flag indicating whether region size is larger than the given size
+        """
         width, height = self.size
-        return width >= size_limit[0] or height >= size_limit[1]
+        return width >= size[0] or height >= size[1]
 
 
-# TODO: move is_slice_vs_suitable
 class VisceralSlide(Contour):
     """An object representing visceral slide for a Cine-MRI slice
     """
 
     def __init__(self, patient_id, study_id, slice_id, visceral_slide_data):
+        """
+        Parameters
+        ----------
+        patient_id : str
+           An id of a patient a Cine-MRI slice belongs to
+        study_id : str
+           An id of a study a Cine-MRI slice belongs to
+        slice_id : str
+           An id of a Cine-MRI slice
+        visceral_slide_data : dict
+           A dictionary containing the coordinates of abdominal cavity contour
+           and visceral slide value at each coordinate
+        """
 
         super().__init__(visceral_slide_data["x"], visceral_slide_data["y"])
 
@@ -132,7 +183,8 @@ class VisceralSlide(Contour):
         self.full_id = SEPARATOR.join([patient_id, study_id, slice_id])
 
     def zeros_fix(self):
-        # Replace zeros with highest non 0
+        """ Replace zeros with highest non 0 in visceral slide values
+        """
         zero_placeholder = np.min([value for value in self.values if value > 0])
         self.values = np.array([value if value > 0 else zero_placeholder for value in self.values])
 
@@ -140,6 +192,19 @@ class VisceralSlide(Contour):
         """
         Splits visceral slide into chunks starting from the bottom left point of the contour
         in the clock-wise direction. The provided mean and stds should correspond to these chunks
+
+        Parameters
+        ----------
+        means, stds : list of float
+           A list of visceral slide mean by chunk
+        stds : list of float, optional
+           A list of visceral slide standard deviation by chunk
+
+        Returns
+        -------
+        regions : list of Regions
+           A list of objects of Region type that represent chunks of visceral slide map
+           and include mean and standard deviation of visceral slide value in each chunk
         """
         regions_num = len(means)
 
@@ -197,7 +262,18 @@ class VisceralSlide(Contour):
 
     def norm_with_expectation(self, means, stds, expectation_norm_type=VSExpectationNormType.mean_div):
         """Normalises visceral slide by provided means and standard deviations assuming that
-        means and standard deviations correspond to regions obtained with to_regions method"""
+        means and standard deviations correspond to regions obtained with to_regions method
+
+        Parameters
+        ----------
+        means, stds : list of float
+           A list of visceral slide mean by chunk
+        stds : list of float
+           A list of visceral slide standard deviation by chunk
+        expectation_norm_type : VSExpectationNormType, default=VSExpectationNormType.mean_div
+           A type of normalisation to apply
+        """
+
         vs_regs = self.to_regions(means, stds)
 
         reg = vs_regs[0]
@@ -218,4 +294,15 @@ class VisceralSlide(Contour):
         self.values = values
 
     def build_path(self, relative_path, extension=".mha"):
+        """
+        Build a path to a folder that contains visceral slide assuming standard folders hierarchy
+        Parameters
+        ----------
+        relative_path : Path
+            A relative path to locate a slice file
+        Returns
+        -------
+        path : Path
+            A path to a folder that contains visceral slide
+        """
         return Path(relative_path) / self.patient_id / self.study_id / (self.slice_id + extension)
