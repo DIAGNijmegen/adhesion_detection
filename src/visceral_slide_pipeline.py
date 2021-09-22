@@ -152,7 +152,7 @@ def extract_insp_exp_frames(images_path,
 
 
 def extract_insp_exp(argv):
-    """A command line wrapper of extract_segmentation_data
+    """A command line wrapper of extract_insp_exp_frames
 
     Parameters
     ----------

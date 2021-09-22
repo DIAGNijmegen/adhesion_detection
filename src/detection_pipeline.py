@@ -9,8 +9,8 @@ from adhesions import AdhesionType, Adhesion, load_annotations, vis_computed_cum
 from config import *
 from cinemri.definitions import CineMRISlice
 from utils import load_visceral_slides, binning_intervals, get_inspexp_frames
-from stat import bb_size_stat, adhesions_stat, get_vs_range
-from contour import get_connected_regions, get_adhesions_prior_coords
+from stat import bb_size_stat, get_vs_range
+from contour import get_connected_regions, get_adhesions_prior_coords, Evaluation
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
 from sklearn.metrics import roc_curve, auc
@@ -258,11 +258,11 @@ def adhesions_with_region_growing(regions,
     return bounding_boxes
 
 
-def find_prior_subset(vs, vis=False):
+def find_prior_subset(vs, evaluation=Evaluation.joint):
     x, y, slide_value = vs.x, vs.y, vs.values
 
     # Filter out the region in which no adhesions can be present
-    x_prior, y_prior = get_adhesions_prior_coords(x, y)
+    x_prior, y_prior = get_adhesions_prior_coords(x, y, evaluation=evaluation)
 
     coords = np.column_stack((x, y)).tolist()
     prior_coords = np.column_stack((x_prior, y_prior)).tolist()

@@ -1,11 +1,8 @@
 #!/usr/local/bin/python3
 
-import sys
 import random
-import shutil
 import numpy as np
 import json
-import argparse
 import pickle
 from pathlib import Path
 import SimpleITK as sitk
@@ -351,68 +348,3 @@ def get_insp_exp_frames_and_masks(slice, inspexp_data, images_path, masks_path):
     exp_mask = mask_array[exp_ind]
 
     return insp_frame, insp_mask, exp_frame, exp_mask
-
-
-# Detection dataset
-def extract_detection_dataset(slices, images_folder, target_folder):
-    """
-    Extracts a subset of cine-MRI slices for adhesion detection task
-    Parameters
-    ----------
-    slices : list of CineMRISlice
-       A list of slices to include into the detection dataset
-    images_folder : Path
-       A path to the images folder in the main archive
-    target_folder : Path
-       A destination path to save the dataset
-
-    """
-    for slice in slices:
-        study_dir = target_folder / slice.patient_id / slice.study_id
-        study_dir.mkdir(exist_ok=True, parents=True)
-        slice_path = slice.build_path(images_folder)
-        slice_target_path = slice.build_path(target_folder)
-        shutil.copyfile(slice_path, slice_target_path)
-
-
-def extract_detection_data(argv):
-    """ Command line wrapper for the extract_detection_dataset method
-    """
-    parser = argparse.ArgumentParser()
-    parser.add_argument('--positive_file', type=str, required=True,
-                        help="a path to a file with fill ids of positive slices")
-    parser.add_argument('--negative_file', type=str, required=True,
-                        help="a path to a file with fill ids of negative slices")
-    parser.add_argument('--images', type=str, required=True, help="a path to image folder in the cine-MRI archive")
-    parser.add_argument('--target_folder', type=str, required=True,
-                        help="a path to a folder to place the detection subset")
-
-    args = parser.parse_args(argv)
-
-    positive_file_path = Path(args.positive_file)
-    negative_file_path = Path(args.negative_file)
-    images_path = Path(args.images)
-    target_path = Path(args.target_folder)
-    target_path.mkdir(parents=True)
-
-    positive_slices = slices_from_full_ids_file(positive_file_path)
-    negative_slices = slices_from_full_ids_file(negative_file_path)
-    slices = positive_slices + negative_slices
-    extract_detection_dataset(slices, images_path, target_path)
-
-
-if __name__ == '__main__':
-    np.random.seed(99)
-    random.seed(99)
-
-    # Very first argument determines action
-    actions = {
-        "extract_detection_data": extract_detection_data,
-    }
-
-    try:
-        action = actions[sys.argv[1]]
-    except (IndexError, KeyError):
-        print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
-    else:
-        action(sys.argv[2:])
