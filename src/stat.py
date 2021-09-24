@@ -220,3 +220,4 @@ def contour_mean_len(masks_path):
 
     mean_length = np.mean(lengths)
     return mean_length
+

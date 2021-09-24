@@ -2,43 +2,64 @@ import numpy as np
 import pickle
 import json
 from pathlib import Path
-from cinemri.definitions import CineMRISlice
 from config import *
 from utils import load_visceral_slides, get_inspexp_frames
 from stat import contour_mean_len, get_vs_range
-import matplotlib.pyplot as plt
-import matplotlib.cm as cm
 import SimpleITK as sitk
-from detection_pipeline import vs_values_boxplot, VSTransform
+from vs_definitions import VSTransform
+from vis_visceral_slide import plot_visceral_slide_expectation
+from cinemri.definitions import CineMRISlice
 
 
-def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTransform.none, heathly_inds=None, plot=False, inspexp_data=None, images_path=None, output_path=None):
-    neg_visceral_slides = load_visceral_slides(vs_path)
+def get_regions_stat(visceral_slides,
+                     vs_range,
+                     regions_num=120,
+                     transform=VSTransform.none,
+                     plot=False,
+                     inspexp_data=None,
+                     images_path=None,
+                     output_path=None):
+    """
+    Calculates means and standard deviations of visceral slide by relative position at the contour
+    Parameters
+    ----------
+    visceral_slides : list of VisceralSlide
+       Visceral slides to calculate the statistics for
+    vs_range : tuple
+       (vs_min, vs_max) a range of visceral slide values to consider
+    regions_num : int
+       A number of regions to split visceral slide contour into
+    transform : VSTransform, default=VSTransform.none
+       A transformation to apply to visceral slide values
+    plot : bool
+       A boolean flag indicating whether to visualise the expectation
+    inspexp_data : dict
+       A dictionary containing infromation about inspiration/expiration frames positions
+    images_path : Path
+       A path to cine-MRI scans that correspond to visceral slides
+    output_path : Path
+       A path where to save visaulisation
 
-    # Filter out visceral slides if list of ids is provided
-    if heathly_inds:
-        neg_visceral_slides = [vs for vs in neg_visceral_slides if vs.patient_id in heathly_inds]
+    Returns
+    -------
+    stat : dict
+       A dictionary that contains means and standard deviation, keys "means" and "stds"
+    """
+    vs_regions = np.array([vs.to_regions() for vs in visceral_slides])
 
-    colors = cm.rainbow(np.linspace(0, 1, regions_num))
-    vs_regions = []
-    for i in range(len(neg_visceral_slides)):
-        vs = neg_visceral_slides[i]
-        regions = vs.to_regions(colors)
-        vs_regions.append(regions)
-
-    vs_regions = np.array(vs_regions)
-    # Now for each region calculate the average
+    # Now calculate the statistics for each region
     means = []
     stds = []
     for i in range(regions_num):
         cur_regions = vs_regions[:, i]
         values = cur_regions[0].values
-        for j in range(1, len(neg_visceral_slides)):
+        for j in range(1, len(visceral_slides)):
             values = np.concatenate((values, cur_regions[j].values))
 
         # Remove the outliers
         values = np.array([value for value in values if vs_range[0] <= value <= vs_range[1]])
 
+        # Apply transformation is specified
         if transform == VSTransform.log:
             values = np.log(values)
         elif transform == VSTransform.sqrt:
@@ -48,7 +69,7 @@ def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTran
         stds.append(np.std(values))
 
     if plot:
-        vs = neg_visceral_slides[0]
+        vs = visceral_slides[0]
         slice = CineMRISlice.from_full_id(vs.full_id)
 
         title = "cum_expectation_vi" if inspexp_data is None else "inspexp_expectation_vi"
@@ -56,6 +77,7 @@ def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTran
             title += "_log"
         elif transform == VSTransform.sqrt:
             title += "_sqrt"
+        title += "_sqrt" + str(regions_num)
 
         if inspexp_data is None:
             image = sitk.ReadImage(str(slice.build_path(images_path)))
@@ -63,170 +85,61 @@ def get_regions_expectation(vs_path, vs_range, regions_num=120, transform=VSTran
         else:
             frame, _ = get_inspexp_frames(slice, inspexp_data, images_path)
 
-        plt.figure()
-        plt.imshow(frame, cmap="gray")
-
-        vs_regs = vs.to_regions(means)
-        reg = vs_regs[0]
-        x = reg.x
-        y = reg.y
-        c = np.ones(len(reg.x)) * reg.mean
-        for i in range(1, len(vs_regs)):
-            reg = vs_regs[i]
-            x = np.concatenate((x, reg.x))
-            y = np.concatenate((y, reg.y))
-            c = np.concatenate((c, np.ones(len(reg.x)) * reg.mean))
-        plt.scatter(x, y, s=5, c=c, cmap="jet")
-        plt.colorbar()
-        x_bl, y_bl = vs.bottom_left_point
-        plt.scatter(x_bl, y_bl, s=25, c="white")
-        plt.axis("off")
-        plt.savefig(output_path / "{}_{}.png".format(title, regions_num), bbox_inches='tight', pad_inches=0)
-        plt.close()
+        plot_visceral_slide_expectation(means, vs, title, frame, output_path)
 
     return {"means": means, "stds": stds}
 
 
-if __name__ == '__main__':
-    detection_path = Path(DETECTION_PATH)
-    images_path = detection_path / IMAGES_FOLDER / CONTROL_FOLDER
-    masks_path = detection_path / FULL_SEGMENTATION_FOLDER
-    insp_exp_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
-    inspexp_file_path = detection_path / METADATA_FOLDER / INSPEXP_FILE_NAME
-    output_path = detection_path / "control_vs_stat_avg_norm"
-    # load inspiration and expiration data
-    with open(inspexp_file_path) as inspexp_file:
-        inspexp_data = json.load(inspexp_file)
+def calculate_and_save_vs_stat(vs_path,
+                               masks_path,
+                               images_path,
+                               output_path,
+                               inspexp_data=None,
+                               transform=VSTransform.none,
+                               point_in_chunk=5):
+    """
+    Calculates and saves visceral slide statistics
+    Parameters
+    ----------
+    vs_path : Path
+       A path to visceral slides to calculate the statistics for
+    masks_path : Path
+       A path to segmentation masks to calculate the average contour lenght
+    images_path : Path
+       A path to cine-MRI scans that correspond to visceral slides
+    output_path : Path
+       A path where to save a pickle file with statistics and plots
+    inspexp_data : dict
+       A dictionary containing information about inspiration/expiration frames positions
+    transform : VSTransform, default=VSTransform.none
+       A transformation to apply to visceral slide values
+    point_in_chunk : int
+       A target number of points per region
+    """
 
-    cum_control_path = detection_path / VS_CONTROL_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
-
-    cumulative_vs = True
-    transform = VSTransform.sqrt
-    plot_distr = False
-    compute_stat = True
-
-    vs_path = cum_control_path if cumulative_vs else insp_exp_control_path
-    output_path = output_path / "cumulative" if cumulative_vs else output_path / "inspexp"
+    output_path = output_path / "vs_expectation"
+    output_path.mkdir(exist_ok=True)
 
     visceral_slides = load_visceral_slides(vs_path)
     vs_min, vs_max = get_vs_range(visceral_slides, False)
+    avg_contour_len = contour_mean_len(masks_path)
+    chunks_num = round(avg_contour_len / point_in_chunk)
 
-    print("Cum VS lower limit {}".format(vs_min))
-    print("Cum VS upper limit {}".format(vs_max))
+    expectation = get_regions_stat(visceral_slides,
+                                   (vs_min, vs_max),
+                                   chunks_num,
+                                   transform,
+                                   True,
+                                   inspexp_data,
+                                   images_path,
+                                   output_path)
 
-    if plot_distr:
-        # Distribution for all
-        vs_values_boxplot(visceral_slides, output_path)
-        # Distribution for prior region
-        vs_values_boxplot(visceral_slides, output_path, prior_only=True)
-        # Distribution for all outliers removed
-        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max)
-        # Distribution for prior region outliers removed
-        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, prior_only=True)
-        # Distribution for all sqrt transfrom
-        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.sqrt)
-        # Distribution for prior region sqrt transfrom
-        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.sqrt, prior_only=True)
-        # Distribution for all sqrt transfrom
-        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.log)
-        # Distribution for prior region sqrt transfrom
-        vs_values_boxplot(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.log, prior_only=True)
+    pkl_title = "cumulative_vs_expectation" if inspexp_data is None else "inspexp_vs_expectation"
+    if transform == VSTransform.log:
+        pkl_title += "_log"
+    elif transform == VSTransform.sqrt:
+        pkl_title += "_sqrt"
 
-    if compute_stat:
-        avg_contour_len = contour_mean_len(masks_path)
-        point_in_chunk = 5
-        chunks_num = round(avg_contour_len / point_in_chunk)
-
-        output_path = Path("vs_expectation")
-        output_path.mkdir(exist_ok=True)
-
-        vs_min, vs_max = get_vs_range(visceral_slides, False)
-
-        if cumulative_vs:
-            inspexp_data = None
-
-        expectation = get_regions_expectation(vs_path, (vs_min, vs_max), chunks_num, transform, None, True, inspexp_data, images_path,
-                                              output_path)
-
-
-        pkl_title = "cumulative_vs_expectation_vicinity" if cumulative_vs else "inspexp_vs_expectation_vicinity"
-        if transform == VSTransform.log:
-            pkl_title += "_log"
-        elif transform == VSTransform.sqrt:
-            pkl_title += "_sqrt"
-
-        with open(pkl_title + ".pkl", "w+b") as f:
-            pickle.dump(expectation, f)
-
-        with open(pkl_title + ".pkl", "r+b") as file:
-            expectation_dict = pickle.load(file)
-            means, stds = expectation_dict["means"], expectation_dict["stds"]
-
-    """
-    vs_values = [vs for vs in vs_values if vs_min <= vs <= vs_max]
-    vs_values_log = np.log(vs_values)
-
-    plt.figure()
-    plt.boxplot(vs_values_log)
-    plt.savefig("vs_boxplot_cum_control_outl_removed_log", bbox_inches='tight', pad_inches=0)
-    plt.show()
-
-    plt.figure()
-    plt.hist(vs_values_log, bins=200)
-    plt.savefig("vs_hist_cum_control_outl_removed_log", bbox_inches='tight', pad_inches=0)
-    plt.show()
-    """
-
-    """
-    inspexp_visceral_slides = load_visceral_slides(insp_exp_control_path)
-    vs_values = []
-    for visceral_slide in inspexp_visceral_slides:
-        vs_values.extend(visceral_slide.values)
-
-    vs_min, vs_max = get_vs_range(inspexp_visceral_slides, False)
-    expectation = get_regions_expectation(insp_exp_control_path, (vs_min, vs_max), chunks_num, VSTransform.sqrt, None, True, inspexp_data, images_path,
-                                          output_path)
-
-    with open("insexp_vs_expectation.pkl", "w+b") as f:
+    with open(pkl_title + ".pkl", "w+b") as f:
         pickle.dump(expectation, f)
 
-    with open("insexp_vs_expectation.pkl", "r+b") as file:
-        expectation_dict = pickle.load(file)
-        means, stds = expectation_dict["means"], expectation_dict["stds"]
-
-    print("done")
-    """
-
-
-    """
-    print("Inspexp VS lower limit {}".format(vs_min))
-    print("Inspexp VS upper limit {}".format(vs_max))
-
-    vs_values = [vs for vs in vs_values if 0 < vs <= vs_max]
-    vs_values_log = np.sqrt(vs_values)
-
-    plt.figure()
-    plt.boxplot(vs_values_log)
-    plt.savefig("vs_boxplot_inspexp_control_outl_removed_sqrt", bbox_inches='tight', pad_inches=0)
-    plt.show()
-
-    plt.figure()
-    plt.hist(vs_values_log, bins=200)
-    plt.savefig("vs_hist_inspexp_control_outl_removed_sqrt", bbox_inches='tight', pad_inches=0)
-    plt.show()
-    """
-
-    """
-    expectation = get_regions_expectation(cum_control_path, (vs_min, vs_max), chunks_num, None, True, None, images_path, output_path)
-
-    with open("cumulative_vs_expectation.pkl", "w+b") as f:
-        pickle.dump(expectation, f)
-
-    with open("cumulative_vs_expectation.pkl", "r+b") as file:
-        expectation_dict = pickle.load(file)
-        means, stds = expectation_dict["means"], expectation_dict["stds"]
-
-    print("done")
-
-    visceral_slides = load_visceral_slides(cum_control_path)
-    """

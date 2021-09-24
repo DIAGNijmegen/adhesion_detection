@@ -14,11 +14,12 @@ from contour import get_connected_regions, get_adhesions_prior_coords, Evaluatio
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
 from sklearn.metrics import roc_curve, auc
-from vs_definitions import VSExpectationNormType, Region
+from vs_definitions import VSExpectationNormType, Region, VSTransform
 from enum import Enum, unique
 from sklearn.metrics import accuracy_score
 import statsmodels.api as sm
 import matplotlib.cm as cm
+from vis_visceral_slide import plot_vs_distribution
 
 PREDICTION_COLOR = (0, 0.8, 0.2)
 
@@ -258,7 +259,7 @@ def adhesions_with_region_growing(regions,
     return bounding_boxes
 
 
-def find_prior_subset(vs, evaluation=Evaluation.joint):
+def filter_out_prior_vs_subset(vs, evaluation=Evaluation.joint):
     x, y, slide_value = vs.x, vs.y, vs.values
 
     # Filter out the region in which no adhesions can be present
@@ -304,7 +305,7 @@ def bb_with_threshold(vs,
        A list of bounding boxes predicted based on visceral slide values
     """
 
-    contour_subset = find_prior_subset(vs)
+    contour_subset = filter_out_prior_vs_subset(vs)
 
     # Remove the outliers
     contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
@@ -855,7 +856,7 @@ def visualize(visceral_slides,
         annotation = annotations_dict[vs.full_id] if vs.full_id in annotations_dict else None
 
         if prior:
-            prior_subset = find_prior_subset(vs)
+            prior_subset = filter_out_prior_vs_subset(vs)
             x, y, values = prior_subset[:, 0], prior_subset[:, 1], prior_subset[:, 2]
         else:
             x, y, values = vs.x, vs.y, vs.values
@@ -1015,7 +1016,7 @@ def vs_adhesion_boxplot(visceral_slides,
     for vs in visceral_slides:
         has_annotation = vs.full_id in annotations_dict
         if prior_only:
-            contour_subset = find_prior_subset(vs)
+            contour_subset = filter_out_prior_vs_subset(vs)
         else:
             contour_subset = np.column_stack((vs.x, vs.y, vs.values))
 
@@ -1087,57 +1088,6 @@ def vs_adhesion_boxplot(visceral_slides,
     print("T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
 
 
-@unique
-class VSTransform(Enum):
-    none = 0
-    log = 1
-    sqrt = 2
-
-def vs_values_boxplot(visceral_slides, output_path, vs_min=-np.inf, vs_max=np.inf, transform=VSTransform.none, prior_only=False):
-
-    output_path.mkdir(exist_ok=True, parents=True)
-
-    vs_values = []
-    for visceral_slide in visceral_slides:
-        # Leave out regions which cannot have adhesions if the option is specified
-        if prior_only:
-            prior_subset = find_prior_subset(visceral_slide)
-            cur_vs_values = [vs for vs in prior_subset[:, 2] if vs_min <= vs <= vs_max]
-            vs_values.extend(cur_vs_values)
-        else:
-            cur_vs_values = [vs for vs in visceral_slide.values if vs_min <= vs <= vs_max]
-            vs_values.extend(cur_vs_values)
-
-    if transform == VSTransform.log:
-        vs_values = [vs for vs in vs_values if vs >0]
-        vs_values = np.log(vs_values)
-    elif transform == VSTransform.sqrt:
-        vs_values = np.sqrt(vs_values)
-
-    def title_suffix():
-        suffix = "_prior" if prior_only else "_all"
-        suffix += "_outl_removed" if vs_max < np.inf else ""
-        if transform == VSTransform.log:
-            suffix += "_log"
-        elif transform == VSTransform.sqrt:
-            suffix += "_sqrt"
-
-        return suffix
-
-    bp_tile = "vs_boxplot" + title_suffix()
-    # Boxplot
-    plt.figure()
-    plt.boxplot(vs_values)
-    plt.savefig(output_path / bp_tile, bbox_inches='tight', pad_inches=0)
-    plt.show()
-
-    hs_tile = "vs_hist" + title_suffix()
-    # Histogram
-    plt.figure()
-    plt.hist(vs_values, bins=200)
-    plt.savefig(output_path / hs_tile, bbox_inches='tight', pad_inches=0)
-    plt.show()
-
 
 def extract_features(adhesion_bb, adhesion_region):
     vs_values_region = adhesion_region[:, 2] # np.mean(vs_values_region)
@@ -1176,7 +1126,7 @@ def trainLR(visceral_slides, annotations_dict):
         else:
             # Sample negative bbs
             # get VS prior region
-            vs_region = find_prior_subset(vs)
+            vs_region = filter_out_prior_vs_subset(vs)
             samples_num = 0
             if vs_region.shape[0] > 60:
                 while samples_num < 4:
@@ -1325,8 +1275,8 @@ def run_detection_pipeline_test(detection_path, output_path):
     #vis_path = experiment_path / "vis_vs"
     #vis_computed_cum_vs(visceral_slides_test, test_images_path, vis_path)
 
-    #vs_values_boxplot(visceral_slides_test, experiment_path)
-    #vs_values_boxplot(visceral_slides_test, experiment_path, prior_only=True)
+    #plot_vs_distribution(visceral_slides_test, experiment_path)
+    #plot_vs_distribution(visceral_slides_test, experiment_path, prior_only=True)
     #vs_adhesion_boxplot(visceral_slides_test, annotations_test_path, experiment_path)
     #vs_adhesion_boxplot(visceral_slides_test, annotations_test_path, experiment_path, prior_only=True)
 
@@ -1410,8 +1360,8 @@ def run_detection_pipeline(config, detection_path, output_path):
 
 
     if config.vs_stat:
-        vs_values_boxplot(visceral_slides, experiment_path)
-        vs_values_boxplot(visceral_slides, experiment_path, prior_only=True)
+        plot_vs_distribution(visceral_slides, experiment_path)
+        plot_vs_distribution(visceral_slides, experiment_path, prior_only=True)
         vs_adhesion_boxplot(visceral_slides, annotations_path, experiment_path)
         vs_adhesion_boxplot(visceral_slides, annotations_path, experiment_path, prior_only=True)
 
@@ -1456,7 +1406,7 @@ def vs_min_stat(visceral_slides, annotations_dict):
     positive_mins = []
 
     for vs in visceral_slides:
-        vs_region = find_prior_subset(vs)
+        vs_region = filter_out_prior_vs_subset(vs)
         vs_region_min = np.min(vs_region[:, 2])
         if vs.full_id in annotations_dict:
             negative_mins.append(vs_region_min)

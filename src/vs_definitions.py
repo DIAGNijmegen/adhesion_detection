@@ -12,6 +12,14 @@ class VSExpectationNormType(Enum):
     standardize = 1
 
 
+# Transformation to apply to visceral slide values
+@unique
+class VSTransform(Enum):
+    none = 0
+    log = 1
+    sqrt = 2
+
+
 class Region:
     """An object representing a coordinates region with a value at a specific coordinate
     """
@@ -188,14 +196,14 @@ class VisceralSlide(Contour):
         zero_placeholder = np.min([value for value in self.values if value > 0])
         self.values = np.array([value if value > 0 else zero_placeholder for value in self.values])
 
-    def to_regions(self, means, stds=None):
+    def to_regions(self, means=None, stds=None):
         """
         Splits visceral slide into chunks starting from the bottom left point of the contour
         in the clock-wise direction. The provided mean and stds should correspond to these chunks
 
         Parameters
         ----------
-        means, stds : list of float
+        means : list of float, optional
            A list of visceral slide mean by chunk
         stds : list of float, optional
            A list of visceral slide standard deviation by chunk
@@ -233,21 +241,23 @@ class VisceralSlide(Contour):
             if reg_start >= vs_len:
                 reg_start -= vs_len
 
+            mean = means[i] if means is not None else None
+            std = stds[i] if stds is not None else None
+
             # Normal situation, take the connected region
             if reg_start < reg_end:
                 x_reg = xs[reg_start:reg_end]
                 y_reg = ys[reg_start:reg_end]
                 val_reg = values[reg_start:reg_end]
-                region = Region(x_reg, y_reg, val_reg, means[i], stds[i]) if stds is not None\
-                    else Region(x_reg, y_reg, val_reg, means[i])
+
+                region = Region(x_reg, y_reg, val_reg, mean, std)
             else:
                 # We went beyond the fist contour coordinate, so add up a region from the region start till
                 # the end of contour and from the start of contour till the region end
                 x_reg = xs[reg_start:]
                 y_reg = ys[reg_start:]
                 val_reg = values[reg_start:]
-                region = Region(x_reg, y_reg, val_reg, means[i], stds[i]) if stds is not None\
-                    else Region(x_reg, y_reg, val_reg, means[i])
+                region = Region(x_reg, y_reg, val_reg, mean, std)
                 region.extend(xs[:reg_end], ys[:reg_end], values[:reg_end])
 
             regions.append(region)

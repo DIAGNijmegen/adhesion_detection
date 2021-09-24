@@ -122,6 +122,36 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     return prior_coords[:, 0], prior_coords[:, 1]
 
 
+def filter_out_prior_vs_subset(vs, evaluation=Evaluation.joint):
+    """
+    Returns a subset of visceral slide that belong to the adhesion prior region
+
+    Parameters
+    ----------
+    vs : VisceralSlide
+       The visceral slide to filter out the subset that lies on the prior coordinates
+    evaluation : Evaluation, default = Evaluation.joint
+       The type of evaluation of adhesion detection algorithm
+
+    Returns
+    -------
+    vs_subset : ndarray
+       3 X N, first column: coordinates by x, second: coordinates by y, third: visceral slide values
+    """
+    x, y, slide_value = vs.x, vs.y, vs.values
+
+    # Filter out the region in which no adhesions can be present
+    x_prior, y_prior = get_adhesions_prior_coords(x, y, evaluation=evaluation)
+
+    coords = np.column_stack((x, y)).tolist()
+    prior_coords = np.column_stack((x_prior, y_prior)).tolist()
+    prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
+
+    vs_subset = np.column_stack((x, y, slide_value))
+    vs_subset = vs_subset[prior_inds]
+    return vs_subset
+
+
 # TODO: move to visualisation or delete
 from pathlib import Path
 from cinemri.config import ARCHIVE_PATH
@@ -159,5 +189,6 @@ if __name__ == '__main__':
 
         plt.savefig(output_path / "{}.png".format(vs.full_id), bbox_inches='tight', pad_inches=0)
         plt.close()
+
 
 
