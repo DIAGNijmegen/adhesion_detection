@@ -26,7 +26,7 @@ PREDICTED_MASKS_FOLDER = "nnUNet_masks"
 RESULTS_FOLDER = "visceral_slide"
 
 
-def get_patients_ids(train_test_split, mode):
+def _get_patients_ids(train_test_split, mode):
     """
     Filters patients ids based on the data split for nn-UNet training and mode ("all", "train", "test")
     Parameters
@@ -54,35 +54,11 @@ def get_patients_ids(train_test_split, mode):
     return patients_ids
 
 
-def load_visceral_slide(visceral_slide_path):
-    """
-    Load the saved visceral slide
-    Parameters
-    ----------
-    visceral_slide_path : Path
-       A path to the file with saved visceral slide
-
-    Returns
-    -------
-    x, y, visceral_slide : list of int, list of int, list of float
-       Coordinates of abominal cavity and the corresponding values of visceral slide
-    """
-
-    visceral_slide_file_path = visceral_slide_path / VISCERAL_SLIDE_FILE
-
-    with open(str(visceral_slide_file_path), "r+b") as file:
-        visceral_slide_data = pickle.load(file)
-        x, y = visceral_slide_data["x"], visceral_slide_data["y"]
-        visceral_slide = visceral_slide_data["slide"]
-
-    return x, y, visceral_slide
-
-
 def extract_insp_exp_frames(images_path,
                             patients_ids,
                             inspexp_file_path,
                             destination_path):
-    """Extracts inspiration and expiration frames and saves them to nn-UNet input format.
+    """Extracts inspiration and expiration frames and saves them in nn-UNet input format
 
     The file names of the extracted frames have the following structure:
     patientId_studyId_sliceId_[insp/exp]_0000.nii.gz
@@ -179,7 +155,7 @@ def extract_insp_exp(argv):
     with open(train_test_split_file_path) as train_test_split_file:
         train_test_split = json.load(train_test_split_file)
 
-    patients_ids = get_patients_ids(train_test_split, mode)
+    patients_ids = _get_patients_ids(train_test_split, mode)
 
     # Create output folder
     output_path.mkdir(parents=True)
@@ -200,9 +176,6 @@ def compute_visceral_slide(images_path,
                        frames of slices in .nii.gz
     target_path : Path
        A path to a folder to save visceral slide
-    Returns
-    -------
-
     """
 
     target_path.mkdir(exist_ok=True)
@@ -317,7 +290,7 @@ def run_pileline(data_path,
     with open(train_test_split_file_path) as train_test_split_file:
         train_test_split = json.load(train_test_split_file)
 
-    patients_ids = get_patients_ids(train_test_split, mode)
+    patients_ids = _get_patients_ids(train_test_split, mode)
 
     images_folder = data_path / IMAGES_FOLDER
     inspexp_file_path = data_path / METADATA_FOLDER / INSPEXP_FILE_NAME
@@ -376,6 +349,9 @@ def compute_cumulative_visceral_slide(images_path, masks_path, slices, output_pa
        A list of CineMRISlice instances to compute visceral slice for
     output_path : Path
        A path where to save computed visceral slide
+    rest_def : bool
+       A boolean flag indicating whether to use the deformation field of abdominal cavity surrounding
+       for cumulative visceral slide varpint
     """
 
     output_path.mkdir(exist_ok=True, parents=True)
@@ -446,14 +422,24 @@ def compute_fast_inspexp_vs(input_path,
                             norm_vicinity=15):
     """
     Computes visceral slide based on the inspiration and expiration frames with saved deformation fields and masks
-    Returns
-    -------
+    Parameters
+    ----------
+    input_path : Path
+       A path to a folder that contains moving mask and deformation field saved to compute visceral slide
+    output_path : Path
+       A path where to save computed visceral slide
+    normalization_type : VSNormType, default=VSNormType.none
+       Normalisation to apply
+    normalization_df : VSNormField, default=VSNormField.rest
+       Deformation filed to use for normalisation
+    norm_vicinity : int, default=15
     """
 
     moving_masks_path = input_path / MASKS_FOLDER
     cavity_dfs_path = input_path / DF_CAVITY_FOLDER
     rest_dfs_path = input_path / DF_REST_FOLDER
-    normalization_dfs_path = input_path / DF_REST_FOLDER if normalization_df==VSNormField.rest else input_path / DF_COMPLETE_FOLDER
+    normalization_dfs_path = input_path / DF_REST_FOLDER if normalization_df == VSNormField.rest \
+        else input_path / DF_COMPLETE_FOLDER
 
     output_path.mkdir(parents=True)
     vs_detector = VisceralSlideDetectorDF()
@@ -491,6 +477,34 @@ def compute_fast_inspexp_vs(input_path,
                 slide_dict = {"x": x, "y": y, "slide": vs}
                 with open(pickle_path, "w+b") as file:
                     pickle.dump(slide_dict, file)
+
+
+def fast_inspexp_vs(argv):
+    """A command line wrapper of compute_fast_inspexp_vs
+
+    Parameters
+    ----------
+    argv: list of str
+        Command line arguments
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input', type=str, required=True, help="a path to a folder that contains input to compute insp/exp visceral slide")
+    parser.add_argument('--output', type=str, required=True, help="a path where to save computed visceral slide")
+    parser.add_argument('--ntype', type=int, required=True, help="normalisation to apply, 0 - none, 1 - average_anterior_wall, 2 - contour_vicinity")
+    parser.add_argument('--ndf', type=int, required=True, help="deformation filed to use for normalisation, 0 - rest, 1 - complete")
+
+    args = parser.parse_args(argv)
+
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    normalization_type = VSNormType(args.ntype)
+    normalization_df = VSNormField(args.ntype)
+
+    compute_fast_inspexp_vs(input_path,
+                            output_path,
+                            normalization_type,
+                            normalization_df)
 
 
 def load_sequences(path, pattern="[0-9]*.npy"):
@@ -560,62 +574,47 @@ def compute_fast_cumulative_vs(input_path,
                     pickle.dump(slide_dict, file)
 
 
-def test():
-    detection_path = Path(DETECTION_PATH)
+def fast_cumulative_vs(argv):
+    """A command line wrapper of compute_fast_cumulative_vs
 
-    insp_exp_input_path = detection_path / "output" / "vs_input" / "test" / "insp_exp"
-    insp_exp_output_path = detection_path / VS_TEST_FOLDER / AVG_NORM_FOLDER / INS_EXP_VS_FOLDER
-
-    cum_input_path = detection_path / "output" / "vs_input" / "test" / "cumulative"
-    cum_output_path = detection_path / VS_TEST_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
-
-    #compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.none,
-     #                       VSNormField.complete)
-    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.average_anterior_wall,
-                               normalization_df=VSNormField.complete)
-
-
-    #Train unnorm
-
-    # Train
-    """
-    insp_exp_input_path = detection_path / "output" / "vs_input" / "train" / "insp_exp"
-    insp_exp_output_path = detection_path / VS_FOLDER / VICINITY_NORM_FOLDER / INS_EXP_VS_FOLDER
-
-    cum_input_path = detection_path / "output" / "vs_input" / "train" / "cumulative"
-    cum_output_path = detection_path / VS_FOLDER / VICINITY_NORM_FOLDER / CUMULATIVE_VS_FOLDER
-    
-    compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.contour_vicinity, VSNormField.complete)
-    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.contour_vicinity,
-                               normalization_df=VSNormField.complete)
+    Parameters
+    ----------
+    argv: list of str
+        Command line arguments
     """
 
-    """
-    # Control
-    insp_exp_input_path = detection_path / "output" / "vs_input" / "control" / "insp_exp"
-    insp_exp_output_path = detection_path / VS_CONTROL_FOLDER / VICINITY_NORM_FOLDER / INS_EXP_VS_FOLDER
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--input', type=str, required=True, help="a path to a folder that contains input to compute insp/exp visceral slide")
+    parser.add_argument('--output', type=str, required=True, help="a path where to save computed visceral slide")
+    parser.add_argument('--ntype', type=int, required=True, help="normalisation to apply, 0 - none, 1 - average_anterior_wall, 2 - contour_vicinity")
+    parser.add_argument('--ndf', type=int, required=True, help="deformation filed to use for normalisation, 0 - rest, 1 - complete")
+    parser.add_argument('--wdf', type=int, required=True, help="deformation filed to use for cumulative visceral slide warping, 0 - rest, 1 - contours")
 
-    cum_input_path = detection_path / "output" / "vs_input" / "control" / "cumulative"
-    cum_output_path = detection_path / VS_CONTROL_FOLDER / VICINITY_NORM_FOLDER / CUMULATIVE_VS_FOLDER
+    args = parser.parse_args(argv)
 
-    compute_fast_inspexp_vs(insp_exp_input_path, insp_exp_output_path, VSNormType.contour_vicinity, VSNormField.complete)
-    compute_fast_cumulative_vs(cum_input_path, cum_output_path, normalization_type=VSNormType.contour_vicinity,
-                               normalization_df=VSNormField.complete)
-    """
+    input_path = Path(args.input)
+    output_path = Path(args.output)
+    warping_field = VSNormField(args.wdf)
+    normalization_type = VSNormType(args.ntype)
+    normalization_df = VSNormField(args.ntype)
 
-    print("done")
+    compute_fast_cumulative_vs(input_path,
+                               output_path,
+                               warping_field,
+                               normalization_type,
+                               normalization_df)
 
 
 if __name__ == '__main__':
-    test()
 
-    """
     # Very first argument determines action
     actions = {
         "extract_frames": extract_insp_exp,
         "compute": compute,
         "pipeline": pipeline,
-        "cumulative_vs": cumulative_visceral_slide
+        "cumulative_vs": cumulative_visceral_slide,
+        "fast_inspexp_vs" : fast_inspexp_vs,
+        "fast_cumulative_vs" : fast_cumulative_vs
     }
 
     try:
@@ -624,6 +623,5 @@ if __name__ == '__main__':
         print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
     else:
         action(sys.argv[2:])
-    """
 
 
