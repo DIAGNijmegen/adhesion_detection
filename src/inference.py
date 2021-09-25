@@ -7,6 +7,7 @@ from data_extraction import extract_frames, merge_frames
 from visceral_slide import VSNormType, VSNormField, CumulativeVisceralSlideDetectorReg
 from vis_visceral_slide import plot_vs_over_frame
 from contour import filter_out_prior_vs_subset
+from postprocessing import fill_in_holes
 
 # files:
 # data/image.mha - input slice (copy to container)
@@ -55,6 +56,9 @@ def compute_visceral_slide(image: SimpleITK.Image, nnUNet_model_path: Path, outp
     print("Cmd {}".format(cmd))
 
     subprocess.check_call(cmd)
+
+    # Post-processing of nnU-Net prediction
+    fill_in_holes(output_path)
 
     # Merge nnU-Net prediction into a .mha masks file and save in the /data folder
     mask = merge_frames(SLICE_ID, nnunet_output_dir, data_dir, nnunet_input_dir)
