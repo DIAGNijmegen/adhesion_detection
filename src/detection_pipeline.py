@@ -10,7 +10,7 @@ from config import *
 from cinemri.definitions import CineMRISlice
 from utils import load_visceral_slides, binning_intervals, get_inspexp_frames
 from stat import bb_size_stat, get_vs_range
-from contour import get_connected_regions, get_adhesions_prior_coords, Evaluation
+from contour import get_connected_regions, filter_out_prior_vs_subset
 from froc.deploy_FROC import y_to_FROC
 from scipy import stats
 from sklearn.metrics import roc_curve, auc
@@ -259,21 +259,6 @@ def adhesions_with_region_growing(regions,
     return bounding_boxes
 
 
-def filter_out_prior_vs_subset(vs, evaluation=Evaluation.joint):
-    x, y, slide_value = vs.x, vs.y, vs.values
-
-    # Filter out the region in which no adhesions can be present
-    x_prior, y_prior = get_adhesions_prior_coords(x, y, evaluation=evaluation)
-
-    coords = np.column_stack((x, y)).tolist()
-    prior_coords = np.column_stack((x_prior, y_prior)).tolist()
-    prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
-
-    contour_subset = np.column_stack((x, y, slide_value))
-    contour_subset = contour_subset[prior_inds]
-    return contour_subset
-
-
 def bb_with_threshold(vs,
                       bb_size_min,
                       bb_size_max,
@@ -305,7 +290,8 @@ def bb_with_threshold(vs,
        A list of bounding boxes predicted based on visceral slide values
     """
 
-    contour_subset = filter_out_prior_vs_subset(vs)
+    x, y, slide_value = vs.x, vs.y, vs.values
+    contour_subset = filter_out_prior_vs_subset(x, y, slide_value)
 
     # Remove the outliers
     contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
@@ -856,7 +842,8 @@ def visualize(visceral_slides,
         annotation = annotations_dict[vs.full_id] if vs.full_id in annotations_dict else None
 
         if prior:
-            prior_subset = filter_out_prior_vs_subset(vs)
+            x, y, slide_value = vs.x, vs.y, vs.values
+            prior_subset = filter_out_prior_vs_subset(x, y, slide_value)
             x, y, values = prior_subset[:, 0], prior_subset[:, 1], prior_subset[:, 2]
         else:
             x, y, values = vs.x, vs.y, vs.values
@@ -1016,7 +1003,8 @@ def vs_adhesion_boxplot(visceral_slides,
     for vs in visceral_slides:
         has_annotation = vs.full_id in annotations_dict
         if prior_only:
-            contour_subset = filter_out_prior_vs_subset(vs)
+            x, y, slide_value = vs.x, vs.y, vs.values
+            contour_subset = filter_out_prior_vs_subset(x, y, slide_value)
         else:
             contour_subset = np.column_stack((vs.x, vs.y, vs.values))
 
@@ -1126,7 +1114,8 @@ def trainLR(visceral_slides, annotations_dict):
         else:
             # Sample negative bbs
             # get VS prior region
-            vs_region = filter_out_prior_vs_subset(vs)
+            x, y, slide_value = vs.x, vs.y, vs.values
+            vs_region = filter_out_prior_vs_subset(x, y, slide_value)
             samples_num = 0
             if vs_region.shape[0] > 60:
                 while samples_num < 4:
@@ -1406,7 +1395,8 @@ def vs_min_stat(visceral_slides, annotations_dict):
     positive_mins = []
 
     for vs in visceral_slides:
-        vs_region = filter_out_prior_vs_subset(vs)
+        x, y, slide_value = vs.x, vs.y, vs.values
+        vs_region = filter_out_prior_vs_subset(x, y, slide_value)
         vs_region_min = np.min(vs_region[:, 2])
         if vs.full_id in annotations_dict:
             negative_mins.append(vs_region_min)

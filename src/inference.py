@@ -6,19 +6,20 @@ from pathlib import Path
 from data_extraction import extract_frames, merge_frames
 from visceral_slide import VSNormType, VSNormField, CumulativeVisceralSlideDetectorReg
 from vis_visceral_slide import plot_vs_over_frame
+from contour import filter_out_prior_vs_subset
 
 # files:
-# /data/image.mha - input slice (copy to container)
-# /data/mask.mha - mask obtained with nnU-Net (saved after inference)
-# /tmp/nnunet/input - nnU-Net input
-# /tmp/nnunet/output - nnU-Net prediction
+# data/image.mha - input slice (copy to container)
+# data/mask.mha - mask obtained with nnU-Net (saved after inference)
+# nnunet/input - nnU-Net input
+# nnunet/output - nnU-Net prediction
 
-data_dir = Path("/data")
+data_dir = Path("data")
 
-nnunet_input_dir = Path("/nnunet/input")
-nnunet_output_dir = Path("/nnunet/output")
+nnunet_input_dir = Path("nnunet/input")
+nnunet_output_dir = Path("nnunet/output")
 
-nnunet_model_dir = Path("/nnunet/model")
+nnunet_model_dir = Path("nnunet/model")
 
 FRAMES_FOLDER = "frames"
 MASKS_FOLDER = "masks"
@@ -31,6 +32,8 @@ VIS_FILE_NAME = "visceral_slide.png"
 
 
 def compute_visceral_slide(image: SimpleITK.Image, nnUNet_model_path: Path, output_path: Path) -> SimpleITK.Image:
+    subprocess.check_call(["ls", "-al"])
+
     # Make folder to extract frames of a cine-MRI slice and its metadata
     nnunet_input_dir.mkdir(parents=True, exist_ok=True)
 
@@ -58,17 +61,22 @@ def compute_visceral_slide(image: SimpleITK.Image, nnUNet_model_path: Path, outp
 
     # Compute Visceral Slide
     visceral_slide_detector = CumulativeVisceralSlideDetectorReg()
-    x, y, visceral_slide = visceral_slide_detector.get_visceral_slide(image,
-                                                                      mask,
-                                                                      normalization_type=VSNormType.average_anterior_wall,
-                                                                      normalization_field=VSNormField.complete)
+    x, y, values = visceral_slide_detector.get_visceral_slide(image,
+                                                              mask,
+                                                              normalization_type=VSNormType.average_anterior_wall,
+                                                              normalization_field=VSNormField.complete)
+
+    # Leave adhesion prior region only
+    prior_subset = filter_out_prior_vs_subset(x, y, values)
+    x, y, values = prior_subset[:, 0], prior_subset[:, 1], prior_subset[:, 2]
 
     # visualisation on a single frame
-    output_path.mkdir(exist_ok=False)
+    output_path.mkdir(exist_ok=True)
     vis_path = output_path / VIS_FILE_NAME
     frame = image[-2]
-    plot_vs_over_frame(x, y, visceral_slide, frame, vis_path)
+    plot_vs_over_frame(x, y, values, frame, vis_path)
 
+    # TODO change the returned image
     return image
 
 

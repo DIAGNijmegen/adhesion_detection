@@ -122,14 +122,16 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     return prior_coords[:, 0], prior_coords[:, 1]
 
 
-def filter_out_prior_vs_subset(vs, evaluation=Evaluation.joint):
+def filter_out_prior_vs_subset(x, y, slide_value, evaluation=Evaluation.joint):
     """
     Returns a subset of visceral slide that belong to the adhesion prior region
 
     Parameters
     ----------
-    vs : VisceralSlide
-       The visceral slide to filter out the subset that lies on the prior coordinates
+    x, y: list of int
+       Coordinates of the abdominal cavity contour on the frame
+    slide_value : list of float
+       Visceral slide value at the corresponding coordinate
     evaluation : Evaluation, default = Evaluation.joint
        The type of evaluation of adhesion detection algorithm
 
@@ -138,7 +140,6 @@ def filter_out_prior_vs_subset(vs, evaluation=Evaluation.joint):
     vs_subset : ndarray
        3 X N, first column: coordinates by x, second: coordinates by y, third: visceral slide values
     """
-    x, y, slide_value = vs.x, vs.y, vs.values
 
     # Filter out the region in which no adhesions can be present
     x_prior, y_prior = get_adhesions_prior_coords(x, y, evaluation=evaluation)
