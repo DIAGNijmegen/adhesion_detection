@@ -40,7 +40,7 @@ def save_frame(source_path, target_path, index=0, is_segm=False):
     io.imsave(str(frame_target_path) + ".png", frame_png)
 
 
-def extract_frames(slice_path,
+def extract_frames(slice,
                    slice_id,
                    target_path_images,
                    target_path_metadata):
@@ -49,8 +49,8 @@ def extract_frames(slice_path,
     and saves the extracted frames and slice metadata to the specified locations
     Parameters
     ----------
-    slice_path : Path
-       A path to a cine-MRI slice in format "patientID_studyID_sliceID"
+    slice : SimpleITK.Image
+       A a cine-MRI slice image
     slice_id : str
        A full id of a slice
     target_path_images : Path
@@ -59,29 +59,28 @@ def extract_frames(slice_path,
        A path where to save the slice metadata
     """
 
-    img = sitk.ReadImage(str(slice_path))
     # Check that a slice is valid
-    if slice_complete_and_sagittal(img):
+    if slice_complete_and_sagittal(slice):
         metadata = {
-                    "Spacing": img.GetSpacing(),
-                    "Origin": img.GetOrigin(),
-                    "Direction": img.GetDirection(),
-                    "PatientID": img.GetMetaData("PatientID"),
-                    "StudyInstanceUID": img.GetMetaData("StudyInstanceUID"),
-                    "SeriesInstanceUID": img.GetMetaData("SeriesInstanceUID")
+                    "Spacing": slice.GetSpacing(),
+                    "Origin": slice.GetOrigin(),
+                    "Direction": slice.GetDirection(),
+                    "PatientID": slice.GetMetaData("PatientID"),
+                    "StudyInstanceUID": slice.GetMetaData("StudyInstanceUID"),
+                    "SeriesInstanceUID": slice.GetMetaData("SeriesInstanceUID")
                     }
 
-        if img.HasMetaDataKey("Sex"):
-            metadata["Sex"] = img.GetMetaData("Sex")
+        if slice.HasMetaDataKey("Sex"):
+            metadata["Sex"] = slice.GetMetaData("Sex")
 
-        if img.HasMetaDataKey("Age"):
-            metadata["Age"] = img.GetMetaData("Age")
+        if slice.HasMetaDataKey("Age"):
+            metadata["Age"] = slice.GetMetaData("Age")
 
         metadata_file_path = target_path_metadata / (slice_id + ".json")
         with open(metadata_file_path, "w") as f:
             json.dump(metadata, f)
 
-        img_array = sitk.GetArrayFromImage(img)
+        img_array = sitk.GetArrayFromImage(slice)
         for ind, frame in enumerate(img_array):
             frame_2d = convert_2d_image_to_pseudo_3d(frame)
             # 0000 suffix is necessary for nn-UNet
@@ -112,6 +111,11 @@ def merge_frames(slice_full_id,
        A path to a folder containing metadata of a cine-MRI slice
     masks : bool, default=True
        A flag indicating whether frames are from a cine-MRI slice or predicted masks
+
+    Returns
+    -------
+    sitk_image : SimpleITK.Image
+       A merged image
     """
 
     frame_files_glob = frames_folder.glob(slice_full_id + "*.nii.gz")
@@ -129,7 +133,8 @@ def merge_frames(slice_full_id,
     sitk_image = sitk.GetImageFromArray(image)
 
     # Extract and assign metadata
-    with open(metadata_path) as metadata_file:
+    slice_metadata_path = metadata_path / (slice_full_id + ".json")
+    with open(slice_metadata_path) as metadata_file:
         metadata = json.load(metadata_file)
     sitk_image.SetOrigin(tuple(metadata["Origin"]))
     sitk_image.SetSpacing(tuple(metadata["Spacing"]))
@@ -148,6 +153,7 @@ def merge_frames(slice_full_id,
     slice_id = slice_full_id.split(SEPARATOR)
     image_path = target_folder / (slice_id[-1] + ".mha")
     sitk.WriteImage(sitk_image, str(image_path))
+    return sitk_image
 
 
 # TODO: or move it to detection data split?

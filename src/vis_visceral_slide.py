@@ -4,6 +4,36 @@ from vs_definitions import VSTransform
 from contour import filter_out_prior_vs_subset
 
 
+def plot_vs_over_frame(x, y, values, frame, file_path=None):
+    """
+    Visualises visceral slide as a scatter plot over a selected frame
+    Parameters
+    ----------
+    x, y: list of int
+       Coordinates of the abdominal cavity contour on the frame
+    values : list of float
+       Visceral slide value at the corresponding coordinate
+    frame : ndarray
+       A corresponding cine-MRI frame
+    file_path : Path
+       A path to save the visualised visceral slide
+    """
+
+    plt.figure()
+    plt.imshow(frame, cmap="gray")
+    # Plot visceral slide
+    plt.scatter(x, y, s=5, c=values, cmap="jet")
+    cbar = plt.colorbar()
+    cbar.set_ticks([])
+    plt.axis("off")
+
+    if file_path is not None:
+        plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
+    else:
+        plt.show()
+    plt.close()
+
+
 def plot_vs_distribution(visceral_slides,
                          output_path,
                          vs_min=-np.inf,

@@ -13,11 +13,7 @@ from data_conversion import convert_2d_image_to_pseudo_3d
 from visceral_slide import VSNormType, VSNormField, VSWarpingField, VisceralSlideDetectorReg, VisceralSlideDetectorDF, \
     CumulativeVisceralSlideDetectorReg, CumulativeVisceralSlideDetectorDF
 import matplotlib.pyplot as plt
-from config import DETECTION_PATH, VS_CONTROL_FOLDER, AVG_NORM_FOLDER, CUMULATIVE_VS_FOLDER, INS_EXP_VS_FOLDER
-from cinemri.config import ARCHIVE_PATH
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, TRAIN_TEST_SPLIT_FILE_NAME, TRAIN_PATIENTS_KEY,\
-    TEST_PATIENTS_KEY, VISCERAL_SLIDE_FILE, MASKS_FOLDER, DF_REST_FOLDER, DF_CAVITY_FOLDER, DF_COMPLETE_FOLDER, \
-    DF_CONTOUR_FOLDER, VICINITY_NORM_FOLDER, UNNORM_FOLDER, VS_FOLDER, VS_TEST_FOLDER
+from config import *
 from segmentation import segment_abdominal_cavity
 from utils import slices_from_full_ids_file, patients_from_full_ids
 

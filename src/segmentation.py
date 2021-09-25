@@ -198,7 +198,8 @@ def extract_complete_segmentation_data(images_path,
     for patient in patients:
         for cinemri_slice in patient.cinemri_slices:
             slice_path = cinemri_slice.build_path(images_path)
-            extract_frames(slice_path, cinemri_slice.full_id, target_images_path, target_metadata_path)
+            slice = sitk.ReadImage(str(slice_path))
+            extract_frames(slice, cinemri_slice.full_id, target_images_path, target_metadata_path)
 
 
 def extract_complete_data(argv):
@@ -417,11 +418,9 @@ def merge_segmentation(segmentation_path,
             study_path.mkdir()
 
             for slice in study.slices:
-                slice_metadata_path = metadata_path / (slice.full_id + ".json")
-
                 # Extract frames matching the slice id and its metadata, merge into .mha
                 # and save in a study folder
-                merge_frames(slice.full_id, segmentation_path, study_path, slice_metadata_path)
+                merge_frames(slice.full_id, segmentation_path, study_path, metadata_path)
 
 
 def merge(argv):
