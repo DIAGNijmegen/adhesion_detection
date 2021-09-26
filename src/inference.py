@@ -1,3 +1,5 @@
+#!/usr/local/bin/python3
+
 import sys
 import subprocess
 import SimpleITK
@@ -20,12 +22,7 @@ data_dir = Path("data")
 nnunet_input_dir = Path("nnunet/input")
 nnunet_output_dir = Path("nnunet/output")
 
-nnunet_model_dir = Path("nnunet/model")
-
-FRAMES_FOLDER = "frames"
-MASKS_FOLDER = "masks"
-METADATA_FOLDER = "images_metadata"
-MERGED_MASKS_FOLDER = "merged_masks"
+nnunet_model_dir = Path("nnunet/results")
 
 SLICE_FILE = "image.mha"
 SLICE_ID = "123"
