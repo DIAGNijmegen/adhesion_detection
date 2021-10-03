@@ -4,7 +4,6 @@ from pathlib import Path
 from data_conversion import convert_2d_image_to_pseudo_3d
 
 
-# fill in binary holes in nnUNet prediction
 def fill_in_holes(masks_path):
     """
     Fills in binary holes in nnUNet prediction

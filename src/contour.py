@@ -102,7 +102,7 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     # Remove posterior wall coordinates
     x_posterior_wall, y_posterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.posterior_wall)
     posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
-    prior_coords = np.array([coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()])
+    prior_coords = [coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()]
 
     if evaluation == Evaluation.anterior_wall:
         # remove pelvis
@@ -117,7 +117,7 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
         # If anterior wall is included into evaluation, remove only its top half
         y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
         anterior_wall_coords = [coord for coord in anterior_wall_coords if coord[1] < y_anterior_wall_cutoff]
-    prior_coords = [coord for coord in prior_coords if coord not in anterior_wall_coords]
+    prior_coords = np.array([coord for coord in prior_coords if coord not in anterior_wall_coords])
 
     return prior_coords[:, 0], prior_coords[:, 1]
 
