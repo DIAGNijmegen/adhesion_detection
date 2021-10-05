@@ -1,4 +1,5 @@
 
-# Abdominal cavity segmentation
+# Adhesion detection on Cine-MRI: multi-stage CAD method
 
-The repository contains the source code for abdominal cavity segmentation of cine-MRI scans.
+TODO: add method description
+
