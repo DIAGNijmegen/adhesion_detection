@@ -7,7 +7,7 @@ import SimpleITK
 from pathlib import Path
 
 from data_extraction import extract_frames, merge_frames
-from visceral_slide import VSNormType, VSNormField, CumulativeVisceralSlideDetectorReg
+from vs_computation import VSNormType, VSNormField, CumulativeVisceralSlideDetectorReg
 from vis_visceral_slide import plot_vs_over_frame
 from contour import filter_out_prior_vs_subset
 from postprocessing import fill_in_holes

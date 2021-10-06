@@ -10,7 +10,7 @@ import SimpleITK as sitk
 from cinemri.definitions import Patient, Study, CineMRISlice
 from cinemri.utils import get_patients
 from data_conversion import convert_2d_image_to_pseudo_3d
-from visceral_slide import VSNormType, VSNormField, VSWarpingField, VisceralSlideDetectorReg, VisceralSlideDetectorDF, \
+from vs_computation import VSNormType, VSNormField, VSWarpingField, VisceralSlideDetectorReg, VisceralSlideDetectorDF, \
     CumulativeVisceralSlideDetectorReg, CumulativeVisceralSlideDetectorDF
 import matplotlib.pyplot as plt
 from config import *

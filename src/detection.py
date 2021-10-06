@@ -16,7 +16,7 @@ from pathlib import Path
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 import numpy as np
-from visceral_slide import VisceralSlideDetector
+from vs_computation import VisceralSlideDetector
 from adhesions import load_annotated_slices, load_annotations, load_patients_of_type, AdhesionType, AnnotationType
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import get_contour

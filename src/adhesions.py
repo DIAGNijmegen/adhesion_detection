@@ -11,7 +11,7 @@ from config import *
 from cinemri.config import ARCHIVE_PATH
 from cinemri.contour import AbdominalContourPart, get_contour, Contour
 from cinemri.definitions import CineMRISlice
-from visceral_slide import VisceralSlideDetector
+from vs_computation import VisceralSlideDetector
 from cinemri.utils import get_patients
 from utils import interval_overlap, load_visceral_slides, get_inspexp_frames
 from visceral_slide_pipeline import load_visceral_slide
