@@ -7,6 +7,8 @@
 # 5. See if there are any insights from YOLOv5 training results
 # 6. Build custom pipeline
 
+# TODO: delete or extract visualisation
+
 import random
 import json
 import shutil
@@ -22,7 +24,7 @@ from cinemri.utils import get_image_orientation
 from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, SEPARATOR, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
 from skimage import io
 from sklearn.model_selection import KFold
-from utils import get_inspexp_frames
+from utils import get_inspexp_frames, slice_complete_and_sagittal
 
 POSITIVE_FOLDER = "positive"
 
@@ -310,8 +312,7 @@ def extract_negative_samples(annotations_type_path, inspexp_path, images_path, m
             slice_image = sitk.ReadImage(str(slice_path))
 
             # Check that a slice is valid
-            depth = slice_image.GetDepth()
-            if depth >= 30 and get_image_orientation(slice_image) == "ASL":
+            if slice_complete_and_sagittal(slice_image):
 
                 # Extract inspiration and expiration frames and masks for the slice
                 try:
@@ -338,7 +339,7 @@ def extract_negative_samples(annotations_type_path, inspexp_path, images_path, m
 def annotations_to_yolov5(annotations_path,
                           labels_path,
                           adhesion_types=[AdhesionType.anteriorWall.value,
-                                          AdhesionType.abdominalCavityContour.value,
+                                          AdhesionType.pelvis.value,
                                           AdhesionType.inside.value]):
     """
     Convert adhesions annotations to YOLOv5 format
@@ -386,7 +387,7 @@ def extract_detection_input_subset(detection_input_whole_path,
                                    detection_input_subset_path,
                                    annotations_path,
                                    adhesion_types=[AdhesionType.anteriorWall.value,
-                                                   AdhesionType.abdominalCavityContour.value,
+                                                   AdhesionType.pelvis.value,
                                                    AdhesionType.inside.value]):
     """
     Extract a subset of detection data filtered by adhesion type
@@ -822,7 +823,7 @@ if __name__ == '__main__':
 
     #npy_to_jpg(detection_contour_npy_path, detection_contour_jpg_path)
 
-    #contour_types = [AdhesionType.anteriorWall.value, AdhesionType.abdominalCavityContour.value]
+    #contour_types = [AdhesionType.anteriorWall.value, AdhesionType.pelvis.value]
     """
     extract_detection_input_subset(detection_input_whole_path,
                                    detection_input_contour_path,

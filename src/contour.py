@@ -1,5 +1,8 @@
+# Functions related to contour analysis
 import numpy as np
+from enum import Enum, unique
 from cinemri.contour import AbdominalContourPart, Contour
+
 
 def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=-1):
     """
@@ -25,208 +28,134 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
     coord_prev = contour_subset_coords[0]
     coords_num = contour_subset_coords.shape[0]
     current_region = [coord_prev]
+
+    def get_distance(point1, point2, axis=-1):
+        if axis == -1:
+            distance = np.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2)
+        else:
+            distance = abs(point1[axis] - point2[axis])
+
+        return distance
+
     for index in range(1, coords_num):
         coord_curr = contour_subset_coords[index]
-        if axis == -1:
-            distance = np.sqrt((coord_curr[0] - coord_prev[0]) ** 2 + (coord_curr[1] - coord_prev[1]) ** 2)
-        else:
-            distance = abs(coord_curr[axis] - coord_prev[axis])
+        distance = get_distance(coord_curr, coord_prev, axis=axis)
 
         if distance > connectivity_threshold:
-            regions.append(current_region)
+            regions.append(np.array(current_region))
             current_region = []
         coord_prev = coord_curr
         current_region.append(coord_prev)
 
-    regions.append(current_region)
+    # Check if first and last region should be merged
+    if len(regions) > 0:
+        if len(current_region) > 0:
+            first_of_first = regions[0][0]
+            last_of_last = current_region[-1]
+
+            distance = get_distance(first_of_first, last_of_last, axis=axis)
+
+            if distance > connectivity_threshold:
+                # First and last regions are separated
+                regions.append(np.array(current_region))
+            else:
+                # First and last regions are connected
+                full_region = np.concatenate((current_region, regions[0]))
+                regions[0] = full_region
+    else:
+        regions.append(np.array(current_region))
+
     return regions
 
 
-def get_abdominal_contour_top(x, y, connectivity_threshold=5):
-    """
-    Extracts coordinates of the abdominal wall of the specified type from abdominal cavity contour
+@unique
+class Evaluation(Enum):
+    joint = 0
+    anterior_wall = 1
+    pelvis = 2
 
+
+def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
+    """
+    Extracts the subset of abdominal cavity contour where adhesions can be located
     Parameters
     ----------
     x, y : list of int
-       x-axis and y-axis components of abdominal cavity contour
-    type : AbdominalContourPart
-       indicates which abdominal wall to detect, anterior or posterior
-
-    connectivity_threshold : int, default=5
-       Threshold which indicates the maximum difference in x component allowed between
-       the subsequent coordinates of a contour to be considered connected
+       The coordinates of a contour
+    evaluation : Evaluation, default = Evaluation.joint
+       The type of evaluation of adhesion detection algorithm
 
     Returns
     -------
-    x_wall, y_wall : ndarray of int
-       x-axis and y-axis components of abdominal wall
+    x, y : list of int
+       The coordinates of the subset of abdominal cavity contour where adhesions can be located
     """
 
-    coords = np.column_stack((x, y))
-    # Get unique x coordinates
-    x_unique = np.unique(x)
+    prior_coords = np.column_stack((x, y))
+    contour = Contour(x, y)
 
-    # For each unique y find the x on the specified side of abdominal cavity contour
-    y_top = []
-    for x_current in x_unique:
-        # Get all x values of coordinates which have x = x_current
-        ys = [coord[1] for coord in coords if coord[0] == x_current]
-        y_top.append(sorted(ys)[0])
+    # Remove top coordinates
+    x_top, y_top = contour.get_abdominal_contour_part(AbdominalContourPart.top)
+    top_coords = np.column_stack((x_top, y_top)).tolist()
+    prior_coords = [coord for coord in prior_coords.tolist() if coord not in top_coords]
 
-    # Unique y coordinates and the corresponding x coordinates
-    # should give good approximation of the abdominal wall
-    y_top = np.array(y_top)
-    top_contour_coords = np.column_stack((x_unique, y_top))
+    # Remove posterior wall coordinates
+    x_posterior_wall, y_posterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.posterior_wall)
+    posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
+    prior_coords = [coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()]
 
-    regions = get_connected_regions(top_contour_coords, connectivity_threshold, axis=1)
+    if evaluation == Evaluation.anterior_wall:
+        # remove pelvis
+        x_bottom, y_bottom = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
+        pelvis_coords = np.column_stack((x_bottom, y_bottom)).tolist()
+        prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
 
-    # Discard regions below the middle y
-    y = np.array(y)
-    middle_y = (y.max() - y.min()) / 2
-    top_regions = []
-    for region in regions:
-        # Check that min and max y of a region is above middle_y
-        if region[0][1] < middle_y and region[-1][1] < middle_y:
-            top_regions.append(region)
+    # We remove top 1/2 of anterior wall coordinates
+    x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
+    anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall)).tolist()
+    if evaluation != Evaluation.pelvis:
+        # If anterior wall is included into evaluation, remove only its top half
+        y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
+        anterior_wall_coords = [coord for coord in anterior_wall_coords if coord[1] < y_anterior_wall_cutoff]
+    prior_coords = np.array([coord for coord in prior_coords if coord not in anterior_wall_coords])
 
-    # Find and return the longest region
-    top_regions_len = np.array([(region[-1][0] - region[0][0] + 1) for region in top_regions])
-    longest_region_ind = np.argmax(top_regions_len)
-    longest_region = top_regions[longest_region_ind]
-
-    longest_region_start = longest_region[0]
-    longest_region_end = longest_region[-1]
-
-    # The contour returned by cinemri.contour.get_contour() always starts from
-    # the lowest-left point of the contour, so when we determine the top part
-    # we can safely expect that by using the start and end point
-    # of the longest top region we will get a connected area from the contour coordinates
-
-    longest_region_start_ind = np.where((coords == longest_region_start).all(axis=1))[0][0]
-    longest_region_end_ind = np.where((coords == longest_region_end).all(axis=1))[0][0]
-    top_coords = coords[longest_region_start_ind:longest_region_end_ind]
-
-    return top_coords[:, 0], top_coords[:, 1]
+    return prior_coords[:, 0], prior_coords[:, 1]
 
 
-def get_abdominal_wall_coord(x, y, type=AbdominalContourPart.anterior_wall, connectivity_threshold=5):
+def filter_out_prior_vs_subset(x, y, slide_value, evaluation=Evaluation.joint):
     """
-    Extracts coordinates of the abdominal wall of the specified type from abdominal cavity contour
+    Returns a subset of visceral slide that belong to the adhesion prior region
 
     Parameters
     ----------
-    x, y : list of int
-       x-axis and y-axis components of abdominal cavity contour
-    type : AbdominalContourPart
-       indicates which abdominal wall to detect, anterior or posterior
-
-    connectivity_threshold: int, default=5
-       Threshold which indicates the maximum difference in x component allowed between
-       the subsequent coordinates of a contour to be considered connected
+    x, y: list of int
+       Coordinates of the abdominal cavity contour on the frame
+    slide_value : list of float
+       Visceral slide value at the corresponding coordinate
+    evaluation : Evaluation, default = Evaluation.joint
+       The type of evaluation of adhesion detection algorithm
 
     Returns
     -------
-    x_wall, y_wall : ndarray of int
-       x-axis and y-axis components of abdominal wall
+    vs_subset : ndarray
+       3 X N, first column: coordinates by x, second: coordinates by y, third: visceral slide values
     """
 
-    expected_types = [AbdominalContourPart.anterior_wall, AbdominalContourPart.posterior_wall]
-    if type not in expected_types:
-        raise ValueError("Either AbdominalContourPart.anterior_wall or AbdominalContourPart.posterior_wall "
-                         "should be provided as abdominal wall type")
+    # Filter out the region in which no adhesions can be present
+    x_prior, y_prior = get_adhesions_prior_coords(x, y, evaluation=evaluation)
 
-    coords = np.column_stack((x, y))
-    # Get unique y coordinates
-    y_unique = np.unique(y)
-    # For each unique y find the x on the specified side of abdominal cavity contour
-    x_side = []
-    desc_sort = type == AbdominalContourPart.posterior_wall
-    for y_current in y_unique:
-        # Get all x values of coordinates which have y = y_current
-        xs = [coord[0] for coord in coords if coord[1] == y_current]
-        x_side.append(sorted(xs, reverse=desc_sort)[0])
+    coords = np.column_stack((x, y)).tolist()
+    prior_coords = np.column_stack((x_prior, y_prior)).tolist()
+    prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
 
-    # Unique y coordinates and the corresponding x coordinates
-    # should give good approximation of the abdominal wall
-    x_side = np.array(x_side)
-    abdominal_wall_coords = np.column_stack((x_side, y_unique))
-    #return abdominal_wall_coords[:, 0], abdominal_wall_coords[:, 1]
-
-    regions = get_connected_regions(abdominal_wall_coords, connectivity_threshold, axis=0)
-
-    # Find and return the longest region
-    top_regions_len = np.array([(region[-1][1] - region[0][1] + 1) for region in regions])
-    longest_region_ind = np.argmax(top_regions_len)
-    longest_region = regions[longest_region_ind]
-
-    # TODO: make this code more robust
-    # Handling of different orders of coordinates list
-    if type == AbdominalContourPart.anterior_wall:
-        longest_region_start = longest_region[-1]
-        longest_region_end = longest_region[0]
-    else:
-        longest_region_start = longest_region[0]
-        longest_region_end = longest_region[-1]
-
-    longest_region_start_ind = np.where((coords == longest_region_start).all(axis=1))[0][0]
-    longest_region_end_ind = np.where((coords == longest_region_end).all(axis=1))[0][0]
-
-    # If the end index of the region is 0 in case of the posterior wall
-    # it means that the first point of the contour was identified as the last one
-    # hence we should take the last contour point to get correct part of the contour
-    if type == AbdominalContourPart.posterior_wall and longest_region_end_ind == 0:
-        longest_region_end_ind = len(coords) - 1
-
-    abdominal_wall_coords = coords[longest_region_start_ind:longest_region_end_ind]
-    return abdominal_wall_coords[:, 0], abdominal_wall_coords[:, 1]
+    vs_subset = np.column_stack((x, y, slide_value))
+    vs_subset = vs_subset[prior_inds]
+    return vs_subset
 
 
-def get_adhesions_prior_coords(x, y, connectivity_threshold=5):
-    coords = np.column_stack((x, y))
-
-    # Keep only the top half of the contour
-    middle_y = (np.max(y) - np.min(y)) / 2
-    coords_top = np.array([coord for coord in coords if coord[1] <= middle_y])
-
-    # Get the top part of the anterior wall
-    anterior_wall_x, anterior_wall_y = get_abdominal_wall_coord(coords_top[:, 0],
-                                                                coords_top[:, 1],
-                                                                connectivity_threshold=connectivity_threshold)
-    anterior_wall_coords = np.column_stack((anterior_wall_x, anterior_wall_y)).tolist()
-
-    # Also discard the top quarter of the anterior wall
-    middle_anterior_y = (np.max(anterior_wall_y) - np.min(anterior_wall_y)) / 2
-    anterior_wall_bottom = [coord for coord in anterior_wall_coords if coord[1] > middle_anterior_y]
-
-    # Get the top right part of the contour
-    rest_coords = [coord for coord in coords_top.tolist() if coord not in anterior_wall_bottom]
-    # Filter out the top right part of the contour
-    adhesions_prior_coords = [coord for coord in coords.tolist() if coord not in rest_coords]
-
-    # Get the posterior wall
-    posterior_wall_x, posterior_wall_y = get_abdominal_wall_coord(coords[:, 0],
-                                                                  coords[:, 1],
-                                                                  type=AbdominalContourPart.posterior_wall,
-                                                                  connectivity_threshold=connectivity_threshold)
-    posterior_wall_coords = np.column_stack((posterior_wall_x, posterior_wall_y)).tolist()
-    # Filter out the posterior wall
-    adhesions_prior_coords = [coord for coord in adhesions_prior_coords if coord not in posterior_wall_coords]
-
-    # Get the top coordinates
-    top_x, top_y = get_abdominal_contour_top(coords[:, 0],
-                                             coords[:, 1],
-                                             connectivity_threshold=connectivity_threshold)
-    top_coords = np.column_stack((top_x, top_y)).tolist()
-    # Filter out the top part of the contour
-    adhesions_prior_coords = np.array([coord for coord in adhesions_prior_coords if coord not in top_coords])
-
-    return adhesions_prior_coords[:, 0], adhesions_prior_coords[:, 1]
-
-
+# TODO: move to visualisation or delete
 from pathlib import Path
 from cinemri.config import ARCHIVE_PATH
-from config import METADATA_FOLDER, SEPARATOR, IMAGES_FOLDER
 from utils import load_visceral_slides
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
@@ -261,5 +190,6 @@ if __name__ == '__main__':
 
         plt.savefig(output_path / "{}.png".format(vs.full_id), bbox_inches='tight', pad_inches=0)
         plt.close()
+
 
 

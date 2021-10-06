@@ -1,18 +1,18 @@
 #!/usr/local/bin/python3
 
+# Functions related to abdominal cavity segmentation
 import shutil
 import sys
 import subprocess
 import argparse
 import numpy as np
 from pathlib import Path
-from cinemri.definitions import Patient, Study, CineMRISlice
+import SimpleITK as sitk
 from cinemri.utils import get_patients
-from cinemri.config import ARCHIVE_PATH
-from config import IMAGES_FOLDER, SEPARATOR
-from data_conversion import extract_frames, merge_frames
+from data_extraction import extract_frames, merge_frames
 from postprocessing import fill_in_holes
 from utils import patients_from_full_ids
+from data_extraction import save_frame
 
 FRAMES_FOLDER = "frames"
 MASKS_FOLDER = "masks"
@@ -36,14 +36,141 @@ def _patients_from_args(args):
     return patients
 
 
-def extract_segmentation_data(images_path,
-                              target_path,
-                              target_frames_folder=FRAMES_FOLDER,
-                              target_metadata_folder=METADATA_FOLDER,
-                              patients=None):
+def _find_segmented_frame_index(segmentation_path):
+    """
+    Finds the index of the frame on cine-MRI slice for which segmentation was made.
+    In the last version of annotations it can be any frame and only one frame per slice is annotated
+    Parameters
+    ----------
+    segmentation_path : Path
+      A path to .mha file with annotation of abdominal cavity
+
+    Returns
+    -------
+    index : int
+       The index of the segmented frame
+    """
+    image = sitk.GetArrayFromImage(sitk.ReadImage(str(segmentation_path)))
+
+    for index, frame in enumerate(image):
+        # Find first frame with non zero values
+        if len(np.nonzero(frame)[0]) > 0:
+            return index
+
+    # If not found return None
+    return None
+
+
+def extract_segmentation_data(archive_path,
+                              destination_path,
+                              images_folder="images",
+                              segmentations_folder="cavity_segmentations",
+                              target_images_folder="images",
+                              target_segmentations_folder="masks"):
+    """Extracts a subset of the archive only related to segmentation
+
+    Parameters
+    ----------
+    archive_path : Path
+       A path to the full cine-MRI data archive
+    destination_path : Path
+       A path to save the extracted segmentation subset
+    images_folder : str, default="images"
+       A name of the images folder in the archive
+    segmentations_folder : str, default="cavity_segmentations"
+       A name of the folder with cavity segmentations in the archive
+    target_images_folder : str, default="images"
+       A name of the images folder in the segmentation subset
+    target_segmentations_folder : str, default="masks"
+       A name of the folder with cavity segmentations in the segmentation subset
+    """
+
+    # create target paths and folders
+    destination_path = Path(destination_path)
+    destination_path.mkdir(exist_ok=True)
+
+    target_images_path = destination_path / target_images_folder
+    target_images_path.mkdir(exist_ok=True)
+
+    target_segmentations_path = destination_path / target_segmentations_folder
+    target_segmentations_path.mkdir(exist_ok=True)
+
+    images_path = archive_path / images_folder
+    segmentation_path = archive_path / segmentations_folder
+
+    patients = get_patients(segmentation_path)
+    for patient in patients:
+        # Create patient folder in both images and masks target directories
+        patient.build_path(target_images_path).mkdir(exist_ok=True)
+        patient.build_path(target_segmentations_path).mkdir(exist_ok=True)
+
+        for study in patient.studies:
+            # Skip studies without slices
+            if len(study.slices) == 0:
+                continue
+
+            # Create study folder in both images and masks target directories
+            study_images_path = study.build_path(target_images_path)
+            study_images_path.mkdir(exist_ok=True)
+
+            study_segmentations_path = study.build_path(target_segmentations_path)
+            study_segmentations_path.mkdir(exist_ok=True)
+
+            for slice in study.slices:
+                # read a segmentation mask, find the segmented frame index
+                mask_path = slice.build_path(segmentation_path)
+                segmented_frame_index = _find_segmented_frame_index(mask_path)
+                if segmented_frame_index is not None:
+                    save_frame(mask_path, study_segmentations_path, segmented_frame_index, True)
+
+                    # read an image and extract the segmented frame
+                    slice_path = slice.build_path(images_path)
+                    save_frame(slice_path, study_images_path, segmented_frame_index)
+
+
+def extract_segmentation(argv):
+    """A command line wrapper of extract_segmentation_data
+
+    Parameters
+    ----------
+    argv : list of str
+    """
+
+    parser = argparse.ArgumentParser()
+    parser.add_argument('archive_path', type=str, help="a path to the full cine-MRI data archive")
+    parser.add_argument('destination_path', type=str, help="a path to save the extracted segmentation subset")
+    parser.add_argument('--images', type=str, default="images", help="a name of the images folder in the archive")
+    parser.add_argument('--masks', type=str, default="cavity_segmentations",
+                        help="a name of the folder with cavity segmentations in the archive")
+    parser.add_argument('--target_images', type=str, default="images",
+                        help="a name of the images folder in the segmentation subset")
+    parser.add_argument('--target_masks', type=str, default="masks",
+                        help="a name of the folder with cavity segmentations in the segmentation subset")
+    args = parser.parse_args(argv)
+
+    archive_path = Path(args.archive_path)
+    destination_path = Path(args.destination_path)
+    images_folder = args.images
+    segmentations_folder = args.masks
+    target_images_folder = args.target_images
+    target_segmentations_folder = args.target_masks
+
+    extract_segmentation_data(archive_path,
+                              destination_path,
+                              images_folder,
+                              segmentations_folder,
+                              target_images_folder,
+                              target_segmentations_folder)
+
+
+def extract_complete_segmentation_data(images_path,
+                                       target_path,
+                                       target_frames_folder=FRAMES_FOLDER,
+                                       target_metadata_folder=METADATA_FOLDER,
+                                       patients=None):
 
     """
-    Extracts frames for segmentation and the corresponding metadata from all slices in the archive
+    Extracts frames for segmentation and the corresponding metadata from the whole cine-MRI archive
     Parameters
     ----------
     images_path : Path
@@ -71,11 +198,12 @@ def extract_segmentation_data(images_path,
     for patient in patients:
         for cinemri_slice in patient.cinemri_slices:
             slice_path = cinemri_slice.build_path(images_path)
-            extract_frames(slice_path, cinemri_slice.full_id, target_images_path, target_metadata_path)
+            slice = sitk.ReadImage(str(slice_path))
+            extract_frames(slice, cinemri_slice.full_id, target_images_path, target_metadata_path)
 
 
-def extract_data(argv):
-    """A command line wrapper of extract_segmentation_data
+def extract_complete_data(argv):
+    """A command line wrapper of extract_complete_segmentation_data
 
     Parameters
     ----------
@@ -92,7 +220,7 @@ def extract_data(argv):
     archive_path = Path(args.archive_path)
     target_path = Path(args.target_path)
     patients = _patients_from_args(args)
-    extract_segmentation_data(archive_path, target_path, patients=patients)
+    extract_complete_segmentation_data(archive_path, target_path, patients=patients)
 
 
 def delete_folder_contents(folder):
@@ -290,11 +418,9 @@ def merge_segmentation(segmentation_path,
             study_path.mkdir()
 
             for slice in study.slices:
-                slice_metadata_path = metadata_path / (slice.full_id + ".json")
-
                 # Extract frames matching the slice id and its metadata, merge into .mha
                 # and save in a study folder
-                merge_frames(slice.full_id, segmentation_path, study_path, slice_metadata_path)
+                merge_frames(slice.full_id, segmentation_path, study_path, metadata_path)
 
 
 def merge(argv):
@@ -325,6 +451,7 @@ def run_full_inference(images_path,
                        folds=None):
     """
     Runs inference of segmentation masks for the whole cine-MRI archive with nn-UNet
+
     Parameters
     ----------
     images_path : Path
@@ -346,7 +473,7 @@ def run_full_inference(images_path,
        A string, specifying which folds to use for prediction, e.g "0,1,2"
     """
 
-    extract_segmentation_data(images_path, output_path, patients=patients)
+    extract_complete_segmentation_data(images_path, output_path, patients=patients)
 
     nnUNet_input_path = output_path / FRAMES_FOLDER
     nnUNet_output_path = output_path / MASKS_FOLDER
@@ -391,22 +518,11 @@ def full_inference(argv):
     run_full_inference(images_path, output_path, nnUNet_results_path, nnUNet_task, patients, folds)
 
 
-def test():
-    archive_path = ARCHIVE_PATH
-    target_path_images = Path("../../data/target")
-    target_path_metadata = Path("../../data/images_metadata")
-    segmentation_path = Path("../../data/masks")
-    merged_segmentation_path = Path("../../data/merged_segmentation1")
-
-    extract_segmentation_data(archive_path, target_path_images)
-    #simulate_segmentation(target_path_images, segmentation_path)
-    #merge_segmentation(segmentation_path, target_path_metadata, merged_segmentation_path)
-
-
 if __name__ == '__main__':
 
     actions = {
-        "extract_data": extract_data,
+        "extract_segmentation" : extract_segmentation,
+        "extract_complete_data": extract_complete_segmentation_data,
         "segment": segment,
         "merge": merge,
         "full_inference": full_inference,

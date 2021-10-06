@@ -6,7 +6,7 @@ from collections import Counter
 from pathlib import Path
 from enum import Enum, unique
 from utils import patients_from_metadata, patients_from_full_ids_file, slices_full_ids_from_patients, \
-    get_segm_patients_ids, slices_from_full_ids_file
+    get_patients_ids_at_path, slices_from_full_ids_file, full_ids_to_file
 from cinemri.definitions import Patient, CineMRIMotionType, CineMRISlice, CineMRISlicePos
 from cinemri.utils import get_patients
 from adhesions import AdhesionAnnotation, AdhesionType
@@ -15,6 +15,7 @@ from cinemri.config import ARCHIVE_PATH
 from cinemri.definitions import AnatomicalPlane, Study
 from config import *
 from sklearn.model_selection import KFold
+import SimpleITK as sitk
 
 PARAMEDIAN_SEGMENTATION_IDS_POS = ["CM0003", "CM0063", "CM0170", "CM0193", "CM0203", "CM0211", "CM0214", "CM0302",
                                    "CM0400", "CM0062", "CM0082", "CM0173", "CM0200", "CM0208", "CM0212", "CM0294",
@@ -42,12 +43,12 @@ class PatientTypes(Enum):
 
 
 # Positive slices statistics: motion type and slice position
-def positive_annotations_stat(annotations, patients, mapping):
+def positive_annotations_stat(annotations, patients):
     motion_type_freq = Counter()
     slice_pos_freq = Counter()
 
     for annotation in annotations:
-        patient = [patient for patient in patients if mapping[patient.id] == annotation.patient_id][0]
+        patient = [patient for patient in patients if patient.id == annotation.patient_id][0]
         cinemri_slice = [slice for slice in patient.cinemri_slices if slice.id == annotation.slice_id][0]
         motion_type_freq[cinemri_slice.motion_type] += 1
         slice_pos_freq[cinemri_slice.position] += 1
@@ -69,26 +70,27 @@ def positive_annotations_stat(annotations, patients, mapping):
                                               100 * slice_pos_freq[CineMRISlicePos.middle] / len(annotations)))
 
 
-def positive_stat(annotations_file_path, patients_metadata_file, mapping_path):
+def positive_stat(annotations_file_path, patients_metadata_file):
     patients = patients_from_metadata(patients_metadata_file)
-    patients = [patient for patient in patients if patient.id.startswith("ANON")]
-
-    with open(mapping_path) as f:
-        mapping = json.load(f)
 
     print("Statistics of annotation of all types:")
     annotations = load_annotations(annotations_file_path)
-    positive_annotations_stat(annotations, patients, mapping)
+    positive_annotations_stat(annotations, patients)
 
     print("Statistics of annotation that intersect the abdominal cavity contour:")
     annotations = load_annotations(annotations_file_path,
-                                   adhesion_types=[AdhesionType.anteriorWall, AdhesionType.abdominalCavityContour])
-    positive_annotations_stat(annotations, patients, mapping)
+                                   adhesion_types=[AdhesionType.anteriorWall, AdhesionType.pelvis])
+    positive_annotations_stat(annotations, patients)
+
+    print("Statistics of annotation in pelvis area:")
+    annotations = load_annotations(annotations_file_path,
+                                   adhesion_types=[AdhesionType.pelvis])
+    positive_annotations_stat(annotations, patients)
 
     print("Statistics of annotation that intersect the anterior wall:")
     annotations = load_annotations(annotations_file_path,
                                    adhesion_types=[AdhesionType.anteriorWall])
-    positive_annotations_stat(annotations, patients, mapping)
+    positive_annotations_stat(annotations, patients)
 
 
 # Positive slices segmentation stat (how many segmented slices each patient have)
@@ -102,7 +104,7 @@ def segmentation_pos_stat(annotations_file_path, segmentation_path):
 
     annotations_contour = load_annotations(annotations_file_path,
                                            adhesion_types=[AdhesionType.anteriorWall,
-                                                           AdhesionType.abdominalCavityContour])
+                                                           AdhesionType.pelvis])
     patients_contour_ids = np.unique([annotation.patient_id for annotation in annotations_contour])
     print("{} patients with BB annotations, who have annotations that intersect contour".format(len(patients_contour_ids)))
 
@@ -112,11 +114,13 @@ def segmentation_pos_stat(annotations_file_path, segmentation_path):
 
     segm_patients = get_patients(segmentation_path)
     segm_patients_ids = [patient.id for patient in segm_patients]
-
+    
     patients_slices = {}
     with_paramedian_nums = []
     without_paramedian_nums = []
     total_slices = 0
+    paramedian_slices = 0
+    midline_slices = 0
     for patient in segm_patients:
         total_slices += len(patient.cinemri_slices)
         patients_slices[patient.id] = len(patient.cinemri_slices)
@@ -124,8 +128,23 @@ def segmentation_pos_stat(annotations_file_path, segmentation_path):
             with_paramedian_nums.append(len(patient.cinemri_slices))
         else:
             without_paramedian_nums.append(len(patient.cinemri_slices))
+        
+        for slice in patient.cinemri_slices:
+            slice_image = sitk.ReadImage(str(slice.build_path(Path(ARCHIVE_PATH) / IMAGES_FOLDER)))
+
+            description = slice_image.GetMetaData("SeriesDescription")
+            description_chunks = description.split("_")
+            description_chunks = [chunk.strip() for chunk in description_chunks]
+            position = CineMRISlicePos(description_chunks[5])
+
+            if position == CineMRISlicePos.middle:
+                midline_slices += 1
+            else:
+                paramedian_slices += 1
 
     print("{} segmented slices in total".format(total_slices))
+    print("{} segmented midline slices in total".format(midline_slices))
+    print("{} segmented paramedian slices in total".format(paramedian_slices))
 
     # Min, max, mean number of slices for those with and without paramedian slices
     print("Segmentation statistics for those with paramedian slices")
@@ -166,16 +185,9 @@ def segmentation_pos_stat(annotations_file_path, segmentation_path):
     print(annotation_slice_num_more_than_one)
 
 
-def full_ids_to_file(full_ids, output_file_path):
-    
-    with open(output_file_path, "w") as f:
-        for full_id in full_ids:
-            f.write(full_id + "\n")
-
-
 # Extract full ids of slices with BB annotations that have adhesions intersecting contour
 def bb_annotations_to_full_ids_file(bb_annotations_path, output_file_path, adhesion_types=[AdhesionType.anteriorWall,
-                                                                                           AdhesionType.abdominalCavityContour]):
+                                                                                           AdhesionType.pelvis]):
 
     annotations = load_annotations(bb_annotations_path,
                                    adhesion_types=adhesion_types)
@@ -274,7 +286,7 @@ def load_patients_and_studies(report_path, negative=False, ids_to_exclude=[]):
 def get_suitable_patient_subset(report_path, patients_metadata_path, ids_to_exclude, suitability_function, negative=True, full_ids_file_path=None):
 
     # Subset of the report data for the specified category of patients
-    patients_and_studies = load_patients_and_studies(report_path, negative=negative, ids_to_exclude=ids_to_exclude)
+    patients_and_studies = load_patients_and_studies(report_path, negative=negative)
     patient_ids = patients_and_studies.keys()
     # Get full set of patients with all metadata
     patients = patients_from_metadata(patients_metadata_path)
@@ -284,9 +296,11 @@ def get_suitable_patient_subset(report_path, patients_metadata_path, ids_to_excl
     patients_subset = []
     all_suitable_slices = []
 
+    studies = []
     for patient in patients:
         # Patient with only suitable studies and slices
         patient_filtered = Patient(patient.id, patient.age, patient.sex)
+        studies.extend(patient.studies)
         # Those studies which have at least one suitable slice
         for study in patient.studies:
             if study.id in patients_and_studies[patient.id]:
@@ -342,6 +356,7 @@ def negative_patients_split(patients, split_file=None, train_file=None, test_fil
 
     # Add 46 more patients to the training set
     patients_train.extend(patients[:46])
+
     # Split training into with and without segmentation
     np.random.shuffle(patients_train)
     # Take first 10 as with segmentation
@@ -363,6 +378,10 @@ def negative_patients_split(patients, split_file=None, train_file=None, test_fil
     if control_file is not None:
         control_slices_fill_ids = slices_full_ids_from_patients(patients_control)
         full_ids_to_file(control_slices_fill_ids, control_file)
+
+    slices = []
+    for patient in patients_control:
+        slices.extend(patient.cinemri_slices)
 
     train_segm_ids = [patient.id for patient in patients_train_segm]
     train_no_segm_ids = [patient.id for patient in patients_train_no_segm]
@@ -566,10 +585,10 @@ def detection_folds(patient_split, negative_split, folds_num=5, output_file=None
     neg_patients_no_segm = get_negative_patient_ids(NegativePatientTypes.train_no_segm, negative_split)
 
     pos_patients = get_patient_ids(PatientTypes.train_positive, patient_split)
-    pos_patients_segm = list(set(pos_patients).intersection(PARAMEDIAN_SEGMENTATION_IDS_POS))
-    pos_patients_no_segm = list(set(pos_patients).difference(pos_patients_segm))
+    pos_patients_paramedian_segm = list(set(pos_patients).intersection(PARAMEDIAN_SEGMENTATION_IDS_POS))
+    pos_patients_paramedian_no_segm = list(set(pos_patients).difference(pos_patients_paramedian_segm))
 
-    folds = kfold_by_group([neg_patients_segm, neg_patients_no_segm, pos_patients_segm, pos_patients_no_segm],
+    folds = kfold_by_group([neg_patients_segm, neg_patients_no_segm, pos_patients_paramedian_segm, pos_patients_paramedian_no_segm],
                            [False, False, False, True],
                            folds_num=folds_num)
 
@@ -583,7 +602,7 @@ def detection_folds(patient_split, negative_split, folds_num=5, output_file=None
 def segmentation_folds(detection_folds_file, segm_path, patients_split, output_file):
     detection_folds = load_folds(detection_folds_file)
     train_patients = get_patient_ids(PatientTypes.train, patients_split)
-    segm_patients_ids = get_segm_patients_ids(segm_path)
+    segm_patients_ids = get_patients_ids_at_path(segm_path)
 
     additional_segm_ids = list(set(segm_patients_ids).difference(train_patients))
     additional_folds = kfold_by_group([additional_segm_ids], [False], len(detection_folds))
@@ -630,7 +649,7 @@ if __name__ == '__main__':
     np.random.seed(99)
     random.seed(99)
 
-    archive_path = ARCHIVE_PATH
+    archive_path = Path(ARCHIVE_PATH)
     detection_path = Path(DETECTION_PATH)
     # Folders
     images_path = archive_path / IMAGES_FOLDER
@@ -662,14 +681,16 @@ if __name__ == '__main__':
     # and negative studies
 
     # BB annotations statistics
-    # positive_stat(annotation_expanded_path, patients_metadata_old_file_path, mapping_path)
-    # segmentation_pos_stat(annotation_expanded_path, segmentation_path)
+    #positive_stat(annotation_expanded_path, patients_metadata_file_path)
+    segmentation_pos_stat(annotation_expanded_path, segmentation_path)
 
     # BB annotations with suitable slices to file of full ids of slices (58 slices, 50 patients) 
     # bb_annotations_to_full_ids_file(annotation_expanded_path, bb_annotations_full_ids_file)
+    negative_split, negative_split_file = prepare_negative_patients(report_path, patients_metadata_file_path,
+                                                                    metadata_path)
     
     # Negative patients with suitable slices to file of full ids of slices
-    """
+
     negative_split, negative_split_file = prepare_negative_patients(report_path, patients_metadata_file_path, metadata_path)
 
     # Sample test subset
@@ -683,13 +704,22 @@ if __name__ == '__main__':
     
     # Segmentation folds
     sfolds = segmentation_folds(detection_kfold_file, segmentation_path, patient_split, segmentation_kfold_file)
-    """
 
+
+    """
     # Folds by slices for detection
     detection_train_patients = patients_from_full_ids_file(detection_train_full_ids)
     folds_slices(detection_kfold_file, detection_train_patients, detection_slices_kfold_file)
 
     # Folds by slices for segmentation
     segmentation_train_patients = get_patients(segmentation_path)
+    folds_slices(segmentation_kfold_file, segmentation_train_patients, segmentation_slices_kfold_file)# Folds by slices for detection
+    detection_train_patients = patients_from_full_ids_file(detection_train_full_ids)
+    folds_slices(detection_kfold_file, detection_train_patients, detection_slices_kfold_file)
+
+    # Folds by slices for segmentation
+    segmentation_train_patients = get_patients(segmentation_path)
     folds_slices(segmentation_kfold_file, segmentation_train_patients, segmentation_slices_kfold_file)
+    """
+
     pass

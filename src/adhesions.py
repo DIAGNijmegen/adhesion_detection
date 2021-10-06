@@ -7,16 +7,17 @@ import cv2
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
-from config import IMAGES_FOLDER, METADATA_FOLDER, INSPEXP_FILE_NAME, OLD_REPORT_FILE_NAME, \
-    BB_ANNOTATIONS_FILE, BB_ANNOTATIONS_EXPANDED_FILE, ANNOTATIONS_TYPE_FILE
+from config import *
 from cinemri.config import ARCHIVE_PATH
-from cinemri.contour import AbdominalContourPart, get_contour, get_abdominal_contour_top
+from cinemri.contour import AbdominalContourPart, get_contour, Contour
 from cinemri.definitions import CineMRISlice
 from visceral_slide import VisceralSlideDetector
 from cinemri.utils import get_patients
 from utils import interval_overlap, load_visceral_slides, get_inspexp_frames
 from visceral_slide_pipeline import load_visceral_slide
-from contour import get_abdominal_wall_coord, get_adhesions_prior_coords
+from contour import get_adhesions_prior_coords
+from collections import Counter
+from utils import patients_from_full_ids, load_visceral_slides
 
 # Folder to save visualized annotations
 ANNOTATIONS_VIS_FOLDER = "vis_annotations"
@@ -31,7 +32,7 @@ class AnnotationType(Enum):
 class AdhesionType(Enum):
     unset = 0
     anteriorWall = 1
-    abdominalCavityContour = 2
+    pelvis = 2
     inside = 3
 
 @unique
@@ -103,6 +104,12 @@ class Adhesion:
             self.origin_y = max(center[1] - round(min_height / 2), 0)
             self.height = min_height
 
+    def adjust_center(self, new_center):
+        delta_x = self.center[0] - new_center[0]
+        delta_y = self.center[1] - new_center[1]
+
+        self.origin_x -= delta_x
+        self.origin_y -= delta_y
 
     def contains_point(self, x, y, tolerance=0):
 
@@ -113,8 +120,8 @@ class Adhesion:
         x, y : a point coordinates by x and y axes
         tolerance: extra margin around the bounding box to register a hit
         """
-        x_min, x_max = self.origin_x - tolerance, self.origin_x + self.width + tolerance
-        y_min, y_max = self.origin_y - tolerance, self.origin_y + self.height + tolerance
+        x_min, x_max = self.origin_x - tolerance, self.max_x + tolerance
+        y_min, y_max = self.origin_y - tolerance, self.max_y + tolerance
 
         return x_min <= x <= x_max and y_min <= y <= y_max
 
@@ -139,6 +146,11 @@ class Adhesion:
                 break
 
         return intersects
+
+    def contour_point_closes_to_center(self, contour_coords):
+        diff = (contour_coords[:, 0] - self.center[0])**2 + (contour_coords[:, 1] - self.center[1])**2
+        closest_point_index = np.argmin(diff)
+        return contour_coords[closest_point_index]
 
     def iou(self, adhesion):
         """
@@ -246,8 +258,9 @@ class AdhesionAnnotation:
 
 # TODO: maybe change to also return slices for which adhesions were not found
 def load_annotations(annotations_path,
+                     as_dict=False,
                      adhesion_types=[AdhesionType.anteriorWall,
-                                     AdhesionType.abdominalCavityContour,
+                                     AdhesionType.pelvis,
                                      AdhesionType.inside]):
     """
     Loads adhesion annotations from the metadata file with annotations. Handles two formats of annotations:
@@ -270,7 +283,7 @@ def load_annotations(annotations_path,
     with open(annotations_path) as annotations_file:
         annotations_dict = json.load(annotations_file)
 
-    annotations = []
+    annotations = {} if as_dict else []
     for patient_id, studies_dict in annotations_dict.items():
         for study_id, slices_dict in studies_dict.items():
             for slice_id, bounding_box_annotations in slices_dict.items():
@@ -289,28 +302,17 @@ def load_annotations(annotations_path,
 
                 if len(bounding_boxes) > 0:
                     annotation = AdhesionAnnotation(patient_id, study_id, slice_id, bounding_boxes, types)
-                    annotations.append(annotation)
+                    if as_dict:
+                        annotations[annotation.full_id] = annotation
+                    else:
+                        annotations.append(annotation)
 
     return annotations
 
 
-# TODO: document
-def load_annotations_dict(annotations_path,
-                          adhesion_types=[AdhesionType.anteriorWall,
-                                          AdhesionType.abdominalCavityContour,
-                                          AdhesionType.inside]):
-
-    annotations = load_annotations(annotations_path, adhesion_types)
-    annotations_dict = {}
-    for annotation in annotations:
-        annotations_dict[annotation.full_id] = annotation
-
-    return annotations_dict
-
-
 def load_annotated_slices(annotations_path,
                           adhesion_types=[AdhesionType.anteriorWall,
-                                          AdhesionType.abdominalCavityContour,
+                                          AdhesionType.pelvis,
                                           AdhesionType.inside]):
     """
     Loads annotated slices from the metadata file with annotations. Handles two formats of annotations:
@@ -538,19 +540,19 @@ def extract_adhesions_metadata(annotations_path, full_segmentation_path, metadat
                     intersect_contour = False
                     # For all frames in the slice check if any intersects with adhesion annotation
                     for mask in slice_mask:
-                        x, y, _, _ = get_contour(mask)
-                        x_anterior, y_anterior = get_abdominal_wall_coord(x, y)
+                        contour = Contour.from_mask(mask)
+                        x_anterior, y_anterior = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
                         intersect_anterior_wall = adhesion.intersects_contour(x_anterior, y_anterior)
                         if intersect_anterior_wall:
                             intersect_contour = True
                             break
 
-                        intersect_contour |= adhesion.intersects_contour(x, y)
+                        intersect_contour |= adhesion.intersects_contour(contour.x, contour.y)
 
                     if intersect_anterior_wall:
                         adhesion_type = AdhesionType.anteriorWall
                     elif intersect_contour:
-                        adhesion_type = AdhesionType.abdominalCavityContour
+                        adhesion_type = AdhesionType.pelvis
                     else:
                         adhesion_type = AdhesionType.inside
 
@@ -587,7 +589,7 @@ def show_annotation(annotation, images_path):
         plt.show()
 
 
-def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, normalize=True, title=None, file_name=None):
+def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, prior=False, normalize=False, title=None, file_name=None):
     """
     Plots absolute value of visceral slide normalized by the absolute maximum together with adhesions annotations
     over the frame of a cine-MRI slice for which visceral slide was computed and saves to a file
@@ -607,11 +609,23 @@ def show_vs_with_annotation(x, y, visceral_slide, frame, annotation=None, normal
     save_file_name : str, optional
        A file name to save the plot
     """
-    slide_vis = visceral_slide / np.max(visceral_slide) if normalize else visceral_slide
+
+    if prior:
+        x_prior, y_prior = get_adhesions_prior_coords(x, y)
+
+        coords = np.column_stack((x, y)).tolist()
+        prior_coords = np.column_stack((x_prior, y_prior)).tolist()
+        prior_inds = [ind for ind, coord in enumerate(coords) if coord in prior_coords]
+
+        x = x[prior_inds]
+        y = y[prior_inds]
+        visceral_slide = visceral_slide[prior_inds]
+
+    visceral_slide = visceral_slide / np.max(visceral_slide) if normalize else visceral_slide
 
     plt.figure()
     plt.imshow(frame, cmap="gray")
-    plt.scatter(x, y, s=5, c=slide_vis, cmap="jet")
+    plt.scatter(x, y, s=5, c=visceral_slide, cmap="jet")
     ax = plt.gca()
     if annotation:
         for adhesion in annotation.adhesions:
@@ -697,7 +711,7 @@ def save_annotated_gifs(annotations, image_path, target_path):
         slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
 
         vis_path = annotation.build_path(target_path, extension="")
-        vis_path.mkdir(exist_ok=True)
+        vis_path.mkdir(exist_ok=True, parents=True)
 
         # Make a separate folder for .png files
         png_path = vis_path / "pngs"
@@ -820,6 +834,41 @@ def vis_annotation_and_computed_vs(annotations_path,
         annotated_visc_slide_path = output_path / (annotation.full_id + ".png") if save else None
         show_vs_with_annotation(x, y, visceral_slide, insp_frame, annotation, file_name=annotated_visc_slide_path)
 
+
+def vis_computed_cum_vs(visceral_slides,
+                        images_path,
+                        output_path,
+                        inspexp_data=None,
+                        save=True):
+    """
+    Computes and visualise visceral slide for all annotated slices and saves as .png images is save flag is True
+    Parameters
+    ----------
+    annotations_path, images_path, masks_path, inspexp_file_path : Path
+        Paths to annotations, images, masks and inspiration/expiration files
+    output_path : Path
+        A Path to save visualised annotation and visceral slide over a frame for which visceral slide is computed
+    save : bool
+        A boolean flag indicating whether to save or show visualisation
+    """
+    output_path.mkdir(exist_ok=True, parents=True)
+
+    # load slices with visceral slide and annotations
+    for vs in visceral_slides:
+
+        if inspexp_data is None:
+            # Assume it is cumulative VS and take the one before the last one frame
+            slice_path = vs.build_path(images_path)
+            slice = sitk.GetArrayFromImage(sitk.ReadImage(str(slice_path)))
+            frame = slice[-2]
+        else:
+            slice = CineMRISlice(vs.slice_id, vs.patient_id, vs.study_id)
+            frame, _ = get_inspexp_frames(slice, inspexp_data, images_path)
+
+        annotated_visc_slide_path = output_path / (vs.full_id + ".png") if save else None
+        show_vs_with_annotation(vs.x, vs.y, vs.values, frame, prior=True, file_name=annotated_visc_slide_path)
+
+
 # TODO: restore all method here
 # def vis_cumulative_vs_for_annotations():
 
@@ -829,7 +878,7 @@ def vis_annotation_on_cumulative_vs(visceral_slide_path,
                                     annotations_path,
                                     output_path,
                                     adhesion_types=[AdhesionType.anteriorWall,
-                                                    AdhesionType.abdominalCavityContour,
+                                                    AdhesionType.pelvis,
                                                     AdhesionType.inside],
                                     save=True):
     """
@@ -848,7 +897,7 @@ def vis_annotation_on_cumulative_vs(visceral_slide_path,
     # load visceral slide
     visceral_slides = load_visceral_slides(visceral_slide_path)
     # load annotations
-    annotations_dict = load_annotations_dict(annotations_path, adhesion_types)
+    annotations_dict = load_annotations(annotations_path, True, adhesion_types)
 
     # For each vs find annotation is exists and plot
     for visceral_slide in visceral_slides:
@@ -862,7 +911,7 @@ def vis_annotation_on_cumulative_vs(visceral_slide_path,
         # Visualise
         annotated_visc_slide_path = output_path / (visceral_slide.full_id + ".png") if save else None
         show_vs_with_annotation(visceral_slide.x, visceral_slide.y, visceral_slide.values,
-                                frame, annotation, normalize=False, file_name=annotated_visc_slide_path)
+                                frame, annotation, file_name=annotated_visc_slide_path)
 
 
 def annotations_statistics(expanded_annotations_path):
@@ -891,7 +940,7 @@ def annotations_statistics(expanded_annotations_path):
         for adhesion in annotation.adhesions:
             if adhesion.type == AdhesionType.anteriorWall:
                 annotations_to_front_wall += 1
-            elif adhesion.type == AdhesionType.abdominalCavityContour:
+            elif adhesion.type == AdhesionType.pelvis:
                 annotations_to_contour += 1
             else:
                 annotations_inside += 1
@@ -972,13 +1021,6 @@ def verify_abdominal_wall(x, y, frame, slice_id, target_path, type=AbdominalCont
 
 
     """
-        if type == AbdominalContourPart.top:
-        x_abdominal_wall, y_abdominal_wall = get_abdominal_contour_top(x, y)
-    else:
-        x_abdominal_wall, y_abdominal_wall = get_abdominal_wall_coord(x, y, type)
-    """
-
-    """
     ax = fig.add_subplot(122)
     plt.imshow(frame, cmap="gray")
     plt.axis('off')
@@ -991,25 +1033,18 @@ def verify_abdominal_wall(x, y, frame, slice_id, target_path, type=AbdominalCont
 
 
 def test():
-    archive_path = ARCHIVE_PATH
+    archive_path = Path(ARCHIVE_PATH)
+    detection_path = Path(DETECTION_PATH)
+    images_path = archive_path / IMAGES_FOLDER
+    images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
     metadata_path = archive_path / METADATA_FOLDER
     visceral_slide_path = Path("../../data/visceral_slide_all/visceral_slide")
-    output_path = Path("../../data/visualization/visceral_slide/cumulative_vs_contour_reg_det_full_df")
     full_segmentation_path = archive_path / FULL_SEGMENTATION_FOLDER / "merged_segmentation"
-    bb_annotation_path = metadata_path / BB_ANNOTATIONS_FILE
-    images_path = archive_path / IMAGES_FOLDER
-    detection_path = Path("../../data/cinemri_mha/detection_new") / IMAGES_FOLDER
-    ie_file = metadata_path / INSPEXP_FILE_NAME
-    bb_expanded_annotation_path = metadata_path / BB_ANNOTATIONS_EXPANDED_FILE
+    full_segmentation_path = Path(DETECTION_PATH) / "test_segmentation"
+    bb_annotation_path = metadata_path / "annotations_test.json"
 
-    cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
-    vis_annotation_on_cumulative_vs(cumulative_vs_path, detection_path, bb_expanded_annotation_path, output_path, save=True)
-
-    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path, Path("posterior"), AbdominalContourPart.posterior_wall)
-    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
-     #                          Path("anterior"), AbdominalContourPart.anterior_wall)
-    #test_cavity_part_detection(bb_expanded_annotation_path, images_path, ie_file, visceral_slide_path,
-     #                          Path("prior"), AbdominalContourPart.posterior_wall)
+    bb_expanded_annotation_path = detection_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
+    bb_expanded_annotation_path = detection_path / METADATA_FOLDER / "annotations_test_expanded.json"
 
 
 if __name__ == '__main__':

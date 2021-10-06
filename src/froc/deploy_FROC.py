@@ -296,7 +296,7 @@ def y_to_FROC(y_list_all, y_list_pnp,  total_patients,    total_normal_patients,
             st          = [thresholds[i] for i in rng]
             thresholds  = [t for t in thresholds if t > 0.8 or t in st or t in low_thresholds]
     elif (threshold_mode=='default'):
-        thresholds      = np.linspace(0.0,1.0,num_thresholds).tolist()
+        thresholds      = np.linspace(0.0, 1.0, num_thresholds).tolist()
     elif (threshold_mode=='single'):
         thresholds      = [single_threshold]
 
