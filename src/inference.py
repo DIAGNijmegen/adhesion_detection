@@ -18,11 +18,11 @@ from postprocessing import fill_in_holes
 # nnunet/input - nnU-Net input
 # nnunet/output - nnU-Net prediction
 
-data_dir = Path("data")
+data_dir = Path("/home/user/data")
 
-nnunet_input_dir = Path("nnunet/input")
-nnunet_output_dir = Path("nnunet/output")
-nnunet_model_dir = Path("nnunet/results")
+nnunet_input_dir = Path("/home/user/nnunet/input")
+nnunet_output_dir = Path("/home/user/nnunet/output")
+nnunet_model_dir = Path("/home/user/nnunet/results")
 
 SLICE_FILE = "image.mha"
 SLICE_ID = "123"

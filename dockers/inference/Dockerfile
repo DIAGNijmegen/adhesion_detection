@@ -14,9 +14,9 @@ COPY image.mha /home/user/data
 
 RUN mkdir -p /home/user/nnunet
 
-RUN mkdir -p /home/user/nnunet/model
+RUN mkdir -p /home/user/nnunet/results
 
-COPY nnunet/results /home/user/nnunet/model
+COPY nnunet/results /home/user/nnunet/results
 
 
 # Add cinemri and cinemri-registration libraries to python path
