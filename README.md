@@ -9,7 +9,7 @@ This project aims to improve outcomes in the 30,000 patients per year in the Net
 
 Currently, accurate diagnosis of adhesions requires invasive tools such as diagnostic laparoscopy owing to a lack of effective noninvasive tests. These methods are controversial because they can lead to the formation of new adhesions. This is especially undesirable for the patients whose complaints are not due to adhesions.  Non-invasively adhesions can be diagnosed with either ultrasound or cine-MRI. Cine-MRI is more powerful than ultrasound because it can detect adhesions in the entire abdomen, whilst ultrasound can detect only adhesions attached to the front abdominal wall due to its limited depth penetration. Cine-MRI is a type of MRI in which a set of consecutive images of the area of interest is acquired at a fixed time interval. The captured images can be merged into a video in which the movements of a certain tissue over time are visible. This imaging modality can be used to visualise the abdominal motion during respiration and by interpreting the recorded motion patterns, radiologists can diagnose adhesions. The gif below shows the data and annotations available in the project. Adhesions are annotated with bounding boxes by an experienced radiologist.  
 
-![Adhesion example]({{ IMGURL }}/images/ai4adhesion-example.gif)
+![Adhesion example](images/ai4adhesion-example.gif?raw=true)
 
 Cine-MRI is used in the Radboudumc to make treatment decisions for patients with chronic abdominal pain. It helps doctors decide whether a patient should be treated conservatively with medication, or more progressively with surgery. Cine MRI is not widely used in other hospitals yet, because radiological reading is time-consuming and expertise-dependent.
 
