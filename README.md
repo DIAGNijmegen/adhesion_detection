@@ -85,10 +85,6 @@ The algorithm is published on the Grand Challenge platform.
 
 <a href="https://grand-challenge.org/algorithms/visceral-slide-on-abdominal-cine-mri/" class="btn btn-primary btn-lg my-3">Try out the algorithm</a>
 
-The master's thesis that describes the metod and results in details can be found [here](https://github.com/DIAGNijmegen/adhesion_detection/blob/master/Masters%20Thesis.pdf).
-
-The source code of the project including the complete method can be found in this [GitHub repository](https://github.com/DIAGNijmegen/adhesion_detection). 
-
 [1] Randall, David. "Towards a non-invasive diagnostic aid for abdominal adhesions using dynamic MRI and image processing." PhD diss., University of Sheffield, 2017.
 
 [2] Isensee, F., Jaeger, P.F., Kohl, S.A., Petersen, J. and Maier-Hein, K.H., 2021. nnU-Net: a self-configuring method for deep learning-based biomedical image segmentation. Nature Methods, 18(2), pp.203-211.
