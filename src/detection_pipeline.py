@@ -5,23 +5,24 @@ import json
 import matplotlib.pyplot as plt
 from matplotlib.patches import Rectangle
 from pathlib import Path
-from adhesions import AdhesionType, Adhesion, load_annotations, vis_computed_cum_vs
-from config import *
+from .adhesions import AdhesionType, Adhesion, load_annotations, vis_computed_cum_vs
+from .config import *
 from cinemri.definitions import CineMRISlice
-from utils import load_visceral_slides, binning_intervals, get_inspexp_frames
-from stat import bb_size_stat, get_vs_range
-from contour import get_connected_regions, filter_out_prior_vs_subset
-from froc.deploy_FROC import y_to_FROC
+from .utils import load_visceral_slides, binning_intervals, get_inspexp_frames
+from .stat import bb_size_stat, get_vs_range
+from .contour import get_connected_regions, filter_out_prior_vs_subset
+from .froc.deploy_FROC import y_to_FROC
 from scipy import stats
 from sklearn.metrics import roc_curve, auc
-from vs_definitions import VSExpectationNormType, Region, VSTransform
+from .vs_definitions import VSExpectationNormType, Region, VSTransform
 from enum import Enum, unique
 from sklearn.metrics import accuracy_score
 import statsmodels.api as sm
 import matplotlib.cm as cm
-from vis_visceral_slide import plot_vs_distribution
+from .vis_visceral_slide import plot_vs_distribution
 
 PREDICTION_COLOR = (0, 0.8, 0.2)
+
 
 @unique
 class ConfidenceType(Enum):
@@ -39,7 +40,10 @@ class EvaluationMetrics(Enum):
 
 
 def get_predicted_bb_ranges(bb_mean_size, bb_size_std, std_coef=1.96):
-    bb_size_max = bb_mean_size[0] + std_coef * bb_size_std[0], bb_mean_size[1] + std_coef * bb_size_std[1]
+    bb_size_max = (
+        bb_mean_size[0] + std_coef * bb_size_std[0],
+        bb_mean_size[1] + std_coef * bb_size_std[1],
+    )
     return bb_mean_size, bb_size_max
 
 
@@ -47,7 +51,7 @@ def bb_from_points(region, min_size):
     """
     Calculates bounding box based on the coordinates of the points in the region
     and mean annotations width and height
-    
+
     Parameters
     ----------
     region : list of list
@@ -64,8 +68,7 @@ def bb_from_points(region, min_size):
 
     # axis=0: x, axis=1: y
     def compute_origin_and_len(region, min_size, axis=0):
-        """Computes the origin and bb lenght by a give axis and set the lenght to the
-        """
+        """Computes the origin and bb lenght by a give axis and set the lenght to the"""
         region_centre = region[round(len(region) / 2) - 1]
 
         axis_min = np.min([coord[axis] for coord in region])
@@ -91,8 +94,12 @@ def bb_adjusted_region(region, bounding_box):
     and returns the region and its start and end indices
     """
 
-    x_inside_bb = (bounding_box.origin_x <= region[:, 0]) & (region[:, 0] <= bounding_box.max_x)
-    y_inside_bb = (bounding_box.origin_y <= region[:, 1]) & (region[:, 1] <= bounding_box.max_y)
+    x_inside_bb = (bounding_box.origin_x <= region[:, 0]) & (
+        region[:, 0] <= bounding_box.max_x
+    )
+    y_inside_bb = (bounding_box.origin_y <= region[:, 1]) & (
+        region[:, 1] <= bounding_box.max_y
+    )
     inside_bb = x_inside_bb & y_inside_bb
     adjusted_region = region[inside_bb]
 
@@ -135,15 +142,17 @@ def find_min_vs(regions):
     return region_of_prediction, min_region_ind, vs_value_min_ind
 
 
-def adhesions_with_region_growing(regions,
-                                  bb_size_min,
-                                  bb_size_max,
-                                  vs_range,
-                                  conf_type=ConfidenceType.mean,
-                                  region_growing_ind=None,
-                                  min_region_len=5,
-                                  lr=None,
-                                  decrease_tolerance=np.inf):
+def adhesions_with_region_growing(
+    regions,
+    bb_size_min,
+    bb_size_max,
+    vs_range,
+    conf_type=ConfidenceType.mean,
+    region_growing_ind=None,
+    min_region_len=5,
+    lr=None,
+    decrease_tolerance=np.inf,
+):
     """
     Parameters
     ----------
@@ -168,10 +177,17 @@ def adhesions_with_region_growing(regions,
         region_of_prediction, min_region_ind, vs_value_min_ind = find_min_vs(regions)
         min_slide_value = region_of_prediction.values[vs_value_min_ind]
         if region_growing_ind is None:
-            max_region_slide_value = np.sqrt(min_slide_value) if min_slide_value < 1 else min_slide_value**2
+            max_region_slide_value = (
+                np.sqrt(min_slide_value)
+                if min_slide_value < 1
+                else min_slide_value ** 2
+            )
         else:
-            max_region_slide_value = min_slide_value * region_growing_ind if min_slide_value > 0 \
+            max_region_slide_value = (
+                min_slide_value * region_growing_ind
+                if min_slide_value > 0
                 else min_slide_value / region_growing_ind
+            )
 
         # Looking for the regions boundaries
         start_ind = end_ind = vs_value_min_ind
@@ -194,11 +210,15 @@ def adhesions_with_region_growing(regions,
 
                 if start_value < max_region_slide_value:
                     start_ind = new_start_ind
-                    prediction_region.append_point(region_of_prediction.points[start_ind])
+                    prediction_region.append_point(
+                        region_of_prediction.points[start_ind]
+                    )
 
-                    start_ind_found = prediction_region.exceeded_size(bb_size_max) or \
-                                      start_decrease_num == decrease_tolerance or \
-                                      start_ind == 0
+                    start_ind_found = (
+                        prediction_region.exceeded_size(bb_size_max)
+                        or start_decrease_num == decrease_tolerance
+                        or start_ind == 0
+                    )
                 else:
                     start_ind_found = True
 
@@ -216,9 +236,11 @@ def adhesions_with_region_growing(regions,
                     end_ind = new_end_ind
                     prediction_region.append_point(region_of_prediction.points[end_ind])
 
-                    end_ind_found = prediction_region.exceeded_size(bb_size_max) or \
-                                    start_decrease_num == decrease_tolerance or \
-                                    end_ind == (len(region_of_prediction.points) - 1)
+                    end_ind_found = (
+                        prediction_region.exceeded_size(bb_size_max)
+                        or start_decrease_num == decrease_tolerance
+                        or end_ind == (len(region_of_prediction.points) - 1)
+                    )
                 else:
                     end_ind_found = True
 
@@ -234,13 +256,21 @@ def adhesions_with_region_growing(regions,
 
             # If the predicted bounding box is too small, enlarge it.
             # This way we want to prevent the method from outputting small bounding boxes
-            adjusted_region, start_ind, end_ind = bb_adjusted_region(region_of_prediction.points, bounding_box)
+            adjusted_region, start_ind, end_ind = bb_adjusted_region(
+                region_of_prediction.points, bounding_box
+            )
             if lr is not None:
                 negative_bb_features = extract_features(bounding_box, adjusted_region)
-                confidence = lr.predict(np.array(negative_bb_features).reshape(1, -1))[0]
+                confidence = lr.predict(np.array(negative_bb_features).reshape(1, -1))[
+                    0
+                ]
             else:
                 # Take mean region vs as confidence
-                confidence = np.mean(adjusted_region[:, 2]) if conf_type == ConfidenceType.mean else min_slide_value
+                confidence = (
+                    np.mean(adjusted_region[:, 2])
+                    if conf_type == ConfidenceType.mean
+                    else min_slide_value
+                )
                 confidence = (vs_range[1] - confidence) / (vs_range[1] - vs_range[0])
             bounding_boxes.append((bounding_box, confidence))
 
@@ -252,22 +282,26 @@ def adhesions_with_region_growing(regions,
         if region_before_bb.exceeded_size(bb_size_min):
             regions.append(region_before_bb)
 
-        region_after_bb = Region.from_points(region_of_prediction.points[(end_ind+1):])
+        region_after_bb = Region.from_points(
+            region_of_prediction.points[(end_ind + 1) :]
+        )
         if region_after_bb.exceeded_size(bb_size_min):
             regions.append(region_after_bb)
 
     return bounding_boxes
 
 
-def bb_with_threshold(vs,
-                      bb_size_min,
-                      bb_size_max,
-                      vs_range,
-                      pred_func,
-                      conf_type=ConfidenceType.mean,
-                      region_growing_ind=None,
-                      min_region_len=5,
-                      lr=None):
+def bb_with_threshold(
+    vs,
+    bb_size_min,
+    bb_size_max,
+    vs_range,
+    pred_func=adhesions_with_region_growing,
+    conf_type=ConfidenceType.mean,
+    region_growing_ind=None,
+    min_region_len=5,
+    lr=None,
+):
     """
     Predicts adhesions with bounding boxes based on the values of the normalized visceral slide and the
     specified threshold level
@@ -294,7 +328,9 @@ def bb_with_threshold(vs,
     contour_subset = filter_out_prior_vs_subset(x, y, slide_value)
 
     # Remove the outliers
-    contour_subset = np.array([vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]])
+    contour_subset = np.array(
+        [vs for vs in contour_subset if vs_range[0] <= vs[2] <= vs_range[1]]
+    )
     # If no points are left, the VS values is too high in the regions where adhesions can be present
     if len(contour_subset) == 0:
         return []
@@ -303,17 +339,28 @@ def bb_with_threshold(vs,
     suitable_regions = get_connected_regions(contour_subset)
     # Convert to array of Region instances
     suitable_regions = [Region.from_points(region) for region in suitable_regions]
-    bounding_boxes = pred_func(suitable_regions, bb_size_min, bb_size_max, vs_range, conf_type, region_growing_ind, min_region_len, lr)
+    bounding_boxes = pred_func(
+        suitable_regions,
+        bb_size_min,
+        bb_size_max,
+        vs_range,
+        conf_type,
+        region_growing_ind,
+        min_region_len,
+        lr,
+    )
     return bounding_boxes
 
 
-def predict(visceral_slides,
-            annotations_dict,
-            negative_vs_needed,
-            conf_type=ConfidenceType.mean,
-            region_growing_ind=None,
-            min_region_len=5,
-            lr=None):
+def predict(
+    visceral_slides,
+    annotations_dict,
+    negative_vs_needed,
+    conf_type=ConfidenceType.mean,
+    region_growing_ind=None,
+    min_region_len=5,
+    lr=None,
+):
     """
     Performs prediction by visceral slide threshold and evaluates it
 
@@ -340,8 +387,14 @@ def predict(visceral_slides,
         if vs.full_id in annotations_dict:
             annotation = annotations_dict[vs.full_id]
             for adhesion in annotation.adhesions:
-                if not adhesion.intersects_contour(vs.x, vs.y) and annotation.full_id != "CM0020_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311131653190024186.0.0.0":
-                    new_center = adhesion.contour_point_closes_to_center(np.column_stack((vs.x, vs.y)))
+                if (
+                    not adhesion.intersects_contour(vs.x, vs.y)
+                    and annotation.full_id
+                    != "CM0020_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311131653190024186.0.0.0"
+                ):
+                    new_center = adhesion.contour_point_closes_to_center(
+                        np.column_stack((vs.x, vs.y))
+                    )
                     adhesion.adjust_center(new_center)
 
     # vary threshold level
@@ -350,16 +403,18 @@ def predict(visceral_slides,
 
     predictions = {}
     for vs in visceral_slides:
-        #vs.zeros_fix()
-        prediction = bb_with_threshold(vs,
-                                       bb_size_min,
-                                       bb_size_max,
-                                       vs_range,
-                                       adhesions_with_region_growing,
-                                       conf_type,
-                                       region_growing_ind,
-                                       min_region_len,
-                                       lr)
+        # vs.zeros_fix()
+        prediction = bb_with_threshold(
+            vs,
+            bb_size_min,
+            bb_size_max,
+            vs_range,
+            adhesions_with_region_growing,
+            conf_type,
+            region_growing_ind,
+            min_region_len,
+            lr,
+        )
         predictions[vs.full_id] = prediction
 
     return predictions
@@ -382,13 +437,19 @@ def evaluate(predictions, annotations_dict, output_path, iou_threshold=0.01):
     output_path.mkdir(exist_ok=True, parents=True)
 
     tps, fps, fns = get_prediction_outcome(annotations_dict, predictions, iou_threshold)
-    negative_slices_ids = [full_id for full_id in predictions.keys() if full_id not in annotations_dict]
-    outcomes, outcomes_negative = get_confidence_outcome(tps, fps, fns, negative_slices_ids)
+    negative_slices_ids = [
+        full_id for full_id in predictions.keys() if full_id not in annotations_dict
+    ]
+    outcomes, outcomes_negative = get_confidence_outcome(
+        tps, fps, fns, negative_slices_ids
+    )
 
     # FROC
     slices_num = len(predictions)
     negative_slices_num = len(negative_slices_ids)
-    fp_per_image, fp_per_negative_image, sensitivity, thresholds = y_to_FROC(outcomes, outcomes_negative, slices_num, negative_slices_num)
+    fp_per_image, fp_per_negative_image, sensitivity, thresholds = y_to_FROC(
+        outcomes, outcomes_negative, slices_num, negative_slices_num
+    )
     froc = fp_per_image, fp_per_negative_image, sensitivity
 
     # Precision/Recall
@@ -424,15 +485,25 @@ def evaluate(predictions, annotations_dict, output_path, iou_threshold=0.01):
 
 def save_evaluation_metrics(froc, pr_curves, ap, slice_roc, conf_stat, output_path):
     froc_dict = {"fp_all": froc[0], "fp_neg": froc[1], "sens": froc[2]}
-    pr_curves_dict = {"precision": pr_curves[0], "recall": pr_curves[1], "thresholds": pr_curves[2]}
+    pr_curves_dict = {
+        "precision": pr_curves[0],
+        "recall": pr_curves[1],
+        "thresholds": pr_curves[2],
+    }
     slice_roc_dict = {"fpr": slice_roc[0], "tpr": slice_roc[1], "auc": slice_roc[2]}
-    conf_dict = {"mean_tp": conf_stat[0], "mean_fp": conf_stat[1], "p_value": conf_stat[2]}
+    conf_dict = {
+        "mean_tp": conf_stat[0],
+        "mean_fp": conf_stat[1],
+        "p_value": conf_stat[2],
+    }
 
-    metrics_dict = {"froc": froc_dict,
-                    "pr_curves": pr_curves_dict,
-                    "ap": ap,
-                    "slice_roc": slice_roc_dict,
-                    "conf_stat": conf_dict}
+    metrics_dict = {
+        "froc": froc_dict,
+        "pr_curves": pr_curves_dict,
+        "ap": ap,
+        "slice_roc": slice_roc_dict,
+        "conf_stat": conf_dict,
+    }
 
     output_file = output_path / EVALUATION_METRICS_FILE
     with open(output_file, "wb") as f:
@@ -448,7 +519,11 @@ def load_evaluation_metrics(file_path):
         froc = froc_dict["fp_all"], froc_dict["fp_neg"], froc_dict["sens"]
 
         pr_curves_dict = metrics_dict["pr_curves"]
-        pr_curves = pr_curves_dict["precision"], pr_curves_dict["recall"], pr_curves_dict["thresholds"]
+        pr_curves = (
+            pr_curves_dict["precision"],
+            pr_curves_dict["recall"],
+            pr_curves_dict["thresholds"],
+        )
 
         slice_roc_dict = metrics_dict["slice_roc"]
         slice_roc = slice_roc_dict["fpr"], slice_roc_dict["tpr"], slice_roc_dict["auc"]
@@ -620,7 +695,7 @@ def compute_pr_curves(outcomes):
             y_pred_all_thresholded = np.zeros_like(y_pred_all)
             y_pred_all_thresholded[y_pred_all > th] = 1
             tp = np.sum(y_true_all * y_pred_all_thresholded)
-            fp = np.sum(y_pred_all_thresholded - y_true_all*y_pred_all_thresholded)
+            fp = np.sum(y_pred_all_thresholded - y_true_all * y_pred_all_thresholded)
 
             # Add the corresponding precision and recall values
             recall.append(tp / total_lesions)
@@ -628,7 +703,7 @@ def compute_pr_curves(outcomes):
             precision.append(curr_precision)
         else:
             # Extend precision and recall curves
-            if (len(recall) > 0):
+            if len(recall) > 0:
                 recall.append(recall[-1])
                 precision.append(precision[-1])
 
@@ -636,7 +711,7 @@ def compute_pr_curves(outcomes):
 
 
 def compute_ap(recall, precision):
-    """ Compute the average precision, given the recall and precision curves
+    """Compute the average precision, given the recall and precision curves
     Taken from https://github.com/ultralytics/yolov5/blob/master/utils/metrics.py
     # Arguments
         recall:    The recall curve (list)
@@ -646,8 +721,8 @@ def compute_ap(recall, precision):
     """
 
     # Append sentinel values to beginning and end
-    mrec = np.concatenate(([0.], recall, [recall[-1] + 0.01]))
-    mpre = np.concatenate(([1.], precision, [0.]))
+    mrec = np.concatenate(([0.0], recall, [recall[-1] + 0.01]))
+    mpre = np.concatenate(([1.0], precision, [0.0]))
 
     # Compute the precision envelope
     mpre = np.flip(np.maximum.accumulate(np.flip(mpre)))
@@ -667,23 +742,36 @@ def plot_ROCs(rocs_data, output_path=None, legends=None, colors=None):
     if legends is not None:
         if colors is not None:
             for roc_data, legend, color in zip(rocs_data, legends, colors):
-                plt.plot(roc_data[0], roc_data[1], lw=2, label='{}, AUC = {:.2f}'.format(legend, roc_data[2]), color=color)
+                plt.plot(
+                    roc_data[0],
+                    roc_data[1],
+                    lw=2,
+                    label="{}, AUC = {:.2f}".format(legend, roc_data[2]),
+                    color=color,
+                )
         else:
             for roc_data, legend in zip(rocs_data, legends):
-                plt.plot(roc_data[0], roc_data[1], lw=2, label='{}, AUC = {:.2f}'.format(legend, roc_data[2]))
+                plt.plot(
+                    roc_data[0],
+                    roc_data[1],
+                    lw=2,
+                    label="{}, AUC = {:.2f}".format(legend, roc_data[2]),
+                )
     else:
         for roc_data in rocs_data:
-            plt.plot(roc_data[0], roc_data[1], lw=2, label='AUC = {:.2f}'.format(roc_data[2]))
+            plt.plot(
+                roc_data[0], roc_data[1], lw=2, label="AUC = {:.2f}".format(roc_data[2])
+            )
 
-    plt.plot([0, 1], [0, 1], color='black', lw=2, linestyle='--')
+    plt.plot([0, 1], [0, 1], color="black", lw=2, linestyle="--")
     plt.xlim([0.0, 1.0])
     plt.ylim([0.0, 1.05])
-    plt.xlabel('False Positive Rate')
-    plt.ylabel('Sensitivity')
+    plt.xlabel("False Positive Rate")
+    plt.ylabel("Sensitivity")
     if legends is not None:
         plt.legend(loc="lower right")
     if output_path is not None:
-        plt.savefig(output_path / "Slice_ROC.png", bbox_inches='tight', pad_inches=0)
+        plt.savefig(output_path / "Slice_ROC.png", bbox_inches="tight", pad_inches=0)
     plt.show()
 
 
@@ -704,14 +792,16 @@ def plot_FROCs(frocs, output_path, title, legends=None, colors=None):
     plt.xlabel("Mean number of FPs per image")
     plt.ylabel("Sensitivity")
     plt.ylim([0, 1])
-    plt.xscale('log')
+    plt.xscale("log")
     if legends is not None:
         plt.legend(loc="upper left")
-    plt.savefig(output_path / "{}.png".format(title), bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / "{}.png".format(title), bbox_inches="tight", pad_inches=0)
     plt.show()
 
 
-def plot_precisions_recalls(curves, output_path, metric="Precision", legends=None, colors=None):
+def plot_precisions_recalls(
+    curves, output_path, metric="Precision", legends=None, colors=None
+):
 
     plt.figure()
     if legends is not None:
@@ -728,15 +818,19 @@ def plot_precisions_recalls(curves, output_path, metric="Precision", legends=Non
     plt.xlabel("Confidence")
     plt.ylabel(metric)
     if legends is not None:
-        loc = "upper left" if metric=="Precision" else "upper right"
+        loc = "upper left" if metric == "Precision" else "upper right"
         plt.legend(loc=loc)
     if metric == "Recall":
         plt.ylim([0, 1])
-    plt.savefig(output_path / "{}.png".format(metric), bbox_inches='tight', pad_inches=0)
+    plt.savefig(
+        output_path / "{}.png".format(metric), bbox_inches="tight", pad_inches=0
+    )
     plt.show()
 
 
-def visualize_gt_vs_prediction(prediction, annotation, x, y, values, insp_frame, file_path=None):
+def visualize_gt_vs_prediction(
+    prediction, annotation, x, y, values, insp_frame, file_path=None
+):
     """
     Visualises ground truth annotations vs prediction together with visceral slide
     on the inspiration frame
@@ -765,13 +859,24 @@ def visualize_gt_vs_prediction(prediction, annotation, x, y, values, insp_frame,
     ax = plt.gca()
 
     for index, (adhesion, confidence) in enumerate(prediction):
-       # if index > 1:
+        # if index > 1:
         #    break
-        adhesion_rect = Rectangle((adhesion.origin_x, adhesion.origin_y), adhesion.width, adhesion.height,
-                                  linewidth=1.5, edgecolor=PREDICTION_COLOR, facecolor='none')
+        adhesion_rect = Rectangle(
+            (adhesion.origin_x, adhesion.origin_y),
+            adhesion.width,
+            adhesion.height,
+            linewidth=1.5,
+            edgecolor=PREDICTION_COLOR,
+            facecolor="none",
+        )
         ax.add_patch(adhesion_rect)
-        plt.text(adhesion.origin_x, adhesion.origin_y - 3, "{:.3f}".format(confidence), c=PREDICTION_COLOR,
-                 fontweight='semibold')
+        plt.text(
+            adhesion.origin_x,
+            adhesion.origin_y - 3,
+            "{:.3f}".format(confidence),
+            c=PREDICTION_COLOR,
+            fontweight="semibold",
+        )
 
     """
         if annotation:
@@ -781,11 +886,10 @@ def visualize_gt_vs_prediction(prediction, annotation, x, y, values, insp_frame,
             ax.add_patch(adhesion_rect)
     """
 
-
     plt.axis("off")
 
     if file_path is not None:
-        plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
+        plt.savefig(file_path, bbox_inches="tight", pad_inches=0)
     else:
         plt.show()
 
@@ -793,13 +897,15 @@ def visualize_gt_vs_prediction(prediction, annotation, x, y, values, insp_frame,
 
 
 # TODO: probably leave only prior coords when plotting
-def visualize(visceral_slides,
-              annotations_dict,
-              predictions,
-              images_path,
-              output_path,
-              prior=False,
-              inspexp_data=None):
+def visualize(
+    visceral_slides,
+    annotations_dict,
+    predictions,
+    images_path,
+    output_path,
+    prior=False,
+    inspexp_data=None,
+):
     """
 
     Parameters
@@ -834,12 +940,16 @@ def visualize(visceral_slides,
                 slice = CineMRISlice(vs.slice_id, vs.patient_id, vs.study_id)
                 frame, _ = get_inspexp_frames(slice, inspexp_data, images_path)
             except:
-                print("Missing insp/exp data for the patient {}, study {}, slice {}".format(vs.patient_id,
-                                                                                            vs.study_id,
-                                                                                            vs.slice_id))
+                print(
+                    "Missing insp/exp data for the patient {}, study {}, slice {}".format(
+                        vs.patient_id, vs.study_id, vs.slice_id
+                    )
+                )
 
         file_path = output_path / (vs.full_id + ".png")
-        annotation = annotations_dict[vs.full_id] if vs.full_id in annotations_dict else None
+        annotation = (
+            annotations_dict[vs.full_id] if vs.full_id in annotations_dict else None
+        )
 
         if prior:
             x, y, slide_value = vs.x, vs.y, vs.values
@@ -847,19 +957,24 @@ def visualize(visceral_slides,
             x, y, values = prior_subset[:, 0], prior_subset[:, 1], prior_subset[:, 2]
         else:
             x, y, values = vs.x, vs.y, vs.values
-        visualize_gt_vs_prediction(prediction, annotation, x, y, values, frame, file_path)
+        visualize_gt_vs_prediction(
+            prediction, annotation, x, y, values, frame, file_path
+        )
 
 
 # TODO: document
 # Plots normalized visceral slide values against adhesion frequency
-def vs_adhesion_likelihood(visceral_slide_path,
-                           annotations_path,
-                           intervals_num=1000,
-                           adhesion_types=[AdhesionType.anteriorWall,
-                                           AdhesionType.pelvis],
-                           plot=False):
+def vs_adhesion_likelihood(
+    visceral_slide_path,
+    annotations_path,
+    intervals_num=1000,
+    adhesion_types=[AdhesionType.anteriorWall, AdhesionType.pelvis],
+    plot=False,
+):
 
-    annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
+    annotations_dict = load_annotations(
+        annotations_path, as_dict=True, adhesion_types=adhesion_types
+    )
     visceral_slides = load_visceral_slides(visceral_slide_path)
     vs_max = 0
     for visceral_slide in visceral_slides:
@@ -928,29 +1043,34 @@ def vs_adhesion_likelihood(visceral_slide_path,
 
         plt.figure()
         plt.plot(reference_vals, adh_likelihood)
-        plt.axhline(y=0.001, color='r', linestyle='--')
+        plt.axhline(y=0.001, color="r", linestyle="--")
         plt.ylim([0, max_y])
         plt.title("Adhesion")
         plt.xlabel("Normalised visceral slide")
         plt.ylabel("Likelihood")
-        plt.savefig("adh_freq_int_{}".format(intervals_num), bbox_inches='tight', pad_inches=0)
+        plt.savefig(
+            "adh_freq_int_{}".format(intervals_num), bbox_inches="tight", pad_inches=0
+        )
         plt.show()
 
         plt.figure()
         plt.plot(reference_vals, not_adh_likelihood)
-        plt.axhline(y=0.001, color='r', linestyle='--')
+        plt.axhline(y=0.001, color="r", linestyle="--")
         plt.ylim([0, max_y])
         plt.title("Not Adhesion")
         plt.xlabel("Normalised visceral slide")
         plt.ylabel("Likelihood")
-        plt.savefig("not_adh_freq_int_{}".format(intervals_num), bbox_inches='tight', pad_inches=0)
+        plt.savefig(
+            "not_adh_freq_int_{}".format(intervals_num),
+            bbox_inches="tight",
+            pad_inches=0,
+        )
         plt.show()
 
     return reference_vals, adh_likelihood, not_adh_likelihood
 
 
-def vs_value_distr(visceral_slide_path,
-                   intervals_num=1000):
+def vs_value_distr(visceral_slide_path, intervals_num=1000):
 
     visceral_slides = load_visceral_slides(visceral_slide_path)
     vs_max = 0
@@ -981,20 +1101,25 @@ def vs_value_distr(visceral_slide_path,
     plt.title("VS values frequencies")
     plt.xlabel("Normalised visceral slide")
     plt.ylabel("Frequency")
-    plt.savefig("vs_freq_int_{}".format(intervals_num), bbox_inches='tight', pad_inches=0)
+    plt.savefig(
+        "vs_freq_int_{}".format(intervals_num), bbox_inches="tight", pad_inches=0
+    )
     plt.show()
 
 
-def vs_adhesion_boxplot(visceral_slides,
-                        annotations_path,
-                        output_path,
-                        adhesion_types=[AdhesionType.anteriorWall,
-                                        AdhesionType.pelvis],
-                        prior_only=False):
+def vs_adhesion_boxplot(
+    visceral_slides,
+    annotations_path,
+    output_path,
+    adhesion_types=[AdhesionType.anteriorWall, AdhesionType.pelvis],
+    prior_only=False,
+):
 
     output_path.mkdir(exist_ok=True, parents=True)
 
-    annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=adhesion_types)
+    annotations_dict = load_annotations(
+        annotations_path, as_dict=True, adhesion_types=adhesion_types
+    )
 
     points_in_annotations = []
     points_not_in_annotations = []
@@ -1015,8 +1140,16 @@ def vs_adhesion_boxplot(visceral_slides,
 
             # Adjust annotations centers if necessary
             for adhesion in annotation.adhesions:
-                if not adhesion.intersects_contour(contour_subset[:, 0], contour_subset[:, 1]) and annotation.full_id != "CM0020_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311131653190024186.0.0.0":
-                    new_center = adhesion.contour_point_closes_to_center(contour_subset[:, :2])
+                if (
+                    not adhesion.intersects_contour(
+                        contour_subset[:, 0], contour_subset[:, 1]
+                    )
+                    and annotation.full_id
+                    != "CM0020_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311131653190024186.0.0.0"
+                ):
+                    new_center = adhesion.contour_point_closes_to_center(
+                        contour_subset[:, :2]
+                    )
                     adhesion.adjust_center(new_center)
 
                 adhesion.adjust_size()
@@ -1038,14 +1171,14 @@ def vs_adhesion_boxplot(visceral_slides,
     title = "adh_boxplot_prior" if prior_only else "adh_boxplot_all"
     plt.figure()
     plt.boxplot(points_in_annotations)
-    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / title, bbox_inches="tight", pad_inches=0)
     plt.show()
 
     # Histogram
     title = "adh_hist_prior" if prior_only else "adh_hist_all"
     plt.figure()
     plt.hist(points_in_annotations, bins=50)
-    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / title, bbox_inches="tight", pad_inches=0)
     plt.show()
 
     print("Adhesions VS stat:")
@@ -1057,14 +1190,14 @@ def vs_adhesion_boxplot(visceral_slides,
     title = "no_adh_boxplot_prior" if prior_only else "no_adh_boxplot_all"
     plt.figure()
     plt.boxplot(points_not_in_annotations)
-    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / title, bbox_inches="tight", pad_inches=0)
     plt.show()
 
     # Histogram
     title = "no_adh_hist_prior" if prior_only else "no_adh_hist_all"
     plt.figure()
     plt.hist(points_not_in_annotations, bins=200)
-    plt.savefig(output_path / title, bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / title, bbox_inches="tight", pad_inches=0)
     plt.show()
 
     print("No Adhesions VS stat:")
@@ -1072,13 +1205,14 @@ def vs_adhesion_boxplot(visceral_slides,
     print("25% precentile {}".format(np.percentile(points_not_in_annotations, 25)))
     print("75% precentile {}".format(np.percentile(points_not_in_annotations, 75)))
 
-    t_test = stats.ttest_ind(points_in_annotations, points_not_in_annotations, equal_var=False)
+    t_test = stats.ttest_ind(
+        points_in_annotations, points_not_in_annotations, equal_var=False
+    )
     print("T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
 
 
-
 def extract_features(adhesion_bb, adhesion_region):
-    vs_values_region = adhesion_region[:, 2] # np.mean(vs_values_region)
+    vs_values_region = adhesion_region[:, 2]  # np.mean(vs_values_region)
     adhesion_features = [1, adhesion_bb.height, adhesion_bb.width, len(adhesion_region)]
     return adhesion_features
 
@@ -1094,9 +1228,14 @@ def trainLR(visceral_slides, annotations_dict):
         if vs.full_id in annotations_dict:
             annotation = annotations_dict[vs.full_id]
             for adhesion in annotation.adhesions:
-                if not adhesion.intersects_contour(vs.x,
-                                                   vs.y) and annotation.full_id != "CM0020_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311131653190024186.0.0.0":
-                    new_center = adhesion.contour_point_closes_to_center(np.column_stack((vs.x, vs.y)))
+                if (
+                    not adhesion.intersects_contour(vs.x, vs.y)
+                    and annotation.full_id
+                    != "CM0020_1.2.752.24.7.621449243.4474616_1.3.12.2.1107.5.2.30.26380.2019060311131653190024186.0.0.0"
+                ):
+                    new_center = adhesion.contour_point_closes_to_center(
+                        np.column_stack((vs.x, vs.y))
+                    )
                     adhesion.adjust_center(new_center)
 
     positive_samples = []
@@ -1120,11 +1259,23 @@ def trainLR(visceral_slides, annotations_dict):
             if vs_region.shape[0] > 60:
                 while samples_num < 4:
                     # Get center
-                    center_ind = np.random.choice(range(30, vs_region.shape[0] - 30), 1)[0]
+                    center_ind = np.random.choice(
+                        range(30, vs_region.shape[0] - 30), 1
+                    )[0]
                     bb_center = vs_region[center_ind]
                     # get bb width and height
-                    bb_width = int(np.round(bb_mean_size[0] + bb_size_std[0] * np.random.normal(size=1)[0]))
-                    bb_height = int(np.round(bb_mean_size[1] + bb_size_std[1] * np.random.normal(size=1)[0]))
+                    bb_width = int(
+                        np.round(
+                            bb_mean_size[0]
+                            + bb_size_std[0] * np.random.normal(size=1)[0]
+                        )
+                    )
+                    bb_height = int(
+                        np.round(
+                            bb_mean_size[1]
+                            + bb_size_std[1] * np.random.normal(size=1)[0]
+                        )
+                    )
                     origin_x = int(bb_center[0] - round(bb_width / 2))
                     origin_y = int(bb_center[1] - round(bb_height / 2))
                     negative_bb = Adhesion([origin_x, origin_y, bb_width, bb_height])
@@ -1132,17 +1283,21 @@ def trainLR(visceral_slides, annotations_dict):
                     adhesion_region, _, _ = bb_adjusted_region(vs_region, negative_bb)
                     if len(adhesion_region) > 0:
                         samples_num += 1
-                        negative_bb_features = extract_features(negative_bb, adhesion_region)
+                        negative_bb_features = extract_features(
+                            negative_bb, adhesion_region
+                        )
                         negative_samples.append(negative_bb_features)
 
     samples = np.concatenate((negative_samples, positive_samples))
-    labels = np.concatenate((np.zeros(len(negative_samples)), np.ones(len(positive_samples))))
+    labels = np.concatenate(
+        (np.zeros(len(negative_samples)), np.ones(len(positive_samples)))
+    )
 
     clf = sm.Logit(labels, samples).fit()
     print(clf.summary2())
     thresholds = clf.predict(samples)
     prediction = list(map(round, thresholds))
-    print('Accuracy = ', accuracy_score(labels, prediction))
+    print("Accuracy = ", accuracy_score(labels, prediction))
 
     fpr, tpr, _ = roc_curve(labels, thresholds)
     auc_val = auc(fpr, tpr)
@@ -1156,19 +1311,21 @@ def filter_dataset(annotations_dict, visceral_slides, positive_patients):
     positive_visceral_slides = []
     negative_visceral_slides = []
     for visceral_slide in visceral_slides:
-        if visceral_slide.patient_id in positive_patients and visceral_slide.full_id in annotations_dict:
+        if (
+            visceral_slide.patient_id in positive_patients
+            and visceral_slide.full_id in annotations_dict
+        ):
             positive_visceral_slides.append(visceral_slide)
         else:
             negative_visceral_slides.append(visceral_slide)
 
-    #np.random.shuffle(negative_visceral_slides)
-    negative_visceral_slides = negative_visceral_slides[:len(positive_visceral_slides)]
+    # np.random.shuffle(negative_visceral_slides)
+    negative_visceral_slides = negative_visceral_slides[: len(positive_visceral_slides)]
 
     return np.concatenate((positive_visceral_slides, negative_visceral_slides))
 
 
 class DetectionConfig:
-
     def __init__(self):
         self.cumulative_vs = True
         self.anterior_motion_norm = True
@@ -1177,10 +1334,13 @@ class DetectionConfig:
         self.kfold = False
         self.expectation_norm_type = VSExpectationNormType.mean_div
         self.transform = VSTransform.none
-        self.negative_vs_needed = self.norm_by_exp and self.expectation_norm_type == VSExpectationNormType.standardize
-        self.vis_prior = True # not anterior_motion_norm
+        self.negative_vs_needed = (
+            self.norm_by_exp
+            and self.expectation_norm_type == VSExpectationNormType.standardize
+        )
+        self.vis_prior = True  # not anterior_motion_norm
         self.adhesion_types = [AdhesionType.anteriorWall, AdhesionType.pelvis]
-        #self.adhesion_types = [AdhesionType.pelvis]
+        # self.adhesion_types = [AdhesionType.pelvis]
         self.conf_type = ConfidenceType.mean
         self.region_growing_ind = 2.5
         self.min_region_len = 5
@@ -1199,28 +1359,47 @@ def get_experiment_path(config, output_path):
     else:
         root_folder = "anterior_wall_experiments"
 
-    normalization_folder = "anterior_motion_norm" if config.anterior_motion_norm else "vicinity_norm"
+    normalization_folder = (
+        "anterior_motion_norm" if config.anterior_motion_norm else "vicinity_norm"
+    )
 
     vs_type_folder = "cumulative" if config.cumulative_vs else "inspexp"
     if config.norm_by_exp:
-        vs_type_folder += "_mean_div" if config.expectation_norm_type == VSExpectationNormType.mean_div else "_stand"
+        vs_type_folder += (
+            "_mean_div"
+            if config.expectation_norm_type == VSExpectationNormType.mean_div
+            else "_stand"
+        )
         if config.transform == VSTransform.sqrt:
             vs_type_folder += "_sqrt"
         elif config.transform == VSTransform.log:
             vs_type_folder += "_log"
 
-    experiment_folder = "rgi{}".format(config.region_growing_ind) if config.region_growing_ind is not None else "nonlin"
+    experiment_folder = (
+        "rgi{}".format(config.region_growing_ind)
+        if config.region_growing_ind is not None
+        else "nonlin"
+    )
     experiment_folder += "_mrl{}".format(config.min_region_len)
     if config.kfold:
         experiment_folder += "_conf_lr" + config.lr_suffix
     else:
-        experiment_folder += "_conf_mean" if config.conf_type == ConfidenceType.mean else "_conf_min"
+        experiment_folder += (
+            "_conf_mean" if config.conf_type == ConfidenceType.mean else "_conf_min"
+        )
 
     if len(config.exp_prefix) > 0:
         experiment_folder = config.exp_prefix + "_" + experiment_folder
 
-    experiment_path = output_path / root_folder / normalization_folder / vs_type_folder / experiment_folder
+    experiment_path = (
+        output_path
+        / root_folder
+        / normalization_folder
+        / vs_type_folder
+        / experiment_folder
+    )
     return experiment_path
+
 
 # Cumulative VS, normalised by division at mean with applied sqrt transformation
 def run_detection_pipeline_test(detection_path, output_path):
@@ -1228,14 +1407,21 @@ def run_detection_pipeline_test(detection_path, output_path):
     experiment_path = output_path / "test_eval_lr"
 
     # Necessary train data
-    #train_images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
+    # train_images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
     vs_path_train = detection_path / VS_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
-    annotations_train_path = detection_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
-    annotations_dict_train = load_annotations(annotations_train_path, as_dict=True,
-                                              adhesion_types=[AdhesionType.anteriorWall, AdhesionType.pelvis])
+    annotations_train_path = (
+        detection_path / METADATA_FOLDER / BB_ANNOTATIONS_EXPANDED_FILE
+    )
+    annotations_dict_train = load_annotations(
+        annotations_train_path,
+        as_dict=True,
+        adhesion_types=[AdhesionType.anteriorWall, AdhesionType.pelvis],
+    )
     visceral_slides_train = load_visceral_slides(vs_path_train)
 
-    vs_expectation_path = detection_path / METADATA_FOLDER / CUMULATIVE_VS_EXPECTATION_FILE_SQRT
+    vs_expectation_path = (
+        detection_path / METADATA_FOLDER / CUMULATIVE_VS_EXPECTATION_FILE_SQRT
+    )
     with open(vs_expectation_path, "r+b") as file:
         vs_expectation_dict = pickle.load(file)
         expectation = vs_expectation_dict["means"], vs_expectation_dict["stds"]
@@ -1249,10 +1435,17 @@ def run_detection_pipeline_test(detection_path, output_path):
 
     # Necessary test data
     test_images_path = detection_path / IMAGES_FOLDER / TEST_FOLDER
-    vs_path_test = detection_path / VS_TEST_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
-    annotations_test_path = detection_path / METADATA_FOLDER / BB_TEST_ANNOTATIONS_EXPANDED_FILE
-    annotations_dict_test = load_annotations(annotations_test_path, as_dict=True,
-                                              adhesion_types=[AdhesionType.anteriorWall, AdhesionType.pelvis])
+    vs_path_test = (
+        detection_path / VS_TEST_FOLDER / AVG_NORM_FOLDER / CUMULATIVE_VS_FOLDER
+    )
+    annotations_test_path = (
+        detection_path / METADATA_FOLDER / BB_TEST_ANNOTATIONS_EXPANDED_FILE
+    )
+    annotations_dict_test = load_annotations(
+        annotations_test_path,
+        as_dict=True,
+        adhesion_types=[AdhesionType.anteriorWall, AdhesionType.pelvis],
+    )
     visceral_slides_test = load_visceral_slides(vs_path_test)
 
     # Normalise test vs
@@ -1261,45 +1454,76 @@ def run_detection_pipeline_test(detection_path, output_path):
         vs.norm_with_expectation(means, stds, VSExpectationNormType.mean_div)
 
     # Vis test VS
-    #vis_path = experiment_path / "vis_vs"
-    #vis_computed_cum_vs(visceral_slides_test, test_images_path, vis_path)
+    # vis_path = experiment_path / "vis_vs"
+    # vis_computed_cum_vs(visceral_slides_test, test_images_path, vis_path)
 
-    #plot_vs_distribution(visceral_slides_test, experiment_path)
-    #plot_vs_distribution(visceral_slides_test, experiment_path, prior_only=True)
-    #vs_adhesion_boxplot(visceral_slides_test, annotations_test_path, experiment_path)
-    #vs_adhesion_boxplot(visceral_slides_test, annotations_test_path, experiment_path, prior_only=True)
+    # plot_vs_distribution(visceral_slides_test, experiment_path)
+    # plot_vs_distribution(visceral_slides_test, experiment_path, prior_only=True)
+    # vs_adhesion_boxplot(visceral_slides_test, annotations_test_path, experiment_path)
+    # vs_adhesion_boxplot(visceral_slides_test, annotations_test_path, experiment_path, prior_only=True)
 
     # Train LR at training set
     lr = trainLR(visceral_slides_train, annotations_dict_train)
 
     # Predict
-    predictions = predict(visceral_slides_test, annotations_dict_test, False, ConfidenceType.mean, 2.5, 5, lr)
+    predictions = predict(
+        visceral_slides_test,
+        annotations_dict_test,
+        False,
+        ConfidenceType.mean,
+        2.5,
+        5,
+        lr,
+    )
 
     # Evaluate
     evaluate(predictions, annotations_dict_test, experiment_path)
 
     # Visualise
-    visualize(visceral_slides_test, annotations_dict_test, predictions, test_images_path, experiment_path, True)
-
-
+    visualize(
+        visceral_slides_test,
+        annotations_dict_test,
+        predictions,
+        test_images_path,
+        experiment_path,
+        True,
+    )
 
 
 def run_detection_pipeline(config, detection_path, output_path):
     images_path = detection_path / IMAGES_FOLDER / TRAIN_FOLDER
-    vs_folder_root = AVG_NORM_FOLDER if config.anterior_motion_norm else VICINITY_NORM_FOLDER
+    vs_folder_root = (
+        AVG_NORM_FOLDER if config.anterior_motion_norm else VICINITY_NORM_FOLDER
+    )
     vs_folder = CUMULATIVE_VS_FOLDER if config.cumulative_vs else INS_EXP_VS_FOLDER
     experiment_path = get_experiment_path(config, output_path)
 
     if config.anterior_motion_norm:
         if config.cumulative_vs:
-            control_stat_file = CUMULATIVE_VS_EXPECTATION_FILE_SQRT if config.transform == VSTransform.sqrt else CUMULATIVE_VS_EXPECTATION_FILE
+            control_stat_file = (
+                CUMULATIVE_VS_EXPECTATION_FILE_SQRT
+                if config.transform == VSTransform.sqrt
+                else CUMULATIVE_VS_EXPECTATION_FILE
+            )
         else:
-            control_stat_file = INSPEXP_VS_EXPECTATION_FILE_SQRT if config.transform == VSTransform.sqrt else INSPEXP_VS_EXPECTATION_FILE
+            control_stat_file = (
+                INSPEXP_VS_EXPECTATION_FILE_SQRT
+                if config.transform == VSTransform.sqrt
+                else INSPEXP_VS_EXPECTATION_FILE
+            )
     else:
         if config.cumulative_vs:
-            control_stat_file = CUMULATIVE_VS_EXPECTATION_VICINITY_FILE_SQRT if config.transform == VSTransform.sqrt else CUMULATIVE_VS_EXPECTATION_VICINITY_FILE
+            control_stat_file = (
+                CUMULATIVE_VS_EXPECTATION_VICINITY_FILE_SQRT
+                if config.transform == VSTransform.sqrt
+                else CUMULATIVE_VS_EXPECTATION_VICINITY_FILE
+            )
         else:
-            control_stat_file = INSPEXP_VS_EXPECTATION_VICINITY_FILE_SQRT if config.transform == VSTransform.sqrt else INSPEXP_VS_EXPECTATION_VICINITY_FILE
+            control_stat_file = (
+                INSPEXP_VS_EXPECTATION_VICINITY_FILE_SQRT
+                if config.transform == VSTransform.sqrt
+                else INSPEXP_VS_EXPECTATION_VICINITY_FILE
+            )
 
     vs_path = detection_path / VS_FOLDER / vs_folder_root / vs_folder
     vs_expectation_path = detection_path / METADATA_FOLDER / control_stat_file
@@ -1318,13 +1542,17 @@ def run_detection_pipeline(config, detection_path, output_path):
         patients_split = json.load(f)
         positive_patients = patients_split["train"]["positive"]
 
-    annotations_dict = load_annotations(annotations_path, as_dict=True, adhesion_types=config.adhesion_types)
+    annotations_dict = load_annotations(
+        annotations_path, as_dict=True, adhesion_types=config.adhesion_types
+    )
     visceral_slides = load_visceral_slides(vs_path)
-    #visceral_slides.sort(key=lambda x: x.full_id)
+    # visceral_slides.sort(key=lambda x: x.full_id)
 
     # Filter out only when one type is considered
     if len(config.adhesion_types) == 1:
-        visceral_slides = filter_dataset(annotations_dict, visceral_slides, positive_patients)
+        visceral_slides = filter_dataset(
+            annotations_dict, visceral_slides, positive_patients
+        )
 
     # Normalize by expectation
     if config.norm_by_exp:
@@ -1338,7 +1566,7 @@ def run_detection_pipeline(config, detection_path, output_path):
 
             vs.norm_with_expectation(means, stds, config.expectation_norm_type)
 
-    #vs_min_stat(visceral_slides, annotations_dict)
+    # vs_min_stat(visceral_slides, annotations_dict)
 
     if config.vis_vs:
         vis_path = experiment_path / "vis_vs"
@@ -1347,16 +1575,19 @@ def run_detection_pipeline(config, detection_path, output_path):
         else:
             vis_computed_cum_vs(visceral_slides, images_path, vis_path, inspexp_data)
 
-
     if config.vs_stat:
         plot_vs_distribution(visceral_slides, experiment_path)
         plot_vs_distribution(visceral_slides, experiment_path, prior_only=True)
         vs_adhesion_boxplot(visceral_slides, annotations_path, experiment_path)
-        vs_adhesion_boxplot(visceral_slides, annotations_path, experiment_path, prior_only=True)
+        vs_adhesion_boxplot(
+            visceral_slides, annotations_path, experiment_path, prior_only=True
+        )
 
     # load 5-fold cv split, filter out and run
     if config.kfold:
-        detection_slices_kfold_file = detection_path / METADATA_FOLDER / DETECTION_SLICE_FOLD_FILE_NAME
+        detection_slices_kfold_file = (
+            detection_path / METADATA_FOLDER / DETECTION_SLICE_FOLD_FILE_NAME
+        )
         with open(detection_slices_kfold_file) as f:
             kfolds = json.load(f)
 
@@ -1365,29 +1596,74 @@ def run_detection_pipeline(config, detection_path, output_path):
             train_ids = fold["train"]
             val_ids = fold["val"]
 
-            train_visceral_slides = [vs for vs in visceral_slides if vs.full_id in train_ids]
-            val_visceral_slides = [vs for vs in visceral_slides if vs.full_id in val_ids]
+            train_visceral_slides = [
+                vs for vs in visceral_slides if vs.full_id in train_ids
+            ]
+            val_visceral_slides = [
+                vs for vs in visceral_slides if vs.full_id in val_ids
+            ]
 
             lr = trainLR(train_visceral_slides, annotations_dict)
-            predictions = predict(val_visceral_slides, annotations_dict, config.negative_vs_needed, config.conf_type,
-                                  config.region_growing_ind, config.min_region_len, lr)
+            predictions = predict(
+                val_visceral_slides,
+                annotations_dict,
+                config.negative_vs_needed,
+                config.conf_type,
+                config.region_growing_ind,
+                config.min_region_len,
+                lr,
+            )
             all_predictions.update(predictions)
 
         evaluate(all_predictions, annotations_dict, experiment_path)
         if config.cumulative_vs:
-            visualize(visceral_slides, annotations_dict, all_predictions, images_path, experiment_path, config.vis_prior)
+            visualize(
+                visceral_slides,
+                annotations_dict,
+                all_predictions,
+                images_path,
+                experiment_path,
+                config.vis_prior,
+            )
         else:
-            visualize(visceral_slides, annotations_dict, all_predictions, images_path, experiment_path, config.vis_prior,
-                      inspexp_data)
+            visualize(
+                visceral_slides,
+                annotations_dict,
+                all_predictions,
+                images_path,
+                experiment_path,
+                config.vis_prior,
+                inspexp_data,
+            )
     else:
-        predictions = predict(visceral_slides, annotations_dict, config.negative_vs_needed, config.conf_type,
-                              config.region_growing_ind, config.min_region_len)
+        predictions = predict(
+            visceral_slides,
+            annotations_dict,
+            config.negative_vs_needed,
+            config.conf_type,
+            config.region_growing_ind,
+            config.min_region_len,
+        )
         evaluate(predictions, annotations_dict, experiment_path)
         if config.cumulative_vs:
-            visualize(visceral_slides, annotations_dict, predictions, images_path, experiment_path, config.vis_prior)
+            visualize(
+                visceral_slides,
+                annotations_dict,
+                predictions,
+                images_path,
+                experiment_path,
+                config.vis_prior,
+            )
         else:
-            visualize(visceral_slides, annotations_dict, predictions, images_path, experiment_path, config.vis_prior,
-                      inspexp_data)
+            visualize(
+                visceral_slides,
+                annotations_dict,
+                predictions,
+                images_path,
+                experiment_path,
+                config.vis_prior,
+                inspexp_data,
+            )
 
 
 def vs_min_stat(visceral_slides, annotations_dict):
@@ -1407,16 +1683,30 @@ def vs_min_stat(visceral_slides, annotations_dict):
     print("Mean min negative VS {}".format(np.mean(positive_mins)))
 
     t_test = stats.ttest_ind(negative_mins, positive_mins, equal_var=True)
-    print("Equal variances T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
+    print(
+        "Equal variances T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue)
+    )
 
     t_test = stats.ttest_ind(negative_mins, positive_mins, equal_var=False)
-    print("Non equal variances T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
+    print(
+        "Non equal variances T-stat {}, p-value {}".format(
+            t_test.statistic, t_test.pvalue
+        )
+    )
 
 
-def compare_experiments(experiments_paths, experiment_names, colors, output_path, metrics_to_plot=[EvaluationMetrics.froc_all,
-                                                                                                   EvaluationMetrics.precision,
-                                                                                                   EvaluationMetrics.recall,
-                                                                                                   EvaluationMetrics.slice_roc]):
+def compare_experiments(
+    experiments_paths,
+    experiment_names,
+    colors,
+    output_path,
+    metrics_to_plot=[
+        EvaluationMetrics.froc_all,
+        EvaluationMetrics.precision,
+        EvaluationMetrics.recall,
+        EvaluationMetrics.slice_roc,
+    ],
+):
 
     output_path.mkdir(exist_ok=True, parents=True)
 
@@ -1442,29 +1732,51 @@ def compare_experiments(experiments_paths, experiment_names, colors, output_path
         plot_FROCs(frocs_neg, output_path, "Frocs negative", experiment_names, colors)
 
     if EvaluationMetrics.precision in metrics_to_plot:
-        plot_precisions_recalls(precisions, output_path, legends=experiment_names, colors=colors)
+        plot_precisions_recalls(
+            precisions, output_path, legends=experiment_names, colors=colors
+        )
 
     if EvaluationMetrics.recall in metrics_to_plot:
-        plot_precisions_recalls(recalls, output_path, metric="Recall", legends=experiment_names, colors=colors)
+        plot_precisions_recalls(
+            recalls,
+            output_path,
+            metric="Recall",
+            legends=experiment_names,
+            colors=colors,
+        )
 
     if EvaluationMetrics.slice_roc in metrics_to_plot:
-        plot_ROCs(slice_rocs, output_path=output_path, legends=experiment_names, colors=colors)
+        plot_ROCs(
+            slice_rocs, output_path=output_path, legends=experiment_names, colors=colors
+        )
 
 
-def compare_experiments_conf(configs, colors, experiments_path, output_path, metrics_to_plot=[EvaluationMetrics.froc_all,
-                                                                                      EvaluationMetrics.precision,
-                                                                                      EvaluationMetrics.recall,
-                                                                                      EvaluationMetrics.slice_roc]):
+def compare_experiments_conf(
+    configs,
+    colors,
+    experiments_path,
+    output_path,
+    metrics_to_plot=[
+        EvaluationMetrics.froc_all,
+        EvaluationMetrics.precision,
+        EvaluationMetrics.recall,
+        EvaluationMetrics.slice_roc,
+    ],
+):
 
     experiments_paths = []
     experiment_names = []
 
     for config in configs:
-        metrics_path = get_experiment_path(config, experiments_path) / EVALUATION_METRICS_FILE
+        metrics_path = (
+            get_experiment_path(config, experiments_path) / EVALUATION_METRICS_FILE
+        )
         experiments_paths.append(metrics_path)
         experiment_names.append(config.exp_name)
 
-    compare_experiments(experiments_paths, experiment_names, colors, output_path, metrics_to_plot)
+    compare_experiments(
+        experiments_paths, experiment_names, colors, output_path, metrics_to_plot
+    )
 
 
 def test_vs_calc_loading():
@@ -1477,7 +1789,7 @@ def test_vs_calc_loading():
     colors_inspexp = cm.get_cmap("Oranges")(np.linspace(0.3, 0.9, 3))
     colors = np.concatenate((colors_cum, colors_inspexp))
 
-    #run_detection_pipeline_test(detection_path, experiments_path)
+    # run_detection_pipeline_test(detection_path, experiments_path)
 
     print("\nMean")
     config1 = DetectionConfig()
@@ -1501,10 +1813,6 @@ def test_vs_calc_loading():
     compare_experiments([ex1, ex2, ex3], ["conf_min", "conf_mean", "conf_lr"], colors_cum,
                         experiments_path / "comparison_test" / "cum_mean_div_sqrt")
     """
-
-
-
-
 
     """
     ex1 = experiments_path / "pelvis_experiments" / "anterior_motion_norm" / "cumulative" / "rgi2.5_mrl5_conf_mean" / EVALUATION_METRICS_FILE
@@ -1567,8 +1875,6 @@ def test_vs_calc_loading():
     compare_experiments_conf([config, config1, config2], colors_cum, experiments_path, output_path)
 
     """
-
-
 
     """
 
@@ -1656,8 +1962,5 @@ def test_vs_calc_loading():
     """
 
 
-
-
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     test_vs_calc_loading()

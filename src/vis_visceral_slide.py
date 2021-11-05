@@ -1,7 +1,7 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from vs_definitions import VSTransform
-from contour import filter_out_prior_vs_subset
+from .vs_definitions import VSTransform
+from .contour import filter_out_prior_vs_subset
 
 
 def plot_vs_over_frame(x, y, values, frame, file_path=None):
@@ -28,18 +28,20 @@ def plot_vs_over_frame(x, y, values, frame, file_path=None):
     plt.axis("off")
 
     if file_path is not None:
-        plt.savefig(file_path, bbox_inches='tight', pad_inches=0)
+        plt.savefig(file_path, bbox_inches="tight", pad_inches=0)
     else:
         plt.show()
     plt.close()
 
 
-def plot_vs_distribution(visceral_slides,
-                         output_path,
-                         vs_min=-np.inf,
-                         vs_max=np.inf,
-                         transform=VSTransform.none,
-                         prior_only=False):
+def plot_vs_distribution(
+    visceral_slides,
+    output_path,
+    vs_min=-np.inf,
+    vs_max=np.inf,
+    transform=VSTransform.none,
+    prior_only=False,
+):
     """
     Plots a histogram and a box plot of visceral slide values in the passed set, optionally with removed ourliers
     and applied transformation
@@ -69,11 +71,13 @@ def plot_vs_distribution(visceral_slides,
             cur_vs_values = [vs for vs in prior_subset[:, 2] if vs_min <= vs <= vs_max]
             vs_values.extend(cur_vs_values)
         else:
-            cur_vs_values = [vs for vs in visceral_slide.values if vs_min <= vs <= vs_max]
+            cur_vs_values = [
+                vs for vs in visceral_slide.values if vs_min <= vs <= vs_max
+            ]
             vs_values.extend(cur_vs_values)
 
     if transform == VSTransform.log:
-        vs_values = [vs for vs in vs_values if vs >0]
+        vs_values = [vs for vs in vs_values if vs > 0]
         vs_values = np.log(vs_values)
     elif transform == VSTransform.sqrt:
         vs_values = np.sqrt(vs_values)
@@ -92,14 +96,14 @@ def plot_vs_distribution(visceral_slides,
     # Boxplot
     plt.figure()
     plt.boxplot(vs_values)
-    plt.savefig(output_path / bp_tile, bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / bp_tile, bbox_inches="tight", pad_inches=0)
     plt.show()
 
     hs_tile = "vs_hist" + title_suffix()
     # Histogram
     plt.figure()
     plt.hist(vs_values, bins=200)
-    plt.savefig(output_path / hs_tile, bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / hs_tile, bbox_inches="tight", pad_inches=0)
     plt.show()
 
 
@@ -131,13 +135,31 @@ def plot_exhaustive_vs_distribution(visceral_slides, vs_min, vs_max, output_path
     # Distribution for prior region outliers removed
     plot_vs_distribution(visceral_slides, output_path, vs_min, vs_max, prior_only=True)
     # Distribution for all sqrt transfrom
-    plot_vs_distribution(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.sqrt)
+    plot_vs_distribution(
+        visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.sqrt
+    )
     # Distribution for prior region sqrt transfrom
-    plot_vs_distribution(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.sqrt, prior_only=True)
+    plot_vs_distribution(
+        visceral_slides,
+        output_path,
+        vs_min,
+        vs_max,
+        transform=VSTransform.sqrt,
+        prior_only=True,
+    )
     # Distribution for all sqrt transfrom
-    plot_vs_distribution(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.log)
+    plot_vs_distribution(
+        visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.log
+    )
     # Distribution for prior region sqrt transfrom
-    plot_vs_distribution(visceral_slides, output_path, vs_min, vs_max, transform=VSTransform.log, prior_only=True)
+    plot_vs_distribution(
+        visceral_slides,
+        output_path,
+        vs_min,
+        vs_max,
+        transform=VSTransform.log,
+        prior_only=True,
+    )
 
 
 def plot_visceral_slide_expectation(means, vs, title, frame, output_path):
@@ -174,5 +196,5 @@ def plot_visceral_slide_expectation(means, vs, title, frame, output_path):
     x_bl, y_bl = vs.bottom_left_point
     plt.scatter(x_bl, y_bl, s=25, c="white")
     plt.axis("off")
-    plt.savefig(output_path / "{}.png".format(title), bbox_inches='tight', pad_inches=0)
+    plt.savefig(output_path / "{}.png".format(title), bbox_inches="tight", pad_inches=0)
     plt.close()

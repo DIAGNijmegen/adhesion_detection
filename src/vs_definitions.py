@@ -2,7 +2,8 @@ import numpy as np
 from pathlib import Path
 from enum import Enum, unique
 from cinemri.contour import Contour
-from config import *
+from .config import *
+
 
 @unique
 class VSExpectationNormType(Enum):
@@ -21,8 +22,7 @@ class VSTransform(Enum):
 
 
 class Region:
-    """An object representing a coordinates region with a value at a specific coordinate
-    """
+    """An object representing a coordinates region with a value at a specific coordinate"""
 
     def __init__(self, x, y, values, mean=None, std=None):
         """
@@ -132,8 +132,7 @@ class Region:
 
     @property
     def size(self):
-        """ Size of a rectangle that encloses the region
-        """
+        """Size of a rectangle that encloses the region"""
         if len(self.x) == 0:
             return 0, 0
 
@@ -164,8 +163,7 @@ class Region:
 
 
 class VisceralSlide(Contour):
-    """An object representing visceral slide for a Cine-MRI slice
-    """
+    """An object representing visceral slide for a Cine-MRI slice"""
 
     def __init__(self, patient_id, study_id, slice_id, visceral_slide_data):
         """
@@ -191,10 +189,11 @@ class VisceralSlide(Contour):
         self.full_id = SEPARATOR.join([patient_id, study_id, slice_id])
 
     def zeros_fix(self):
-        """ Replace zeros with highest non 0 in visceral slide values
-        """
+        """Replace zeros with highest non 0 in visceral slide values"""
         zero_placeholder = np.min([value for value in self.values if value > 0])
-        self.values = np.array([value if value > 0 else zero_placeholder for value in self.values])
+        self.values = np.array(
+            [value if value > 0 else zero_placeholder for value in self.values]
+        )
 
     def to_regions(self, means=None, stds=None):
         """
@@ -270,7 +269,9 @@ class VisceralSlide(Contour):
 
         return regions
 
-    def norm_with_expectation(self, means, stds, expectation_norm_type=VSExpectationNormType.mean_div):
+    def norm_with_expectation(
+        self, means, stds, expectation_norm_type=VSExpectationNormType.mean_div
+    ):
         """Normalises visceral slide by provided means and standard deviations assuming that
         means and standard deviations correspond to regions obtained with to_regions method
 
@@ -315,4 +316,9 @@ class VisceralSlide(Contour):
         path : Path
             A path to a folder that contains visceral slide
         """
-        return Path(relative_path) / self.patient_id / self.study_id / (self.slice_id + extension)
+        return (
+            Path(relative_path)
+            / self.patient_id
+            / self.study_id
+            / (self.slice_id + extension)
+        )

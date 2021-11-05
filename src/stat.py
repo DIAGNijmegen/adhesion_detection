@@ -2,7 +2,7 @@
 import numpy as np
 import SimpleITK as sitk
 import matplotlib.pyplot as plt
-from utils import slice_complete_and_sagittal
+from .utils import slice_complete_and_sagittal
 from cinemri.utils import get_patients
 from cinemri.contour import get_contour
 
@@ -72,7 +72,11 @@ def get_vs_range(visceral_slides, negative_vs_needed, verbose=True):
         print("VS third quantile : {}".format(vs_q3))
         print("VS IQR : {}".format(vs_iqr))
 
-    vs_min = min(vs_abs_min, vs_q1 - 1.5 * vs_iqr) if negative_vs_needed else max(vs_abs_min, vs_q1 - 1.5 * vs_iqr)
+    vs_min = (
+        min(vs_abs_min, vs_q1 - 1.5 * vs_iqr)
+        if negative_vs_needed
+        else max(vs_abs_min, vs_q1 - 1.5 * vs_iqr)
+    )
     vs_max = min(vs_abs_max, vs_q3 + 1.5 * vs_iqr)
 
     if verbose:
@@ -186,10 +190,19 @@ def adhesions_stat(annotations):
     plt.title("Heights")
     plt.show()
 
-    print("Smallest annotation, x_o: {}, y_o: {}, width: {}, height: {}".format(smallest_bb.origin_x,
-                                                                                smallest_bb.origin_y, smallest_bb.width,
-                                                                                smallest_bb.height))
-    print("Largest annotation, width: {}, height: {}".format(largest_bb.width, largest_bb.height))
+    print(
+        "Smallest annotation, x_o: {}, y_o: {}, width: {}, height: {}".format(
+            smallest_bb.origin_x,
+            smallest_bb.origin_y,
+            smallest_bb.width,
+            smallest_bb.height,
+        )
+    )
+    print(
+        "Largest annotation, width: {}, height: {}".format(
+            largest_bb.width, largest_bb.height
+        )
+    )
 
 
 def contour_mean_len(masks_path):
@@ -220,4 +233,3 @@ def contour_mean_len(masks_path):
 
     mean_length = np.mean(lengths)
     return mean_length
-

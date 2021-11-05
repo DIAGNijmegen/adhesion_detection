@@ -6,8 +6,8 @@ import json
 import pickle
 from pathlib import Path
 import SimpleITK as sitk
-from config import *
-from vs_definitions import VisceralSlide
+from .config import *
+from .vs_definitions import VisceralSlide
 from cinemri.utils import get_patients, get_image_orientation
 from cinemri.definitions import Patient, CineMRISlice, Study
 
@@ -22,8 +22,7 @@ def slice_complete_and_sagittal(image):
 
 # Patients related information
 def get_patients_ids_at_path(images_path):
-    """Extract ids of patients found at a given path
-    """
+    """Extract ids of patients found at a given path"""
     patients = get_patients(images_path)
     patient_ids = [patient.id for patient in patients]
     return patient_ids
@@ -88,8 +87,7 @@ def full_ids_to_file(full_ids, output_file_path):
 
 
 def load_patients_ids(ids_file_path):
-    """Loads patient ids from a file in which ids are separated by a new line
-    """
+    """Loads patient ids from a file in which ids are separated by a new line"""
     with open(ids_file_path) as file:
         lines = file.readlines()
         patients_ids = [line.strip() for line in lines]
@@ -98,8 +96,7 @@ def load_patients_ids(ids_file_path):
 
 
 def write_slices_to_file(slices, file_path):
-    """Writes fill ids of cine-MRI slices to file separated by a new line
-    """
+    """Writes fill ids of cine-MRI slices to file separated by a new line"""
     slices_full_ids = [slice.full_id for slice in slices]
     with open(file_path, "w") as file:
         for full_id in slices_full_ids:
@@ -107,8 +104,7 @@ def write_slices_to_file(slices, file_path):
 
 
 def slices_from_full_ids_file(slices_full_ids_file_path):
-    """ Reads full ids from cine-MRI slices from file and creates CineMRISlice for each full id
-    """
+    """Reads full ids from cine-MRI slices from file and creates CineMRISlice for each full id"""
     with open(slices_full_ids_file_path) as file:
         lines = file.readlines()
         slices_full_ids = [line.strip() for line in lines]
@@ -118,7 +114,7 @@ def slices_from_full_ids_file(slices_full_ids_file_path):
 
 
 def patients_from_full_ids_file(slices_full_ids_file_path):
-    """ Reads full ids from cine-MRI slices from file and extracts unique patients which
+    """Reads full ids from cine-MRI slices from file and extracts unique patients which
     the corresponding cine-MRI slices belong to
     """
     with open(slices_full_ids_file_path) as file:
@@ -129,8 +125,7 @@ def patients_from_full_ids_file(slices_full_ids_file_path):
 
 
 def patients_from_full_ids(slices_full_ids):
-    """ Extracts unique patients from the list of cine-MRI slices full ids
-    """
+    """Extracts unique patients from the list of cine-MRI slices full ids"""
     slices_id_chunks = [slice_full_id.split("_") for slice_full_id in slices_full_ids]
     slices_id_chunks = np.array(slices_id_chunks)
 
@@ -156,8 +151,7 @@ def patients_from_full_ids(slices_full_ids):
 
 
 def slices_full_ids_from_patients(patients):
-    """ Extract full ids of cine-MRI slices that belong to specified list of patients
-    """
+    """Extract full ids of cine-MRI slices that belong to specified list of patients"""
     slices_full_ids = []
     for patient in patients:
         slices_full_ids.extend([slice.full_id for slice in patient.cinemri_slices])
@@ -225,7 +219,9 @@ def load_visceral_slides(visceral_slide_path):
                 with open(str(visceral_slide_data_path), "r+b") as file:
                     visceral_slide_data = pickle.load(file)
 
-                visceral_slide = VisceralSlide(patient_id, study_id, slice_id, visceral_slide_data)
+                visceral_slide = VisceralSlide(
+                    patient_id, study_id, slice_id, visceral_slide_data
+                )
                 visceral_slides.append(visceral_slide)
 
     return visceral_slides
@@ -233,8 +229,7 @@ def load_visceral_slides(visceral_slide_path):
 
 # Intervals and ranges handling
 def binning_intervals(start=0, end=1, n=1000):
-    """Splits the (start, end) range into n intervals and return the middle value of each interval
-    """
+    """Splits the (start, end) range into n intervals and return the middle value of each interval"""
     intervals = np.linspace(start, end, n + 1)
     reference_vals = [(intervals[i] + intervals[i + 1]) / 2 for i in range(n)]
     return reference_vals

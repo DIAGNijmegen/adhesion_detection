@@ -8,9 +8,9 @@ import json
 from pathlib import Path
 from skimage import io
 import SimpleITK as sitk
-from config import SEPARATOR
-from utils import slice_complete_and_sagittal, slices_from_full_ids_file
-from data_conversion import convert_2d_image_to_pseudo_3d
+from .config import SEPARATOR
+from .utils import slice_complete_and_sagittal, slices_from_full_ids_file
+from .data_conversion import convert_2d_image_to_pseudo_3d
 
 
 def save_frame(source_path, target_path, index=0, is_segm=False):
@@ -40,10 +40,7 @@ def save_frame(source_path, target_path, index=0, is_segm=False):
     io.imsave(str(frame_target_path) + ".png", frame_png)
 
 
-def extract_frames(slice,
-                   slice_id,
-                   target_path_images,
-                   target_path_metadata):
+def extract_frames(slice, slice_id, target_path_images, target_path_metadata):
     """
     Extracts frame of a cine-MRI slice, converts each frame to a pseudo 3D image to meet nn-Unet input requirements
     and saves the extracted frames and slice metadata to the specified locations
@@ -62,13 +59,13 @@ def extract_frames(slice,
     # Check that a slice is valid
     if slice_complete_and_sagittal(slice):
         metadata = {
-                    "Spacing": slice.GetSpacing(),
-                    "Origin": slice.GetOrigin(),
-                    "Direction": slice.GetDirection(),
-                    "PatientID": slice.GetMetaData("PatientID"),
-                    "StudyInstanceUID": slice.GetMetaData("StudyInstanceUID"),
-                    "SeriesInstanceUID": slice.GetMetaData("SeriesInstanceUID")
-                    }
+            "Spacing": slice.GetSpacing(),
+            "Origin": slice.GetOrigin(),
+            "Direction": slice.GetDirection(),
+            "PatientID": slice.GetMetaData("PatientID"),
+            "StudyInstanceUID": slice.GetMetaData("StudyInstanceUID"),
+            "SeriesInstanceUID": slice.GetMetaData("SeriesInstanceUID"),
+        }
 
         if slice.HasMetaDataKey("Sex"):
             metadata["Sex"] = slice.GetMetaData("Sex")
@@ -84,17 +81,21 @@ def extract_frames(slice,
         for ind, frame in enumerate(img_array):
             frame_2d = convert_2d_image_to_pseudo_3d(frame)
             # 0000 suffix is necessary for nn-UNet
-            niigz_path = target_path_images / (slice_id + "_" + str(ind) + "_0000.nii.gz")
+            niigz_path = target_path_images / (
+                slice_id + "_" + str(ind) + "_0000.nii.gz"
+            )
             sitk.WriteImage(frame_2d, str(niigz_path))
     else:
-        print("Skipping incomplete series or series with different anatomical plane, slice id: {}".format(slice_id))
+        print(
+            "Skipping incomplete series or series with different anatomical plane, slice id: {}".format(
+                slice_id
+            )
+        )
 
 
-def merge_frames(slice_full_id,
-                 frames_folder,
-                 target_folder,
-                 metadata_path,
-                 masks=True):
+def merge_frames(
+    slice_full_id, frames_folder, target_folder, metadata_path, masks=True
+):
     """
     Merges frames extracted from a cine-MRI slice into the full slice or predicted segmentation masks into
     a single file
@@ -122,7 +123,10 @@ def merge_frames(slice_full_id,
     # Sort by file index to merge the images in the correct order
     # Scans have additional "_0000" suffix, masks do not have it
     sort_index = -1 if masks else -2
-    files = sorted([file for file in frame_files_glob], key=lambda file: int(file.name[:-7].split("_")[sort_index]))
+    files = sorted(
+        [file for file in frame_files_glob],
+        key=lambda file: int(file.name[:-7].split("_")[sort_index]),
+    )
 
     image = []
     for frame_file in files:
@@ -180,16 +184,32 @@ def extract_detection_dataset(slices, images_folder, target_folder):
 
 
 def extract_detection_data(argv):
-    """ Command line wrapper for the extract_detection_dataset method
-    """
+    """Command line wrapper for the extract_detection_dataset method"""
     parser = argparse.ArgumentParser()
-    parser.add_argument('--positive_file', type=str, required=True,
-                        help="a path to a file with fill ids of positive slices")
-    parser.add_argument('--negative_file', type=str, required=True,
-                        help="a path to a file with fill ids of negative slices")
-    parser.add_argument('--images', type=str, required=True, help="a path to image folder in the cine-MRI archive")
-    parser.add_argument('--target_folder', type=str, required=True,
-                        help="a path to a folder to place the detection subset")
+    parser.add_argument(
+        "--positive_file",
+        type=str,
+        required=True,
+        help="a path to a file with fill ids of positive slices",
+    )
+    parser.add_argument(
+        "--negative_file",
+        type=str,
+        required=True,
+        help="a path to a file with fill ids of negative slices",
+    )
+    parser.add_argument(
+        "--images",
+        type=str,
+        required=True,
+        help="a path to image folder in the cine-MRI archive",
+    )
+    parser.add_argument(
+        "--target_folder",
+        type=str,
+        required=True,
+        help="a path to a folder to place the detection subset",
+    )
 
     args = parser.parse_args(argv)
 
@@ -205,7 +225,7 @@ def extract_detection_data(argv):
     extract_detection_dataset(slices, images_path, target_path)
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     np.random.seed(99)
     random.seed(99)
 
@@ -217,6 +237,6 @@ if __name__ == '__main__':
     try:
         action = actions[sys.argv[1]]
     except (IndexError, KeyError):
-        print('Usage: registration ' + '/'.join(actions.keys()) + ' ...')
+        print("Usage: registration " + "/".join(actions.keys()) + " ...")
     else:
         action(sys.argv[2:])

@@ -9,10 +9,10 @@ import numpy as np
 from pathlib import Path
 import SimpleITK as sitk
 from cinemri.utils import get_patients
-from data_extraction import extract_frames, merge_frames
-from postprocessing import fill_in_holes
-from utils import patients_from_full_ids
-from data_extraction import save_frame
+from .data_extraction import extract_frames, merge_frames, save_frame
+from .postprocessing import fill_in_holes
+from .utils import patients_from_full_ids
+import os
 
 FRAMES_FOLDER = "frames"
 MASKS_FOLDER = "masks"
@@ -61,12 +61,14 @@ def _find_segmented_frame_index(segmentation_path):
     return None
 
 
-def extract_segmentation_data(archive_path,
-                              destination_path,
-                              images_folder="images",
-                              segmentations_folder="cavity_segmentations",
-                              target_images_folder="images",
-                              target_segmentations_folder="masks"):
+def extract_segmentation_data(
+    archive_path,
+    destination_path,
+    images_folder="images",
+    segmentations_folder="cavity_segmentations",
+    target_images_folder="images",
+    target_segmentations_folder="masks",
+):
     """Extracts a subset of the archive only related to segmentation
 
     Parameters
@@ -121,7 +123,9 @@ def extract_segmentation_data(archive_path,
                 mask_path = slice.build_path(segmentation_path)
                 segmented_frame_index = _find_segmented_frame_index(mask_path)
                 if segmented_frame_index is not None:
-                    save_frame(mask_path, study_segmentations_path, segmented_frame_index, True)
+                    save_frame(
+                        mask_path, study_segmentations_path, segmented_frame_index, True
+                    )
 
                     # read an image and extract the segmented frame
                     slice_path = slice.build_path(images_path)
@@ -137,15 +141,38 @@ def extract_segmentation(argv):
     """
 
     parser = argparse.ArgumentParser()
-    parser.add_argument('archive_path', type=str, help="a path to the full cine-MRI data archive")
-    parser.add_argument('destination_path', type=str, help="a path to save the extracted segmentation subset")
-    parser.add_argument('--images', type=str, default="images", help="a name of the images folder in the archive")
-    parser.add_argument('--masks', type=str, default="cavity_segmentations",
-                        help="a name of the folder with cavity segmentations in the archive")
-    parser.add_argument('--target_images', type=str, default="images",
-                        help="a name of the images folder in the segmentation subset")
-    parser.add_argument('--target_masks', type=str, default="masks",
-                        help="a name of the folder with cavity segmentations in the segmentation subset")
+    parser.add_argument(
+        "archive_path", type=str, help="a path to the full cine-MRI data archive"
+    )
+    parser.add_argument(
+        "destination_path",
+        type=str,
+        help="a path to save the extracted segmentation subset",
+    )
+    parser.add_argument(
+        "--images",
+        type=str,
+        default="images",
+        help="a name of the images folder in the archive",
+    )
+    parser.add_argument(
+        "--masks",
+        type=str,
+        default="cavity_segmentations",
+        help="a name of the folder with cavity segmentations in the archive",
+    )
+    parser.add_argument(
+        "--target_images",
+        type=str,
+        default="images",
+        help="a name of the images folder in the segmentation subset",
+    )
+    parser.add_argument(
+        "--target_masks",
+        type=str,
+        default="masks",
+        help="a name of the folder with cavity segmentations in the segmentation subset",
+    )
     args = parser.parse_args(argv)
 
     archive_path = Path(args.archive_path)
@@ -155,19 +182,23 @@ def extract_segmentation(argv):
     target_images_folder = args.target_images
     target_segmentations_folder = args.target_masks
 
-    extract_segmentation_data(archive_path,
-                              destination_path,
-                              images_folder,
-                              segmentations_folder,
-                              target_images_folder,
-                              target_segmentations_folder)
+    extract_segmentation_data(
+        archive_path,
+        destination_path,
+        images_folder,
+        segmentations_folder,
+        target_images_folder,
+        target_segmentations_folder,
+    )
 
 
-def extract_complete_segmentation_data(images_path,
-                                       target_path,
-                                       target_frames_folder=FRAMES_FOLDER,
-                                       target_metadata_folder=METADATA_FOLDER,
-                                       patients=None):
+def extract_complete_segmentation_data(
+    images_path,
+    target_path,
+    target_frames_folder=FRAMES_FOLDER,
+    target_metadata_folder=METADATA_FOLDER,
+    patients=None,
+):
 
     """
     Extracts frames for segmentation and the corresponding metadata from the whole cine-MRI archive
@@ -186,20 +217,22 @@ def extract_complete_segmentation_data(images_path,
        If not provided the data are extracted for all patients at images_path
     """
 
-    target_path.mkdir()
+    target_path.mkdir(exist_ok=True)
 
     target_images_path = target_path / target_frames_folder
-    target_images_path.mkdir()
+    target_images_path.mkdir(exist_ok=True)
 
     target_metadata_path = target_path / target_metadata_folder
-    target_metadata_path.mkdir()
+    target_metadata_path.mkdir(exist_ok=True)
 
     patients = patients if patients is not None else get_patients(images_path)
     for patient in patients:
         for cinemri_slice in patient.cinemri_slices:
             slice_path = cinemri_slice.build_path(images_path)
             slice = sitk.ReadImage(str(slice_path))
-            extract_frames(slice, cinemri_slice.full_id, target_images_path, target_metadata_path)
+            extract_frames(
+                slice, cinemri_slice.full_id, target_images_path, target_metadata_path
+            )
 
 
 def extract_complete_data(argv):
@@ -211,10 +244,18 @@ def extract_complete_data(argv):
         Command line arguments
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("archive_path", type=str, help="a path to the full cine-MRI data archive")
-    parser.add_argument("target_path", type=str, help="a path to save the extracted frames")
-    parser.add_argument("--slices_filter", type=str, required=False, help="a path to a file with full id of slices "
-                                                                          "which to extract the data for")
+    parser.add_argument(
+        "archive_path", type=str, help="a path to the full cine-MRI data archive"
+    )
+    parser.add_argument(
+        "target_path", type=str, help="a path to save the extracted frames"
+    )
+    parser.add_argument(
+        "--slices_filter",
+        type=str,
+        required=False,
+        help="a path to a file with full id of slices " "which to extract the data for",
+    )
     args = parser.parse_args(argv)
 
     archive_path = Path(args.archive_path)
@@ -239,13 +280,15 @@ def delete_folder_contents(folder):
             shutil.rmtree(path)
 
 
-def _predict_and_save(nnUNet_model_path,
-                      nnUNet_input_dir,
-                      nnUNet_output_dir,
-                      output_path,
-                      network,
-                      task_id,
-                      folds=None):
+def _predict_and_save(
+    nnUNet_model_path,
+    nnUNet_input_dir,
+    nnUNet_output_dir,
+    output_path,
+    network,
+    task_id,
+    folds=None,
+):
     """
     Runs inference with nn-UNet on the subset of input files and copies prediction to the specified location.
     When prediction is copies, nn-UNet input and output folder are emptied.
@@ -266,24 +309,18 @@ def _predict_and_save(nnUNet_model_path,
     folds : str, optional
        A string, specifying which folds to use for prediction, e.g "0,1,2"
     """
-    cmd = [
-        "nnunet", "predict", task_id,
-        "--results", str(nnUNet_model_path),
-        "--input", str(nnUNet_input_dir),
-        "--output", str(nnUNet_output_dir),
-        "--network", network
+    cmd_parameters = [
+        task_id,
+        "--results",
+        str(nnUNet_model_path),
+        "--input",
+        str(nnUNet_input_dir),
+        "--output",
+        str(nnUNet_output_dir),
+        "--network",
+        network,
     ]
-
-    print("First cmd {}".format(cmd))
-
-    if folds:
-        print("Adding folds")
-        cmd.append('--folds')
-        cmd.append(folds)
-
-    print("Second cmd {}".format(cmd))
-
-    subprocess.check_call(cmd)
+    nnunet_inference(cmd_parameters)
 
     masks_files = container_output_dir.glob("*.nii.gz")
     for mask_path in masks_files:
@@ -297,13 +334,15 @@ def _predict_and_save(nnUNet_model_path,
 # Currently shutil.copy() does not work on cluster because it is not allowed to change permissions of a file on a mount
 # The workaround is to split input files in batches, run inference for each batch and then copy the prediction
 # for a batch to Chansey. This way it less likely to lose the results if a job gets interrupted
-def segment_abdominal_cavity(nnUNet_model_path,
-                             input_path,
-                             output_path,
-                             task_id="Task101_AbdomenSegmentation",
-                             network="2d",
-                             batch_size=1000,
-                             folds=None):
+def segment_abdominal_cavity(
+    nnUNet_model_path,
+    input_path,
+    output_path,
+    task_id="Task101_AbdomenSegmentation",
+    network="2d",
+    batch_size=1000,
+    folds=None,
+):
     """Runs inference of segmentation with the saved nnU-Net model
 
     Parameters
@@ -335,22 +374,26 @@ def segment_abdominal_cavity(nnUNet_model_path,
     for (index, input_frame_path) in enumerate(input_files):
         shutil.copy(input_frame_path, container_input_dir)
         if index > 0 and index % batch_size == 0:
-            _predict_and_save(nnUNet_model_path,
-                              container_input_dir,
-                              container_output_dir,
-                              output_path,
-                              network,
-                              task_id,
-                              folds)
+            _predict_and_save(
+                nnUNet_model_path,
+                container_input_dir,
+                container_output_dir,
+                output_path,
+                network,
+                task_id,
+                folds,
+            )
 
     # Process remaining images
-    _predict_and_save(nnUNet_model_path,
-                      container_input_dir,
-                      container_output_dir,
-                      output_path,
-                      network,
-                      task_id,
-                      folds)
+    _predict_and_save(
+        nnUNet_model_path,
+        container_input_dir,
+        container_output_dir,
+        output_path,
+        network,
+        task_id,
+        folds,
+    )
 
     print("Running post processing")
     fill_in_holes(output_path)
@@ -366,12 +409,27 @@ def segment(argv):
     """
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("input", type=str, help="a path to the folder which contains a nnUNet input")
-    parser.add_argument('--output', type=str, help="a path to the folder to save a nnUNet output")
-    parser.add_argument("--nnUNet_results", type=str, required=True,
-                        help="a path to the \"results\" folder generated during nnU-Net training")
-    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
-    parser.add_argument('--folds', type=str, required=False, help="folds which use for prediction")
+    parser.add_argument(
+        "input", type=str, help="a path to the folder which contains a nnUNet input"
+    )
+    parser.add_argument(
+        "--output", type=str, help="a path to the folder to save a nnUNet output"
+    )
+    parser.add_argument(
+        "--nnUNet_results",
+        type=str,
+        required=True,
+        help='a path to the "results" folder generated during nnU-Net training',
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="Task101_AbdomenSegmentation",
+        help="an id of a task for nnU-Net",
+    )
+    parser.add_argument(
+        "--folds", type=str, required=False, help="folds which use for prediction"
+    )
 
     args = parser.parse_args(argv)
 
@@ -381,12 +439,12 @@ def segment(argv):
     task_id = args.task
     folds = args.folds if args.folds else None
     print("Folds {}".format(folds))
-    segment_abdominal_cavity(nnUNet_model_path, input_path, output_path, task_id, folds=folds)
+    segment_abdominal_cavity(
+        nnUNet_model_path, input_path, output_path, task_id, folds=folds
+    )
 
 
-def merge_segmentation(segmentation_path,
-                       metadata_path,
-                       target_path):
+def merge_segmentation(segmentation_path, metadata_path, target_path):
     """
     Merges segmentation masks saved as separate frames into 3D images corresponding to cine-MRI slices
     Parameters
@@ -412,15 +470,17 @@ def merge_segmentation(segmentation_path,
     # Create folders hierarchy matching hierarchy of images in the archive: patientID -> studyID
     # and merge and save each slice
     for patient in patients:
-        patient.build_path(target_path).mkdir()
+        patient.build_path(target_path).mkdir(exist_ok=True)
         for study in patient.studies:
             study_path = study.build_path(target_path)
-            study_path.mkdir()
+            study_path.mkdir(exist_ok=True)
 
             for slice in study.slices:
                 # Extract frames matching the slice id and its metadata, merge into .mha
                 # and save in a study folder
-                merge_frames(slice.full_id, segmentation_path, study_path, metadata_path)
+                merge_frames(
+                    slice.full_id, segmentation_path, study_path, metadata_path
+                )
 
 
 def merge(argv):
@@ -432,9 +492,18 @@ def merge(argv):
         Command line arguments
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("segmentation_path", type=str, help="a path to the predicted segmentation")
-    parser.add_argument("--metadata_path", type=str, help="a path to the images metadata", required=True)
-    parser.add_argument("--target_path", type=str, help="a path to save the merged prediction", required=True)
+    parser.add_argument(
+        "segmentation_path", type=str, help="a path to the predicted segmentation"
+    )
+    parser.add_argument(
+        "--metadata_path", type=str, help="a path to the images metadata", required=True
+    )
+    parser.add_argument(
+        "--target_path",
+        type=str,
+        help="a path to save the merged prediction",
+        required=True,
+    )
     args = parser.parse_args(argv)
 
     segmentation_path = Path(args.segmentation_path)
@@ -443,12 +512,9 @@ def merge(argv):
     merge_segmentation(segmentation_path, metadata_path, target_path)
 
 
-def run_full_inference(images_path,
-                       output_path,
-                       nnUNet_model_path,
-                       nnUNet_task,
-                       patients=None,
-                       folds=None):
+def run_full_inference(
+    images_path, output_path, nnUNet_model_path, nnUNet_task, patients=None, folds=None
+):
     """
     Runs inference of segmentation masks for the whole cine-MRI archive with nn-UNet
 
@@ -478,11 +544,13 @@ def run_full_inference(images_path,
     nnUNet_input_path = output_path / FRAMES_FOLDER
     nnUNet_output_path = output_path / MASKS_FOLDER
 
-    segment_abdominal_cavity(nnUNet_model_path,
-                             nnUNet_input_path,
-                             nnUNet_output_path,
-                             nnUNet_task,
-                             folds=folds)
+    segment_abdominal_cavity(
+        nnUNet_model_path,
+        nnUNet_input_path,
+        nnUNet_output_path,
+        nnUNet_task,
+        folds=folds,
+    )
 
     metadata_path = output_path / METADATA_FOLDER
     merged_masks_path = output_path / MERGED_MASKS_FOLDER
@@ -498,14 +566,34 @@ def full_inference(argv):
         Command line arguments
     """
     parser = argparse.ArgumentParser()
-    parser.add_argument("images_path", type=str, help="a path to a folder with cine-MRI images")
-    parser.add_argument("--slices_filter", type=str, required=False, help="a path to a file with full id of slices "
-                                                                          "which to run the inference for")
-    parser.add_argument("--output_path", type=str, help="a path where to save the output")
-    parser.add_argument("--nnUNet_results", type=str, required=True,
-                        help="a path to the \"results\" folder generated during nnU-Net training")
-    parser.add_argument("--task", type=str, default="Task101_AbdomenSegmentation", help="an id of a task for nnU-Net")
-    parser.add_argument('--folds', type=str, required=False, help="folds which use for prediction")
+    parser.add_argument(
+        "images_path", type=str, help="a path to a folder with cine-MRI images"
+    )
+    parser.add_argument(
+        "--slices_filter",
+        type=str,
+        required=False,
+        help="a path to a file with full id of slices "
+        "which to run the inference for",
+    )
+    parser.add_argument(
+        "--output_path", type=str, help="a path where to save the output"
+    )
+    parser.add_argument(
+        "--nnUNet_results",
+        type=str,
+        required=True,
+        help='a path to the "results" folder generated during nnU-Net training',
+    )
+    parser.add_argument(
+        "--task",
+        type=str,
+        default="Task101_AbdomenSegmentation",
+        help="an id of a task for nnU-Net",
+    )
+    parser.add_argument(
+        "--folds", type=str, required=False, help="folds which use for prediction"
+    )
     args = parser.parse_args(argv)
 
     images_path = Path(args.images_path)
@@ -515,13 +603,81 @@ def full_inference(argv):
     folds = args.folds if args.folds else None
     patients = _patients_from_args(args)
 
-    run_full_inference(images_path, output_path, nnUNet_results_path, nnUNet_task, patients, folds)
+    run_full_inference(
+        images_path, output_path, nnUNet_results_path, nnUNet_task, patients, folds
+    )
 
 
-if __name__ == '__main__':
+def nnunet_inference(argv):
+    # Use trained network to generate segmentation masks
+    parser = argparse.ArgumentParser()
+    parser.add_argument("task", type=str)
+    parser.add_argument("--input", type=str, default="/input")
+    parser.add_argument("--output", type=str, default="/output")
+    parser.add_argument(
+        "--results", type=str, required=True
+    )  # Path to training results folder with model weights etc
+    parser.add_argument("--network", type=str, default="3d_fullres")
+    parser.add_argument("--trainer", type=str, default="nnUNetTrainerV2")
+    parser.add_argument("--folds", type=str, required=False)
+    parser.add_argument(
+        "--checkpoint", type=str, required=False
+    )  # Checkpoint to load, defaults to "model_final_checkpoint"
+    parser.add_argument("--store_probability_maps", action="store_true")
+    parser.add_argument("--disable_augmentation", action="store_true")
+    parser.add_argument("--disable_patch_overlap", action="store_true")
+    args = parser.parse_args(argv)
+
+    # Set environment variables
+    os.environ["RESULTS_FOLDER"] = args.results
+
+    # Prepare output directory to prevent crashes
+    outdir = Path(args.output).absolute()
+    outdir.mkdir(parents=True, exist_ok=True)
+
+    # Run prediction script
+    cmd = [
+        "nnUNet_predict",
+        "-t",
+        args.task,
+        "-i",
+        args.input,
+        "-o",
+        args.output,
+        "-m",
+        args.network,
+        "-tr",
+        args.trainer,
+        "--num_threads_preprocessing",
+        "2",
+        "--num_threads_nifti_save",
+        "1",
+    ]
+
+    if args.folds:
+        cmd.append("-f")
+        cmd.extend(args.folds.split(","))
+
+    if args.checkpoint:
+        cmd.append("-chk")
+        cmd.append(args.checkpoint)
+
+    if args.store_probability_maps:
+        cmd.append("--save_npz")
+
+    if args.disable_augmentation:
+        cmd.append("--disable_tta")
+
+    if args.disable_patch_overlap:
+        cmd.extend(["--step_size", "1"])
+
+    subprocess.check_call(cmd)
+
+
+if __name__ == "__main__":
 
     actions = {
-        "extract_segmentation" : extract_segmentation,
+        "extract_segmentation": extract_segmentation,
         "extract_complete_data": extract_complete_segmentation_data,
         "segment": segment,
         "merge": merge,
@@ -531,6 +687,6 @@ if __name__ == '__main__':
     try:
         action = actions[sys.argv[1]]
     except (IndexError, KeyError):
-        print('Usage: data_conversion ' + '/'.join(actions.keys()) + ' ...')
+        print("Usage: data_conversion " + "/".join(actions.keys()) + " ...")
     else:
         action(sys.argv[2:])

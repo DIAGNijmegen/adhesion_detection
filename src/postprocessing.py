@@ -1,7 +1,7 @@
 import SimpleITK as sitk
 from scipy import ndimage
 from pathlib import Path
-from data_conversion import convert_2d_image_to_pseudo_3d
+from .data_conversion import convert_2d_image_to_pseudo_3d
 
 
 def fill_in_holes(masks_path):

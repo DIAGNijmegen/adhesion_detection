@@ -3,6 +3,13 @@ import numpy as np
 from enum import Enum, unique
 from cinemri.contour import AbdominalContourPart, Contour
 
+# TODO: move to visualisation or delete
+from pathlib import Path
+from cinemri.config import ARCHIVE_PATH
+from .utils import load_visceral_slides
+import SimpleITK as sitk
+import matplotlib.pyplot as plt
+
 
 def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=-1):
     """
@@ -31,7 +38,9 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
 
     def get_distance(point1, point2, axis=-1):
         if axis == -1:
-            distance = np.sqrt((point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2)
+            distance = np.sqrt(
+                (point1[0] - point2[0]) ** 2 + (point1[1] - point2[1]) ** 2
+            )
         else:
             distance = abs(point1[axis] - point2[axis])
 
@@ -100,24 +109,36 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     prior_coords = [coord for coord in prior_coords.tolist() if coord not in top_coords]
 
     # Remove posterior wall coordinates
-    x_posterior_wall, y_posterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.posterior_wall)
+    x_posterior_wall, y_posterior_wall = contour.get_abdominal_contour_part(
+        AbdominalContourPart.posterior_wall
+    )
     posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
-    prior_coords = [coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()]
+    prior_coords = [
+        coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()
+    ]
 
     if evaluation == Evaluation.anterior_wall:
         # remove pelvis
-        x_bottom, y_bottom = contour.get_abdominal_contour_part(AbdominalContourPart.bottom)
+        x_bottom, y_bottom = contour.get_abdominal_contour_part(
+            AbdominalContourPart.bottom
+        )
         pelvis_coords = np.column_stack((x_bottom, y_bottom)).tolist()
         prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
 
     # We remove top 1/2 of anterior wall coordinates
-    x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(AbdominalContourPart.anterior_wall)
+    x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(
+        AbdominalContourPart.anterior_wall
+    )
     anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall)).tolist()
     if evaluation != Evaluation.pelvis:
         # If anterior wall is included into evaluation, remove only its top half
         y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
-        anterior_wall_coords = [coord for coord in anterior_wall_coords if coord[1] < y_anterior_wall_cutoff]
-    prior_coords = np.array([coord for coord in prior_coords if coord not in anterior_wall_coords])
+        anterior_wall_coords = [
+            coord for coord in anterior_wall_coords if coord[1] < y_anterior_wall_cutoff
+        ]
+    prior_coords = np.array(
+        [coord for coord in prior_coords if coord not in anterior_wall_coords]
+    )
 
     return prior_coords[:, 0], prior_coords[:, 1]
 
@@ -153,14 +174,7 @@ def filter_out_prior_vs_subset(x, y, slide_value, evaluation=Evaluation.joint):
     return vs_subset
 
 
-# TODO: move to visualisation or delete
-from pathlib import Path
-from cinemri.config import ARCHIVE_PATH
-from utils import load_visceral_slides
-import SimpleITK as sitk
-import matplotlib.pyplot as plt
-
-if __name__ == '__main__':
+if __name__ == "__main__":
     archive_path = ARCHIVE_PATH
     images_path = archive_path / "detection_new" / "images"
     cumulative_vs_path = Path("../../data/vs_cum/cumulative_vs_contour_reg_det_full_df")
@@ -188,8 +202,7 @@ if __name__ == '__main__':
         plt.scatter(x3, y3, s=10, color="g")
         plt.scatter(x4, y4, s=10, color="c")
 
-        plt.savefig(output_path / "{}.png".format(vs.full_id), bbox_inches='tight', pad_inches=0)
+        plt.savefig(
+            output_path / "{}.png".format(vs.full_id), bbox_inches="tight", pad_inches=0
+        )
         plt.close()
-
-
-
