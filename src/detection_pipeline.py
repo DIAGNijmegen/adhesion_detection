@@ -303,7 +303,6 @@ def predict_consecutive_minima(
 
     # While there are regions that are larger than min_region_len
     while len(regions) > 0:
-        print("hey")
         # Find minimum visceral slide across regions
         region_of_prediction, min_region_ind, vs_value_min_ind = find_min_vs(regions)
         min_slide_value = region_of_prediction.values[vs_value_min_ind]
@@ -316,7 +315,11 @@ def predict_consecutive_minima(
         box = Adhesion([origin_x, origin_y, width, height])
         bounding_boxes.append((box, min_slide_value))
 
-        # Get indices that are inside predicted box
+        # Get indices that are inside predicted box, with double size
+        # to avoid overlapping boxes
+        origin_x = region_of_prediction.x[vs_value_min_ind] - width
+        origin_y = region_of_prediction.y[vs_value_min_ind] - height
+        box = Adhesion([origin_x, origin_y, width * 2, height * 2])
         adjusted_region, start_ind, end_ind = bb_adjusted_region(
             region_of_prediction.points, box
         )
