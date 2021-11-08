@@ -291,12 +291,62 @@ def adhesions_with_region_growing(
     return bounding_boxes
 
 
+def predict_consecutive_minima(
+    regions,
+    bb_size_min,
+    bb_size_max,
+    vs_range,
+    min_region_len=5,
+    **kwargs,
+):
+    bounding_boxes = []
+
+    # While there are regions that are larger than min_region_len
+    while len(regions) > 0:
+        print("hey")
+        # Find minimum visceral slide across regions
+        region_of_prediction, min_region_ind, vs_value_min_ind = find_min_vs(regions)
+        min_slide_value = region_of_prediction.values[vs_value_min_ind]
+
+        # Predict box at the minimum of size bb_size_max
+        # Confidence is the minimum vs value
+        width, height = bb_size_max
+        origin_x = region_of_prediction.x[vs_value_min_ind] - width // 2
+        origin_y = region_of_prediction.y[vs_value_min_ind] - height // 2
+        box = Adhesion([origin_x, origin_y, width, height])
+        bounding_boxes.append((box, min_slide_value))
+
+        # Get indices that are inside predicted box
+        adjusted_region, start_ind, end_ind = bb_adjusted_region(
+            region_of_prediction.points, box
+        )
+
+        # Remove those indices from current regions
+
+        # Remove the region of prediction from the array
+        del regions[min_region_ind]
+
+        # Add regions around the cutoff if they are large enough
+        region_before_bb = Region.from_points(region_of_prediction.points[:start_ind])
+        if region_before_bb.exceeded_size(bb_size_min):
+            regions.append(region_before_bb)
+
+        region_after_bb = Region.from_points(
+            region_of_prediction.points[(end_ind + 1) :]
+        )
+        if region_after_bb.exceeded_size(bb_size_min):
+            regions.append(region_after_bb)
+
+    return bounding_boxes
+
+
 def bb_with_threshold(
     vs,
     bb_size_min,
     bb_size_max,
     vs_range,
     pred_func=adhesions_with_region_growing,
+    apply_contour_prior=False,
     conf_type=ConfidenceType.mean,
     region_growing_ind=None,
     min_region_len=5,
@@ -325,7 +375,18 @@ def bb_with_threshold(
     """
 
     x, y, slide_value = vs.x, vs.y, vs.values
-    contour_subset = filter_out_prior_vs_subset(x, y, slide_value)
+
+    # Optionally remove parts of contour
+    if apply_contour_prior:
+        contour_subset = filter_out_prior_vs_subset(x, y, slide_value)
+        x = contour_subset[:, 0]
+        y = contour_subset[:, 1]
+        slide_value = contour_subset[:, 2]
+    else:
+        contour_subset = np.zeros((len(x), 3))
+        contour_subset[:, 0] = x
+        contour_subset[:, 1] = y
+        contour_subset[:, 2] = slide_value
 
     # Remove the outliers
     contour_subset = np.array(
@@ -344,10 +405,10 @@ def bb_with_threshold(
         bb_size_min,
         bb_size_max,
         vs_range,
-        conf_type,
-        region_growing_ind,
-        min_region_len,
-        lr,
+        conf_type=conf_type,
+        region_growing_ind=region_growing_ind,
+        min_region_len=min_region_len,
+        lr=lr,
     )
     return bounding_boxes
 

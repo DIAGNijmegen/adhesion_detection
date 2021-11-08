@@ -7,7 +7,7 @@ from src.vs_computation import (
     CumulativeVisceralSlideDetectorReg,
 )
 from src.utils import load_visceral_slides
-from src.detection_pipeline import bb_with_threshold
+from src.detection_pipeline import bb_with_threshold, predict_consecutive_minima
 from pathlib import Path
 import shutil
 import SimpleITK as sitk
@@ -100,7 +100,14 @@ if __name__ == "__main__":
         predictions = {}
         for visceral_slide in visceral_slides:
             patient_id, study_id, series_id = visceral_slide.full_id.split("_")
-            prediction = bb_with_threshold(visceral_slide, (15, 15), (30, 30), (0, 100))
+            prediction = bb_with_threshold(
+                visceral_slide,
+                (15, 15),
+                (30, 30),
+                (0, 10000),
+                pred_func=predict_consecutive_minima,
+                apply_contour_prior=False,
+            )
             prediction = [
                 ([p.origin_x, p.origin_y, p.width, p.height], float(conf))
                 for p, conf in prediction
