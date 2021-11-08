@@ -32,7 +32,6 @@ class VSWarpingField(Enum):
 
 
 class VisceralSlideDetector:
-
     @staticmethod
     def calculate_visceral_slide(deformation_field, contour):
         """
@@ -104,7 +103,14 @@ class VisceralSlideDetector:
         motion = [value if value > 0 else zero_placeholder for value in motion]
         return np.array(motion)
 
-    def normalize_vs_by_motion(self, visceral_slide, contour, normalization_type, normalization_df, norm_vicinity):
+    def normalize_vs_by_motion(
+        self,
+        visceral_slide,
+        contour,
+        normalization_type,
+        normalization_df,
+        norm_vicinity,
+    ):
         """
         Normalises visceral slide by motion according to the specified normalisation type
         Parameters
@@ -126,13 +132,24 @@ class VisceralSlideDetector:
            A normalised visceral slide
         """
         if normalization_type == VSNormType.average_anterior_wall:
-            x_aw, y_aw, u_aw, v_aw = get_anterior_wall_data(contour.x_neighbour, contour.y_neighbour,
-                                                            contour.u_normal, contour.v_normal)
-            abdominal_wall_motion = self.get_motion(normalization_df, x_aw, y_aw, u_aw, v_aw)
+            x_aw, y_aw, u_aw, v_aw = get_anterior_wall_data(
+                contour.x_neighbour,
+                contour.y_neighbour,
+                contour.u_normal,
+                contour.v_normal,
+            )
+            abdominal_wall_motion = self.get_motion(
+                normalization_df, x_aw, y_aw, u_aw, v_aw
+            )
             visceral_slide = visceral_slide / np.mean(abdominal_wall_motion)
         elif normalization_type == VSNormType.contour_vicinity:
-            contour_motion = self.get_motion(normalization_df, contour.x_neighbour, contour.y_neighbour,
-                                             contour.u_normal, contour.v_normal)
+            contour_motion = self.get_motion(
+                normalization_df,
+                contour.x_neighbour,
+                contour.y_neighbour,
+                contour.u_normal,
+                contour.v_normal,
+            )
             contour_motion_averaged = average_by_vicinity(contour_motion, norm_vicinity)
             visceral_slide = visceral_slide / contour_motion_averaged
 
@@ -140,14 +157,15 @@ class VisceralSlideDetector:
 
 
 class VisceralSlideDetectorDF(VisceralSlideDetector):
-
-    def get_visceral_slide(self,
-                           df_cavity,
-                           df_rest,
-                           df_normalization,
-                           moving_mask,
-                           normalization_type=VSNormType.none,
-                           norm_vicinity=15):
+    def get_visceral_slide(
+        self,
+        df_cavity,
+        df_rest,
+        df_normalization,
+        moving_mask,
+        normalization_type=VSNormType.none,
+        norm_vicinity=15,
+    ):
         """
         Calculates visceral slide based on the passed deformation field and abdominal cavity mask
         and normalises it with specified normalisation option
@@ -179,28 +197,27 @@ class VisceralSlideDetectorDF(VisceralSlideDetector):
         visceral_slide = np.abs(visceral_slide)
 
         # Normalize with the provided option
-        visceral_slide = self.normalize_vs_by_motion(visceral_slide,
-                                                     contour,
-                                                     normalization_type,
-                                                     df_normalization,
-                                                     norm_vicinity)
+        visceral_slide = self.normalize_vs_by_motion(
+            visceral_slide, contour, normalization_type, df_normalization, norm_vicinity
+        )
 
         return contour.x, contour.y, visceral_slide
 
 
 class VisceralSlideDetectorReg(VisceralSlideDetector):
-
     def __init__(self):
         self.registrator = Registrator()
 
-    def get_visceral_slide(self,
-                           moving,
-                           moving_mask,
-                           fixed,
-                           fixed_mask=None,
-                           normalization_type=VSNormType.none,
-                           normalization_field=VSNormField.rest,
-                           norm_vicinity=15):
+    def get_visceral_slide(
+        self,
+        moving,
+        moving_mask,
+        fixed,
+        fixed_mask=None,
+        normalization_type=VSNormType.none,
+        normalization_field=VSNormField.rest,
+        norm_vicinity=15,
+    ):
         """Calculates visceral slide based on the moving and fixed frames and their masks using image registration
         and normalises it with specified normalisation option
 
@@ -232,8 +249,10 @@ class VisceralSlideDetectorReg(VisceralSlideDetector):
         moving_mask = moving_mask.astype(np.uint8)
         # We need to calculate the transformation between entire moving and fixed frame
         # if the moving mask is missing or we want to normalise the VS by the entire deformation filed
-        complete_df_needed = (fixed_mask is None or
-                             (normalization_type != VSNormType.none and normalization_field == VSNormField.complete))
+        complete_df_needed = fixed_mask is None or (
+            normalization_type != VSNormType.none
+            and normalization_field == VSNormField.complete
+        )
 
         if complete_df_needed:
             # Register moving to fixed without mask
@@ -245,28 +264,32 @@ class VisceralSlideDetectorReg(VisceralSlideDetector):
             fixed_mask = ants.apply_transforms(
                 fixed=numpy_2d_to_ants(fixed),
                 moving=numpy_2d_to_ants(moving_mask),
-                transformlist=transforms["fwdtransforms"]
+                transformlist=transforms["fwdtransforms"],
             ).numpy()
 
         fixed_mask = fixed_mask.astype(np.uint8)
 
         # Compute full deformation field as a sum of abdominal cavity and surroundings deformations
-        deformation_field = self.get_full_deformation_field(fixed, moving, fixed_mask, moving_mask)
+        deformation_field = self.get_full_deformation_field(
+            fixed, moving, fixed_mask, moving_mask
+        )
 
         contour = Contour.from_mask(moving_mask)
         visceral_slide = self.calculate_visceral_slide(deformation_field, contour)
         visceral_slide = np.abs(visceral_slide)
 
-        normalization_df = self.rest_field if normalization_field == VSNormField.rest else complete_df
-        visceral_slide = self.normalize_vs_by_motion(visceral_slide,
-                                                     contour,
-                                                     normalization_type,
-                                                     normalization_df,
-                                                     norm_vicinity)
+        normalization_df = (
+            self.rest_field if normalization_field == VSNormField.rest else complete_df
+        )
+        visceral_slide = self.normalize_vs_by_motion(
+            visceral_slide, contour, normalization_type, normalization_df, norm_vicinity
+        )
 
         return contour.x, contour.y, visceral_slide
 
-    def get_full_deformation_field(self, fixed, moving, fixed_cavity_mask, moving_cavity_mask):
+    def get_full_deformation_field(
+        self, fixed, moving, fixed_cavity_mask, moving_cavity_mask
+    ):
         """
         Calculates the full deformation field
         Parameters
@@ -281,22 +304,19 @@ class VisceralSlideDetectorReg(VisceralSlideDetector):
 
         """
         # Get cavity deformation field
-        self.cavity_field = self.registrator.get_masked_deformation_field(fixed,
-                                                                          moving,
-                                                                          fixed_cavity_mask,
-                                                                          moving_cavity_mask)
+        self.cavity_field = self.registrator.get_masked_deformation_field(
+            fixed, moving, fixed_cavity_mask, moving_cavity_mask
+        )
         # Get rest deformation field
-        self.rest_field = self.registrator.get_masked_deformation_field(fixed,
-                                                                        moving,
-                                                                        1 - fixed_cavity_mask,
-                                                                        1 - moving_cavity_mask)
+        self.rest_field = self.registrator.get_masked_deformation_field(
+            fixed, moving, 1 - fixed_cavity_mask, 1 - moving_cavity_mask
+        )
 
         # Combine deformation fields into one
         return self.cavity_field + self.rest_field
 
 
 class CumulativeVisceralSlideDetector:
-
     @staticmethod
     def warp_visceral_slide(x, y, visceral_slide, deformation_field):
         """
@@ -329,11 +349,21 @@ class CumulativeVisceralSlideDetector:
         visceral_slide_warped_unique = []
         for coord in xy_warped_unique:
             # Find all point with the current coordinate in the warped VS
-            vs_at_coord = np.array([vs for vs in visceral_slide_warped if vs[0] == coord[0] and vs[1] == coord[1]])
+            vs_at_coord = np.array(
+                [
+                    vs
+                    for vs in visceral_slide_warped
+                    if vs[0] == coord[0] and vs[1] == coord[1]
+                ]
+            )
             avg_vs = np.mean(vs_at_coord[..., 2])
             visceral_slide_warped_unique.append(avg_vs)
 
-        return xy_warped_unique[:, 0], xy_warped_unique[:, 1], visceral_slide_warped_unique
+        return (
+            xy_warped_unique[:, 0],
+            xy_warped_unique[:, 1],
+            visceral_slide_warped_unique,
+        )
 
     @staticmethod
     def add_visceral_slides(visceral_slide, visceral_slide_warped):
@@ -365,7 +395,9 @@ class CumulativeVisceralSlideDetector:
 
         return x_target, y_target, np.array(vs_added)
 
-    def compute_cumulative_visceral_slide(self, visceral_slides, frames, warping_dfs, plot=False):
+    def compute_cumulative_visceral_slide(
+        self, visceral_slides, frames, warping_dfs, plot=False
+    ):
         """
         Computes cumulative visceral slide by adding visceral slides between subsequent cine-MRI frames pairs
         and averaging it
@@ -404,20 +436,29 @@ class CumulativeVisceralSlideDetector:
                 # visceral slide. That is the the current moving frame, hence we need the previous transformation
                 # and we need to take the contour of the current moving image as the fixed image.
                 warping_df = warping_dfs[i - 1]
-                total_x_warped, total_y_warped, total_vs_warped = self.warp_visceral_slide(total_x,
-                                                                                           total_y,
-                                                                                           total_vs,
-                                                                                           warping_df)
+                (
+                    total_x_warped,
+                    total_y_warped,
+                    total_vs_warped,
+                ) = self.warp_visceral_slide(total_x, total_y, total_vs, warping_df)
 
                 if plot:
-                    plot_vs_on_frame(frame, total_x_warped, total_y_warped, total_vs_warped,
-                                       "Total VS warped {}".format(i - 1))
+                    plot_vs_on_frame(
+                        frame,
+                        total_x_warped,
+                        total_y_warped,
+                        total_vs_warped,
+                        "Total VS warped {}".format(i - 1),
+                    )
 
-                total_x, total_y, total_vs = self.add_visceral_slides((x, y, vs),
-                                                                      (total_x_warped, total_y_warped, total_vs_warped))
+                total_x, total_y, total_vs = self.add_visceral_slides(
+                    (x, y, vs), (total_x_warped, total_y_warped, total_vs_warped)
+                )
 
                 if plot:
-                    plot_vs_on_frame(frame, total_x, total_y, total_vs, "Total VS {}".format(i - 1))
+                    plot_vs_on_frame(
+                        frame, total_x, total_y, total_vs, "Total VS {}".format(i - 1)
+                    )
 
         # Take the average of total visceral slide
         total_vs /= len(visceral_slides)
@@ -425,19 +466,20 @@ class CumulativeVisceralSlideDetector:
 
 
 class CumulativeVisceralSlideDetectorDF(CumulativeVisceralSlideDetector):
-
     def __init__(self):
         self.vs_detector = VisceralSlideDetectorDF()
 
-    def get_visceral_slide(self,
-                           moving_masks,
-                           cavity_dfs,
-                           rest_dfs,
-                           warping_dfs,
-                           normalization_dfs,
-                           normalization_type=VSNormType.none,
-                           norm_vicinity=15,
-                           plot=False):
+    def get_visceral_slide(
+        self,
+        moving_masks,
+        cavity_dfs,
+        rest_dfs,
+        warping_dfs,
+        normalization_dfs,
+        normalization_type=VSNormType.none,
+        norm_vicinity=15,
+        plot=False,
+    ):
         """
         Computes cumulative visceral slide based on the specified deformation fields, moving masks
         and normalization parameters
@@ -475,33 +517,38 @@ class CumulativeVisceralSlideDetectorDF(CumulativeVisceralSlideDetector):
             cavity_df = cavity_dfs[i]
             rest_df = rest_dfs[i]
             normalization_df = normalization_dfs[i]
-            x, y, visceral_slide = self.vs_detector.get_visceral_slide(cavity_df,
-                                                                       rest_df,
-                                                                       normalization_df,
-                                                                       moving_mask,
-                                                                       normalization_type,
-                                                                       norm_vicinity)
+            x, y, visceral_slide = self.vs_detector.get_visceral_slide(
+                cavity_df,
+                rest_df,
+                normalization_df,
+                moving_mask,
+                normalization_type,
+                norm_vicinity,
+            )
 
             visceral_slides.append((x, y, visceral_slide))
 
-        total_x, total_y, total_vs = self.compute_cumulative_visceral_slide(visceral_slides, moving_masks, warping_dfs, plot)
+        total_x, total_y, total_vs = self.compute_cumulative_visceral_slide(
+            visceral_slides, moving_masks, warping_dfs, plot
+        )
         return total_x, total_y, total_vs
 
 
 class CumulativeVisceralSlideDetectorReg(CumulativeVisceralSlideDetector):
-
     def __init__(self):
         self.vs_detector = VisceralSlideDetectorReg()
         self.registrator = Registrator()
 
-    def get_visceral_slide(self,
-                           series,
-                           masks,
-                           warping_field=VSWarpingField.contours,
-                           normalization_type=VSNormType.none,
-                           normalization_field=VSNormField.rest,
-                           norm_vicinity=15,
-                           plot=False):
+    def get_visceral_slide(
+        self,
+        series,
+        masks,
+        warping_field=VSWarpingField.contours,
+        normalization_type=VSNormType.none,
+        normalization_field=VSNormField.rest,
+        norm_vicinity=15,
+        plot=False,
+    ):
         """
         Computes the cumulative visceral slide across the series in a slice
         Total visceral slide is matched with the current vs by warping it with deformation field
@@ -543,24 +590,29 @@ class CumulativeVisceralSlideDetectorReg(CumulativeVisceralSlideDetector):
             fixed_mask = masks[i].astype(np.uint32)
 
             # Get visceral slide
-            x, y, visceral_slide = self.vs_detector.get_visceral_slide(moving,
-                                                                       moving_mask,
-                                                                       fixed,
-                                                                       fixed_mask,
-                                                                       normalization_type,
-                                                                       normalization_field,
-                                                                       norm_vicinity)
+            x, y, visceral_slide = self.vs_detector.get_visceral_slide(
+                moving,
+                moving_mask,
+                fixed,
+                fixed_mask,
+                normalization_type,
+                normalization_field,
+                norm_vicinity,
+            )
 
             visceral_slides.append((x, y, visceral_slide))
 
             if warping_field == VSWarpingField.contours:
-                _, deformation_field = self.__contour_transforms(fixed_mask, moving_mask, np.iinfo(np.uint16).max)
+                _, deformation_field = self.__contour_transforms(
+                    fixed_mask, moving_mask, np.iinfo(np.uint16).max
+                )
                 warping_fields.append(deformation_field)
             else:
                 warping_fields.append(self.vs_detector.rest_field)
 
-        total_x, total_y, total_vs = self.compute_cumulative_visceral_slide(visceral_slides, series, warping_fields,
-                                                                            plot)
+        total_x, total_y, total_vs = self.compute_cumulative_visceral_slide(
+            visceral_slides, series, warping_fields, plot
+        )
         return total_x, total_y, total_vs
 
     def __contour_transforms(self, fixed_mask, moving_mask, contour_value):
