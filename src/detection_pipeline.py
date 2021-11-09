@@ -109,9 +109,25 @@ def bb_adjusted_region(region, bounding_box):
     adjusted_region_start = adjusted_region[0, :2]
     adjusted_region_end = adjusted_region[-1, :2]
 
-    coords = region[:, :2]
-    start_index = np.where((coords == adjusted_region_start).all(axis=1))[0][0]
-    end_index = np.where((coords == adjusted_region_end).all(axis=1))[0][0]
+    # coords = region[:, :2]
+    # start_index = np.where((coords == adjusted_region_start).all(axis=1))[0][0]
+    # end_index = np.where((coords == adjusted_region_end).all(axis=1))[0][0]
+
+    # Find start and end index
+    found_start_idx = False
+    found_end_idx = False
+    for idx, val in enumerate(inside_bb):
+        if val and not found_start_idx:
+            start_index = idx
+            found_start_idx = True
+
+        if not val and found_start_idx:
+            end_index = idx - 1
+            found_end_idx = True
+            break
+
+    if not found_end_idx:
+        end_index = idx
 
     if start_index > end_index:
         temp = start_index
