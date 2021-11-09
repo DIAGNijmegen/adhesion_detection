@@ -309,6 +309,10 @@ def load_annotations(
                 bounding_boxes = []
                 types = []
                 for bounding_box_annotation in bounding_box_annotations:
+                    width, height = bounding_box_annotation[2:]
+                    if width < 5 or height < 5:
+                        print(f"Removed anomalous box {bounding_box_annotation}")
+                        continue
                     if type(bounding_box_annotation) is dict:
                         adhesion_type = AdhesionType(bounding_box_annotation["type"])
                         if adhesion_type in adhesion_types:
