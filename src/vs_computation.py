@@ -4,6 +4,7 @@ from cinemri.registration import Registrator
 from cinemri.contour import Contour, get_anterior_wall_data, mask_to_contour
 from cinemri.utils import numpy_2d_to_ants, average_by_vicinity, plot_vs_on_frame
 from enum import Enum, unique
+import pickle
 
 
 @unique
@@ -278,11 +279,15 @@ class VisceralSlideDetectorReg(VisceralSlideDetector):
         visceral_slide = self.calculate_visceral_slide(deformation_field, contour)
         visceral_slide = np.abs(visceral_slide)
 
-        normalization_df = (
+        self.normalization_df = (
             self.rest_field if normalization_field == VSNormField.rest else complete_df
         )
         visceral_slide = self.normalize_vs_by_motion(
-            visceral_slide, contour, normalization_type, normalization_df, norm_vicinity
+            visceral_slide,
+            contour,
+            normalization_type,
+            self.normalization_df,
+            norm_vicinity,
         )
 
         return contour.x, contour.y, visceral_slide
@@ -548,6 +553,7 @@ class CumulativeVisceralSlideDetectorReg(CumulativeVisceralSlideDetector):
         normalization_field=VSNormField.rest,
         norm_vicinity=15,
         plot=False,
+        vs_computation_input_path=None,
     ):
         """
         Computes the cumulative visceral slide across the series in a slice
@@ -579,12 +585,17 @@ class CumulativeVisceralSlideDetectorReg(CumulativeVisceralSlideDetector):
 
         # First, compute and save visceral slide for each subsequent pair of frames and contours transformation
         visceral_slides = []
+        moving_masks = []
         warping_fields = []
+        cavity_dfs = []
+        rest_dfs = []
+        normalization_dfs = []
         for i in range(1, len(series)):
             print("Processing pair {}".format(i))
             # Taking previous frames as moving and the next one as fixed
             moving = series[i - 1].astype(np.uint32)
             moving_mask = masks[i - 1].astype(np.uint32)
+            moving_masks.append(moving_mask.copy())
 
             fixed = series[i].astype(np.uint32)
             fixed_mask = masks[i].astype(np.uint32)
@@ -610,10 +621,43 @@ class CumulativeVisceralSlideDetectorReg(CumulativeVisceralSlideDetector):
             else:
                 warping_fields.append(self.vs_detector.rest_field)
 
+            cavity_dfs.append(self.vs_detector.cavity_field.copy())
+            rest_dfs.append(self.vs_detector.rest_field.copy())
+            normalization_dfs.append(self.vs_detector.normalization_df.copy())
+
+        if vs_computation_input_path is not None:
+            self._pickle_vs_computation_input(
+                vs_computation_input_path,
+                moving_masks,
+                cavity_dfs,
+                rest_dfs,
+                warping_fields,
+                normalization_dfs,
+            )
+
         total_x, total_y, total_vs = self.compute_cumulative_visceral_slide(
             visceral_slides, series, warping_fields, plot
         )
         return total_x, total_y, total_vs
+
+    def _pickle_vs_computation_input(
+        self,
+        filepath,
+        moving_masks,
+        cavity_dfs,
+        rest_dfs,
+        warping_dfs,
+        normalization_dfs,
+    ):
+        vs_computation_input = {}
+        vs_computation_input["moving_masks"] = moving_masks
+        vs_computation_input["cavity_dfs"] = cavity_dfs
+        vs_computation_input["rest_dfs"] = rest_dfs
+        vs_computation_input["warping_dfs"] = warping_dfs
+        vs_computation_input["normalization_dfs"] = normalization_dfs
+        with open(filepath, "w+b") as pkl_file:
+            pickle.dump(vs_computation_input, pkl_file)
+        print(f"Pickled vs computation input to {filepath}")
 
     def __contour_transforms(self, fixed_mask, moving_mask, contour_value):
         """

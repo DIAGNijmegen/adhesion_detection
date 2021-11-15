@@ -1,19 +1,28 @@
 """Run nnu-net inference on all cases in datamodule"""
 from cinemri.datamodules import CineMRIDataModule
+from cinemri.config import ARCHIVE_PATH
+from cinemri.definitions import CineMRISlice
 from src.segmentation import run_full_inference
 from src.vs_computation import (
     VSNormType,
     VSNormField,
     CumulativeVisceralSlideDetectorReg,
+    CumulativeVisceralSlideDetectorDF,
 )
 from src.utils import load_visceral_slides
-from src.detection_pipeline import bb_with_threshold, predict_consecutive_minima
+from src.detection_pipeline import (
+    bb_with_threshold,
+    predict_consecutive_minima,
+    evaluate,
+)
+from src.adhesions import Adhesion, load_annotations
 from pathlib import Path
 import shutil
 import SimpleITK as sitk
 import numpy as np
 import pickle
 import json
+import matplotlib.pyplot as plt
 
 
 def get_dataset_with_boxes():
@@ -26,13 +35,35 @@ def get_dataset_with_boxes():
 def copy_dataset_to_dir(dataset, dest_dir):
     """Copy all slices in dataset to dir for nnunet inference"""
     dest_dir.mkdir(parents=True, exist_ok=True)
+    counter = 0
     for id, filepath in dataset.images.items():
+        if counter > 1000:
+            break
         destination = (
             dest_dir / filepath.parts[-3] / filepath.parts[-2] / filepath.parts[-1]
         )
         destination.parent.mkdir(exist_ok=True, parents=True)
         shutil.copy(filepath, destination)
-        break
+        counter += 1
+
+
+def load_predictions(predictions_path):
+    with open(predictions_path, "r") as file:
+        predictions_dict = json.load(file)
+
+    annotations = {}
+    for patient_id, studies_dict in predictions_dict.items():
+        for study_id, slices_dict in studies_dict.items():
+            for slice_id, bounding_box_annotations in slices_dict.items():
+                slice = CineMRISlice(slice_id, patient_id, study_id)
+                bounding_boxes = []
+                for bounding_box_annotation in bounding_box_annotations:
+                    adhesion = Adhesion(bounding_box_annotation[0])
+                    bounding_boxes.append((adhesion, bounding_box_annotation[1]))
+
+                annotations[slice.full_id] = bounding_boxes
+
+    return annotations
 
 
 if __name__ == "__main__":
@@ -42,6 +73,9 @@ if __name__ == "__main__":
     segmentation_result_dir = Path("/home/bram/data/registration_method/segmentations")
     visceral_slide_dir = Path("/home/bram/data/registration_method/visceral_slide")
     predictions_path = Path("/home/bram/data/registration_method/predictions.json")
+    annotations_path = (
+        ARCHIVE_PATH / "metadata" / "bounding_box_annotations_first_frame.json"
+    )
     segmentation_result_dir.mkdir(exist_ok=True, parents=True)
     visceral_slide_dir.mkdir(exist_ok=True, parents=True)
 
@@ -61,7 +95,7 @@ if __name__ == "__main__":
         )
 
     # Registration + visceral slide computation
-    if False:
+    if True:
         detector = CumulativeVisceralSlideDetectorReg()
         for sample in dataset:
             input_image_np = sample["numpy"]
@@ -74,11 +108,21 @@ if __name__ == "__main__":
             )
             mask_sitk = sitk.ReadImage(str(mask_path))
             mask_np = sitk.GetArrayFromImage(mask_sitk)
+
+            # Save visceral slide input
+            vs_computation_input_path = (
+                visceral_slide_dir
+                / sample["PatientID"]
+                / sample["StudyInstanceUID"]
+                / sample["SeriesInstanceUID"]
+                / "vs_computation_input.pkl"
+            )
             x, y, values = detector.get_visceral_slide(
                 input_image_np.astype(np.float32),
                 mask_np,
                 normalization_type=VSNormType.average_anterior_wall,
                 normalization_field=VSNormField.complete,
+                vs_computation_input_path=vs_computation_input_path,
             )
 
             # Save visceral slide
@@ -94,12 +138,42 @@ if __name__ == "__main__":
             with open(pickle_path, "w+b") as file:
                 pickle.dump(slide_dict, file)
 
+    # Separate VS calculation
+    if False:
+        detector = CumulativeVisceralSlideDetectorDF()
+        for sample in dataset:
+            # Check pickling process
+            input_image_np = sample["numpy"]
+
+            # Load vs input
+            vs_computation_input_path = (
+                visceral_slide_dir
+                / sample["PatientID"]
+                / sample["StudyInstanceUID"]
+                / sample["SeriesInstanceUID"]
+                / "vs_computation_input.pkl"
+            )
+            with open(vs_computation_input_path, "r+b") as pkl_file:
+                vs_computation_input = pickle.load(pkl_file)
+
+            # Compute slide with separate method
+            x, y, values = detector.get_visceral_slide(
+                **vs_computation_input,
+                normalization_type=VSNormType.average_anterior_wall
+            )
+
     # Detection
-    if True:
+    if False:
         visceral_slides = load_visceral_slides(visceral_slide_dir)
         predictions = {}
         for visceral_slide in visceral_slides:
             patient_id, study_id, series_id = visceral_slide.full_id.split("_")
+            if (
+                series_id
+                != "1.3.12.2.1107.5.2.30.26380.2018102912125012802837411.0.0.0"
+            ):
+                # continue
+                pass
             prediction = bb_with_threshold(
                 visceral_slide,
                 (15, 15),
@@ -120,3 +194,16 @@ if __name__ == "__main__":
             predictions[patient_id][study_id][series_id] = prediction
         with open(predictions_path, "w") as file:
             json.dump(predictions, file)
+
+    # Metrics
+    if False:
+        # Load predictions
+        predictions = load_predictions(predictions_path)
+
+        # Load annotations
+        annotations = load_annotations(annotations_path, as_dict=True)
+
+        evaluate(predictions, annotations, Path("/tmp"))
+
+        # Make FROC
+        # Make ROC
