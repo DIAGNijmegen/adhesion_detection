@@ -590,15 +590,15 @@ class CumulativeVisceralSlideDetectorReg(CumulativeVisceralSlideDetector):
         cavity_dfs = []
         rest_dfs = []
         normalization_dfs = []
-        for i in range(1, len(series)):
+        for i in range(len(series) - 1, 0, -1):
             print("Processing pair {}".format(i))
-            # Taking previous frames as moving and the next one as fixed
-            moving = series[i - 1].astype(np.uint32)
-            moving_mask = masks[i - 1].astype(np.uint32)
+            # Taking current frame and previous one as moving/fixed
+            moving = series[i].astype(np.uint32)
+            moving_mask = masks[i].astype(np.uint32)
             moving_masks.append(moving_mask.copy())
 
-            fixed = series[i].astype(np.uint32)
-            fixed_mask = masks[i].astype(np.uint32)
+            fixed = series[i - 1].astype(np.uint32)
+            fixed_mask = masks[i - 1].astype(np.uint32)
 
             # Get visceral slide
             x, y, visceral_slide = self.vs_detector.get_visceral_slide(
