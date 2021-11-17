@@ -97,7 +97,7 @@ if __name__ == "__main__":
     # Registration + visceral slide computation
     if True:
         detector = CumulativeVisceralSlideDetectorReg()
-        for sample in dataset:
+        for idx, sample in enumerate(dataset):
             input_image_np = sample["numpy"]
             mask_path = (
                 segmentation_result_dir
@@ -117,6 +117,11 @@ if __name__ == "__main__":
                 / sample["SeriesInstanceUID"]
                 / "vs_computation_input.pkl"
             )
+            vs_computation_input_path.parent.mkdir(exist_ok=True, parents=True)
+            if vs_computation_input_path.is_file():
+                print(f"Skipping {vs_computation_input_path}")
+                print(f"{(idx+1)/len(dataset)}")
+                continue
             x, y, values = detector.get_visceral_slide(
                 input_image_np.astype(np.float32),
                 mask_np,
@@ -159,7 +164,7 @@ if __name__ == "__main__":
             # Compute slide with separate method
             x, y, values = detector.get_visceral_slide(
                 **vs_computation_input,
-                normalization_type=VSNormType.average_anterior_wall
+                normalization_type=VSNormType.average_anterior_wall,
             )
 
     # Detection
