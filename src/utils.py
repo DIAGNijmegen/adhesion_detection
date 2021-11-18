@@ -216,6 +216,8 @@ def load_visceral_slides(visceral_slide_path):
 
             for slice_id in slices:
                 visceral_slide_data_path = study_path / slice_id / VISCERAL_SLIDE_FILE
+                if not visceral_slide_data_path.is_file():
+                    continue
                 with open(str(visceral_slide_data_path), "r+b") as file:
                     visceral_slide_data = pickle.load(file)
 
