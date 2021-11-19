@@ -2,6 +2,7 @@
 from cinemri.datamodules import CineMRIDataModule
 from cinemri.config import ARCHIVE_PATH
 from cinemri.definitions import CineMRISlice
+from src.datasets import dev_dataset
 from src.segmentation import run_full_inference
 from src.vs_computation import (
     VSNormType,
@@ -75,7 +76,8 @@ def modification_date(filename):
 
 
 if __name__ == "__main__":
-    dataset = get_dataset_with_boxes()
+    # dataset = get_dataset_with_boxes()
+    dataset = dev_dataset()
 
     # Output paths
     segmentation_result_dir = Path("/home/bram/data/registration_method/segmentations")
@@ -93,7 +95,7 @@ if __name__ == "__main__":
     nnunet_model_dir = Path(
         "/home/bram/repos/abdomenmrus-cinemri-vs-algorithm/nnunet/results"
     )
-    if False:
+    if True:
         copy_dataset_to_dir(dataset, nnunet_input_dir)
         run_full_inference(
             nnunet_input_dir,
@@ -126,7 +128,7 @@ if __name__ == "__main__":
                 / "vs_computation_input.pkl"
             )
             vs_computation_input_path.parent.mkdir(exist_ok=True, parents=True)
-            if vs_computation_input_path.is_file():
+            if vs_computation_input_path.is_file() and False:
                 mod_date = modification_date(vs_computation_input_path)
                 ref_date = datetime.datetime(2021, 11, 17, 15, 00, 00)
                 if mod_date > ref_date:
