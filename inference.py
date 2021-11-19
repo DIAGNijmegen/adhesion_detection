@@ -24,6 +24,7 @@ import pickle
 import json
 import os
 import datetime
+import gc
 import matplotlib.pyplot as plt
 
 
@@ -152,6 +153,8 @@ if __name__ == "__main__":
             slide_dict = {"x": x, "y": y, "slide": values}
             with open(pickle_path, "w+b") as file:
                 pickle.dump(slide_dict, file)
+
+            gc.collect()
 
     # Separate VS calculation
     if False:
