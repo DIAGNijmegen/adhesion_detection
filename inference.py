@@ -22,6 +22,8 @@ import SimpleITK as sitk
 import numpy as np
 import pickle
 import json
+import os
+import datetime
 import matplotlib.pyplot as plt
 
 
@@ -66,6 +68,11 @@ def load_predictions(predictions_path):
     return annotations
 
 
+def modification_date(filename):
+    t = os.path.getmtime(filename)
+    return datetime.datetime.fromtimestamp(t)
+
+
 if __name__ == "__main__":
     dataset = get_dataset_with_boxes()
 
@@ -82,11 +89,11 @@ if __name__ == "__main__":
     # Nnunet inference
     nnunet_input_dir = Path("/tmp/nnunet_input")
     nnunet_input_dir.mkdir(exist_ok=True, parents=True)
-    copy_dataset_to_dir(dataset, nnunet_input_dir)
     nnunet_model_dir = Path(
         "/home/bram/repos/abdomenmrus-cinemri-vs-algorithm/nnunet/results"
     )
     if False:
+        copy_dataset_to_dir(dataset, nnunet_input_dir)
         run_full_inference(
             nnunet_input_dir,
             segmentation_result_dir,
@@ -119,9 +126,12 @@ if __name__ == "__main__":
             )
             vs_computation_input_path.parent.mkdir(exist_ok=True, parents=True)
             if vs_computation_input_path.is_file():
-                print(f"Skipping {vs_computation_input_path}")
-                print(f"{(idx+1)/len(dataset)}")
-                continue
+                mod_date = modification_date(vs_computation_input_path)
+                ref_date = datetime.datetime(2021, 11, 17, 15, 00, 00)
+                if mod_date > ref_date:
+                    print(f"Skipping {vs_computation_input_path}")
+                    print(f"{(idx+1)/len(dataset)}")
+                    continue
             x, y, values = detector.get_visceral_slide(
                 input_image_np.astype(np.float32),
                 mask_np,
@@ -168,24 +178,19 @@ if __name__ == "__main__":
             )
 
     # Detection
-    if False:
+    if True:
         visceral_slides = load_visceral_slides(visceral_slide_dir)
         predictions = {}
         for visceral_slide in visceral_slides:
             patient_id, study_id, series_id = visceral_slide.full_id.split("_")
-            if (
-                series_id
-                != "1.3.12.2.1107.5.2.30.26380.2018102912125012802837411.0.0.0"
-            ):
-                # continue
-                pass
             prediction = bb_with_threshold(
                 visceral_slide,
                 (15, 15),
                 (30, 30),
-                (0, 10000),
+                (0, np.inf),
                 pred_func=predict_consecutive_minima,
-                apply_contour_prior=False,
+                apply_contour_prior=True,
+                apply_curvature_filter=True,
             )
             prediction = [
                 ([p.origin_x, p.origin_y, p.width, p.height], float(conf))
@@ -201,7 +206,7 @@ if __name__ == "__main__":
             json.dump(predictions, file)
 
     # Metrics
-    if False:
+    if True:
         # Load predictions
         predictions = load_predictions(predictions_path)
 
