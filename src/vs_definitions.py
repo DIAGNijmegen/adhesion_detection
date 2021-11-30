@@ -45,6 +45,9 @@ class Region:
         self.std = std
         self.points = np.column_stack((self.x, self.y, self.values))
 
+    def __len__(self):
+        return len(self.x)
+
     @classmethod
     def from_point(cls, point):
         """
