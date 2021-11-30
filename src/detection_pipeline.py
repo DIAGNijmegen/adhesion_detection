@@ -10,7 +10,11 @@ from .config import *
 from cinemri.definitions import CineMRISlice
 from .utils import load_visceral_slides, binning_intervals, get_inspexp_frames
 from .stat import bb_size_stat, get_vs_range
-from .contour import get_connected_regions, filter_out_prior_vs_subset
+from .contour import (
+    get_connected_regions,
+    filter_out_prior_vs_subset,
+    filter_out_high_curvature,
+)
 from .froc.deploy_FROC import y_to_FROC
 from scipy import stats
 from sklearn.metrics import roc_curve, auc
@@ -329,7 +333,8 @@ def predict_consecutive_minima(
         origin_x = region_of_prediction.x[vs_value_min_ind] - width // 2
         origin_y = region_of_prediction.y[vs_value_min_ind] - height // 2
         box = Adhesion([origin_x, origin_y, width, height])
-        bounding_boxes.append((box, min_slide_value))
+        if len(region_of_prediction) >= min_region_len:
+            bounding_boxes.append((box, 10 - min_slide_value))
 
         # Get indices that are inside predicted box, with double size
         # to avoid overlapping boxes
@@ -366,6 +371,7 @@ def bb_with_threshold(
     vs_range,
     pred_func=adhesions_with_region_growing,
     apply_contour_prior=False,
+    apply_curvature_filter=False,
     conf_type=ConfidenceType.mean,
     region_growing_ind=None,
     min_region_len=5,
@@ -396,6 +402,11 @@ def bb_with_threshold(
     x, y, slide_value = vs.x, vs.y, vs.values
 
     # Optionally remove parts of contour
+    if apply_curvature_filter:
+        contour_subset = filter_out_high_curvature(x, y, slide_value)
+        x = contour_subset[:, 0]
+        y = contour_subset[:, 1]
+        slide_value = contour_subset[:, 2]
     if apply_contour_prior:
         contour_subset = filter_out_prior_vs_subset(x, y, slide_value)
         x = contour_subset[:, 0]
@@ -651,12 +662,20 @@ def get_prediction_outcome(annotations_dict, predictions, iou_threshold=0.1):
     fns = []
 
     for slice_id, prediction in predictions.items():
+        if (
+            slice_id
+            == "CM0173_1.2.752.24.7.621449243.4290058_1.3.12.2.1107.5.2.30.26380.2018112713410524086741904.0.0.0"
+        ):
+            print("WATCH IT")
+        else:
+            print("ignore")
         if slice_id in annotations_dict:
             annotation = annotations_dict[slice_id]
             # Tracks which predictions has been assigned to a TP
             hit_predictions_inds = []
             # Loop over TPs
             for adhesion in annotation.adhesions:
+                print(adhesion)
                 max_iou = 0
                 max_iou_ind = -1
                 # For simplicity for now one predicted bb can correspond to only one TP
@@ -731,8 +750,10 @@ def compute_slice_level_ROC(predictions, annotations_dict):
     labels = []
     for slice_full_id, prediction in predictions.items():
         if len(prediction) > 0:
-            _, confidence = prediction[0]
-            thresholds.append(confidence)
+            confidences = []
+            for box, confidence in prediction:
+                confidences.append(confidence)
+            thresholds.append(np.max(confidences))
         else:
             thresholds.append(0)
 
