@@ -32,6 +32,8 @@ for series_id in all_series_ids:
 
 
 def dev_dataset():
+    """Dataset containing all annotated series, excluding those that are
+    in the 90-slice test set annotated by Frank"""
     # Get general archive wrapper dataset
     dataset = CineMRIDataset(
         ARCHIVE_PATH, load_heatmaps=False, load_study_labels=False, cache=False
