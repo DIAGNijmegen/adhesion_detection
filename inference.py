@@ -95,7 +95,7 @@ if __name__ == "__main__":
     nnunet_model_dir = Path(
         "/home/bram/repos/abdomenmrus-cinemri-vs-algorithm/nnunet/results"
     )
-    if True:
+    if False:
         copy_dataset_to_dir(dataset, nnunet_input_dir)
         run_full_inference(
             nnunet_input_dir,
@@ -105,7 +105,7 @@ if __name__ == "__main__":
         )
 
     # Registration + visceral slide computation
-    if True:
+    if False:
         detector = CumulativeVisceralSlideDetectorReg()
         for idx, sample in enumerate(dataset):
             input_image_np = sample["numpy"]
@@ -128,13 +128,10 @@ if __name__ == "__main__":
                 / "vs_computation_input.pkl"
             )
             vs_computation_input_path.parent.mkdir(exist_ok=True, parents=True)
-            if vs_computation_input_path.is_file() and False:
-                mod_date = modification_date(vs_computation_input_path)
-                ref_date = datetime.datetime(2021, 11, 17, 15, 00, 00)
-                if mod_date > ref_date:
-                    print(f"Skipping {vs_computation_input_path}")
-                    print(f"{(idx+1)/len(dataset)}")
-                    continue
+            if vs_computation_input_path.is_file():
+                print(f"Skipping {vs_computation_input_path}")
+                print(f"{(idx+1)/len(dataset)}")
+                continue
             x, y, values = detector.get_visceral_slide(
                 input_image_np.astype(np.float32),
                 mask_np,
@@ -207,6 +204,7 @@ if __name__ == "__main__":
             if study_id not in predictions[patient_id]:
                 predictions[patient_id][study_id] = {}
             predictions[patient_id][study_id][series_id] = prediction
+
         with open(predictions_path, "w") as file:
             json.dump(predictions, file)
 
