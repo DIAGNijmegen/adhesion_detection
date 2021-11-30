@@ -77,6 +77,35 @@ def get_connected_regions(contour_subset_coords, connectivity_threshold=5, axis=
     return regions
 
 
+def filter_out_high_curvature(x, y, slide_value):
+    """
+    Returns a subset of visceral slide excluding high curvature regions.
+
+    Parameters
+    ----------
+    x, y: list of int
+       Coordinates of the abdominal cavity contour on the frame
+    slide_value : list of float
+       Visceral slide value at the corresponding coordinate
+
+    Returns
+    -------
+    vs_subset : ndarray
+       3 X N, first column: coordinates by x, second: coordinates by y, third: visceral slide values
+    """
+    contour = Contour(x, y)
+    contour.curvature
+    low_curvature_idxs = []
+    for idx, curvature in enumerate(contour.curvature):
+        if curvature > 0.05:
+            continue
+        low_curvature_idxs.append(idx)
+
+    vs_subset = np.column_stack((x, y, slide_value))
+    vs_subset = vs_subset[low_curvature_idxs]
+    return vs_subset
+
+
 @unique
 class Evaluation(Enum):
     joint = 0
