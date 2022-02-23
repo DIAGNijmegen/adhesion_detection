@@ -1228,5 +1228,24 @@ def test():
     )
 
 
+def load_predictions(predictions_path):
+    with open(predictions_path, "r") as file:
+        predictions_dict = json.load(file)
+
+    annotations = {}
+    for patient_id, studies_dict in predictions_dict.items():
+        for study_id, slices_dict in studies_dict.items():
+            for slice_id, bounding_box_annotations in slices_dict.items():
+                slice = CineMRISlice(slice_id, patient_id, study_id)
+                bounding_boxes = []
+                for bounding_box_annotation in bounding_box_annotations:
+                    adhesion = Adhesion(bounding_box_annotation[0])
+                    bounding_boxes.append((adhesion, bounding_box_annotation[1]))
+
+                annotations[slice.full_id] = bounding_boxes
+
+    return annotations
+
+
 if __name__ == "__main__":
     test()

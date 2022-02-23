@@ -16,7 +16,7 @@ from src.detection_pipeline import (
     predict_consecutive_minima,
     evaluate,
 )
-from src.adhesions import Adhesion, load_annotations
+from src.adhesions import Adhesion, load_annotations, load_predictions
 from pathlib import Path
 import shutil
 import SimpleITK as sitk
@@ -51,25 +51,6 @@ def copy_dataset_to_dir(dataset, dest_dir):
         counter += 1
 
 
-def load_predictions(predictions_path):
-    with open(predictions_path, "r") as file:
-        predictions_dict = json.load(file)
-
-    annotations = {}
-    for patient_id, studies_dict in predictions_dict.items():
-        for study_id, slices_dict in studies_dict.items():
-            for slice_id, bounding_box_annotations in slices_dict.items():
-                slice = CineMRISlice(slice_id, patient_id, study_id)
-                bounding_boxes = []
-                for bounding_box_annotation in bounding_box_annotations:
-                    adhesion = Adhesion(bounding_box_annotation[0])
-                    bounding_boxes.append((adhesion, bounding_box_annotation[1]))
-
-                annotations[slice.full_id] = bounding_boxes
-
-    return annotations
-
-
 def modification_date(filename):
     t = os.path.getmtime(filename)
     return datetime.datetime.fromtimestamp(t)
@@ -82,7 +63,9 @@ if __name__ == "__main__":
     # Output paths
     segmentation_result_dir = Path("/home/bram/data/registration_method/segmentations")
     visceral_slide_dir = Path("/home/bram/data/registration_method/visceral_slide")
-    predictions_path = Path("/home/bram/data/registration_method/predictions.json")
+    predictions_path = Path(
+        "/home/bram/data/registration_method/predictions/predictions.json"
+    )
     annotations_path = (
         ARCHIVE_PATH / "metadata" / "bounding_box_annotations_first_frame.json"
     )
@@ -176,7 +159,7 @@ if __name__ == "__main__":
             # Compute slide with separate method
             x, y, values = detector.get_visceral_slide(
                 **vs_computation_input,
-                normalization_type=VSNormType.average_anterior_wall,
+                normalization_type=VSNormType.none,
             )
 
     # Detection
