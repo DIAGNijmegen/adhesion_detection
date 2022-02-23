@@ -185,6 +185,35 @@ class Adhesion:
 
         return float(intersect) / union
 
+    def assign_type_from_mask(self, mask):
+        """Set the type of adhesion from a mask. This looks whether the
+        adhesion intersects the anterior wall or pelvis wall.
+
+        Parameters
+        ----------
+        mask : np.array
+            Segmentation mask of abdominal cavity
+        """
+        intersect_anterior_wall = False
+        intersect_contour = False
+        for mask_frame in mask:
+            contour = Contour.from_mask(mask_frame)
+            x_anterior, y_anterior = contour.get_abdominal_contour_part(
+                AbdominalContourPart.anterior_wall
+            )
+            intersect_anterior_wall = self.intersects_contour(x_anterior, y_anterior)
+            if intersect_anterior_wall:
+                intersect_contour = True
+                break
+
+            intersect_contour |= self.intersects_contour(contour.x, contour.y)
+        if intersect_anterior_wall:
+            self.type = AdhesionType.anteriorWall
+        elif intersect_contour:
+            self.type = AdhesionType.pelvis
+        else:
+            self.type = AdhesionType.inside
+
 
 class AdhesionAnnotation:
     """
@@ -1241,6 +1270,15 @@ def load_predictions(predictions_path):
                 for bounding_box_annotation in bounding_box_annotations:
                     adhesion = Adhesion(bounding_box_annotation[0])
                     bounding_boxes.append((adhesion, bounding_box_annotation[1]))
+                    type = bounding_box_annotation[2]
+                    if type == "unset":
+                        adhesion.type = AdhesionType.unset
+                    if type == "pelvis":
+                        adhesion.type = AdhesionType.pelvis
+                    if type == "anterior":
+                        adhesion.type = AdhesionType.anteriorWall
+                    if type == "inside":
+                        adhesion.type = AdhesionType.inside
 
                 annotations[slice.full_id] = bounding_boxes
 

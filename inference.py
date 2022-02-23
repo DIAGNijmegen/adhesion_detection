@@ -16,7 +16,7 @@ from src.detection_pipeline import (
     predict_consecutive_minima,
     evaluate,
 )
-from src.adhesions import Adhesion, load_annotations, load_predictions
+from src.adhesions import AdhesionType, Adhesion, load_annotations, load_predictions
 from pathlib import Path
 import shutil
 import SimpleITK as sitk
@@ -26,6 +26,7 @@ import json
 import os
 import datetime
 import gc
+from tqdm import tqdm
 import matplotlib.pyplot as plt
 
 
@@ -166,8 +167,21 @@ if __name__ == "__main__":
     if True:
         visceral_slides = load_visceral_slides(visceral_slide_dir)
         predictions = {}
-        for visceral_slide in visceral_slides:
+        for visceral_slide in tqdm(visceral_slides):
             patient_id, study_id, series_id = visceral_slide.full_id.split("_")
+
+            # Load mask for detection of adhesion type
+            mask_path = (
+                segmentation_result_dir
+                / "merged_masks"
+                / patient_id
+                / study_id
+                / (series_id + ".mha")
+            )
+            mask_sitk = sitk.ReadImage(str(mask_path))
+            mask_np = sitk.GetArrayFromImage(mask_sitk)
+
+            # Get all predicted boxes
             prediction = bb_with_threshold(
                 visceral_slide,
                 (15, 15),
@@ -177,16 +191,29 @@ if __name__ == "__main__":
                 apply_contour_prior=True,
                 apply_curvature_filter=True,
             )
-            prediction = [
-                ([p.origin_x, p.origin_y, p.width, p.height], float(conf))
-                for p, conf in prediction
-            ]
+
+            # Assemble predictions for json format
+            prediction_list = []
+            for p, conf in prediction:
+                box = [p.origin_x, p.origin_y, p.width, p.height]
+                conf = float(conf)
+
+                p.assign_type_from_mask(mask_np)
+                if p.type == AdhesionType.unset:
+                    box_type = "unset"
+                if p.type == AdhesionType.pelvis:
+                    box_type = "pelvis"
+                if p.type == AdhesionType.anteriorWall:
+                    box_type = "anterior"
+                if p.type == AdhesionType.inside:
+                    box_type = "inside"
+                prediction_list.append((box, conf, box_type))
 
             if patient_id not in predictions:
                 predictions[patient_id] = {}
             if study_id not in predictions[patient_id]:
                 predictions[patient_id][study_id] = {}
-            predictions[patient_id][study_id][series_id] = prediction
+            predictions[patient_id][study_id][series_id] = prediction_list
 
         with open(predictions_path, "w") as file:
             json.dump(predictions, file)

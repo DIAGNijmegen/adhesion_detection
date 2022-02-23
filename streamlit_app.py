@@ -9,7 +9,7 @@ import numpy as np
 import pickle
 from src.contour import filter_out_high_curvature
 from src.datasets import dev_dataset
-from src.adhesions import load_annotations, load_predictions
+from src.adhesions import load_annotations, load_predictions, AdhesionType
 from src.detection_pipeline import (
     plot_FROCs,
     plot_ROCs,
@@ -59,12 +59,17 @@ def load_prediction(predictions, series_id):
         if series == series_id:
             prediction = predictions[full_id]
 
-    prediction = [
-        ([p.origin_x, p.origin_y, p.width, p.height], float(conf))
-        for p, conf in prediction
-    ]
+    prediction_list = []
+    for entry in prediction:
+        p = entry[0]
+        conf = entry[1]
+        box = [p.origin_x, p.origin_y, p.width, p.height]
+        conf = float(conf)
+        type = p.type
 
-    return prediction
+        prediction_list.append((box, conf, type))
+
+    return prediction_list
 
 
 def load_all_predictions():
@@ -86,7 +91,15 @@ def plot_vs(series_id, prediction, plot_boxes, filter_high_curvature):
             boxes.append({"box": box, "color": "green"})
     # Assemble prediction boxes
     for box in prediction:
-        boxes.append({"box": box[0], "color": "red", "label": f"{box[1]:.2f}"})
+        if box[2] == AdhesionType.unset:
+            color = "black"
+        if box[2] == AdhesionType.anteriorWall:
+            color = "red"
+        if box[2] == AdhesionType.pelvis:
+            color = "blue"
+        if box[2] == AdhesionType.inside:
+            color = "orange"
+        boxes.append({"box": box[0], "color": color, "label": f"{box[1]:.2f}"})
     image = sample["numpy"][0]
     fig, ax = plt.subplots()
     plot_frame(ax, image, boxes=boxes)
