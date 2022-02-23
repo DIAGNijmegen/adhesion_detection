@@ -96,10 +96,22 @@ def filter_out_high_curvature(x, y, slide_value):
     contour = Contour(x, y)
     contour.curvature
     low_curvature_idxs = []
+    high_curvature_idxs = []
     for idx, curvature in enumerate(contour.curvature):
-        if curvature > 0.05:
+        if curvature > 0.2:
+            high_curvature_idxs.append(idx)
             continue
         low_curvature_idxs.append(idx)
+
+    # Add n extra points before and after low_curvature_idxs
+    n_extra = 15
+    for idx in high_curvature_idxs:
+        for extra_idx in range(idx - n_extra, idx + n_extra):
+            if extra_idx < 0:
+                extra_idx = len(x) + extra_idx
+
+            if extra_idx in low_curvature_idxs:
+                low_curvature_idxs.remove(extra_idx)
 
     vs_subset = np.column_stack((x, y, slide_value))
     vs_subset = vs_subset[low_curvature_idxs]
@@ -142,6 +154,9 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
         AbdominalContourPart.posterior_wall
     )
     posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
+    posterior_wall_coords = posterior_wall_coords[
+        : int(0.9 * len(posterior_wall_coords))
+    ]
     prior_coords = [
         coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()
     ]
@@ -161,7 +176,7 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall)).tolist()
     if evaluation != Evaluation.pelvis:
         # If anterior wall is included into evaluation, remove only its top half
-        y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 2)]
+        y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 4)]
         anterior_wall_coords = [
             coord for coord in anterior_wall_coords if coord[1] < y_anterior_wall_cutoff
         ]
