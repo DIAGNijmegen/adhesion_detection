@@ -2,7 +2,8 @@ import numpy as np
 import ants
 from cinemri.registration import Registrator
 from cinemri.contour import Contour, get_anterior_wall_data, mask_to_contour
-from cinemri.utils import numpy_2d_to_ants, average_by_vicinity, plot_vs_on_frame
+from cinemri.utils import numpy_2d_to_ants, average_by_vicinity
+from cinemri.visualisation import plot_vs_on_frame
 from enum import Enum, unique
 import pickle
 
