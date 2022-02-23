@@ -357,7 +357,7 @@ def y_to_FROC(
 
     # For Each Threshold: Count FPs and Sensitivity
     for th in thresholds:
-        if th > 0:
+        if th > -10:
             y_pred_all_thresholded = np.zeros_like(y_pred_all)
             y_pred_all_thresholded[y_pred_all > th] = 1
             y_pred_pnp_thresholded = np.zeros_like(y_pred_pnp)
