@@ -2,6 +2,7 @@
 from cinemri.datamodules import CineMRIDataModule
 from cinemri.config import ARCHIVE_PATH
 from cinemri.definitions import CineMRISlice
+from cinemri.visualisation import plot_frame
 from src.datasets import dev_dataset
 from src.segmentation import run_full_inference
 from src.vs_computation import (
@@ -145,8 +146,11 @@ if __name__ == "__main__":
 
     # Separate VS calculation
     if False:
+        visceral_slide_dir_recompute = Path(
+            "/home/bram/data/registration_method/visceral_slide_normalized"
+        )
         detector = CumulativeVisceralSlideDetectorDF()
-        for sample in dataset:
+        for sample in tqdm(dataset, desc="Calculating visceral slide"):
             # Check pickling process
             input_image_np = sample["numpy"]
 
@@ -164,12 +168,28 @@ if __name__ == "__main__":
             # Compute slide with separate method
             x, y, values = detector.get_visceral_slide(
                 **vs_computation_input,
-                normalization_type=VSNormType.none,
+                normalization_type=VSNormType.average_anterior_wall,
             )
 
+            # Save visceral slide
+            pickle_path = (
+                visceral_slide_dir_recompute
+                / sample["PatientID"]
+                / sample["StudyInstanceUID"]
+                / sample["SeriesInstanceUID"]
+                / "visceral_slide.pkl"
+            )
+            pickle_path.parent.mkdir(exist_ok=True, parents=True)
+            slide_dict = {"x": x, "y": y, "slide": values}
+            with open(pickle_path, "w+b") as file:
+                pickle.dump(slide_dict, file)
+
     # Detection
-    if False:
-        visceral_slides = load_visceral_slides(visceral_slide_dir)
+    if True:
+        visceral_slide_dir_recompute = Path(
+            "/home/bram/data/registration_method/visceral_slide_normalized"
+        )
+        visceral_slides = load_visceral_slides(visceral_slide_dir_recompute)
         predictions = {}
         for visceral_slide in tqdm(visceral_slides):
             patient_id, study_id, series_id = visceral_slide.full_id.split("_")
@@ -193,7 +213,7 @@ if __name__ == "__main__":
                 (0, np.inf),
                 pred_func=predict_consecutive_minima,
                 apply_contour_prior=True,
-                apply_curvature_filter=True,
+                apply_curvature_filter=False,
             )
 
             # Assemble predictions for json format
@@ -273,13 +293,16 @@ if __name__ == "__main__":
 
     # Metrics
     if True:
+        predictions_path = predictions_path.parent / "predictions_unnormalized.json"
         # Load predictions
         predictions = load_predictions(predictions_path)
 
         # Load annotations
         annotations = load_predictions(extended_annotations_path)
 
-        metrics = picai_eval(predictions, annotations, flat=True)
+        metrics = picai_eval(
+            predictions, annotations, flat=True, types=[AdhesionType.inside]
+        )
 
         # Plot FROC
         plt.figure()
