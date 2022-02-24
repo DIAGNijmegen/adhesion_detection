@@ -7,6 +7,7 @@ from prostatemr_evaluation.eval import (
 )
 from sklearn.metrics import roc_curve, auc
 from .adhesions import AdhesionType
+from copy import deepcopy
 
 
 def evaluate_case(prediction_list, annotation_list, iou_threshold=0.1):
@@ -70,12 +71,15 @@ def evaluate_case(prediction_list, annotation_list, iou_threshold=0.1):
 
 
 def filter_types(adhesion_dict, types):
+    adhesion_dict_filtered = deepcopy(adhesion_dict)
     for series_id in adhesion_dict:
+        adhesion_dict_filtered[series_id] = []
         for entry in adhesion_dict[series_id]:
             if entry[0].type not in types:
-                adhesion_dict[series_id].remove(entry)
+                continue
+            adhesion_dict_filtered[series_id].append(entry)
 
-    return adhesion_dict
+    return adhesion_dict_filtered
 
 
 def picai_eval(
@@ -87,7 +91,6 @@ def picai_eval(
 ):
     annotations = filter_types(annotations, types)
     predictions = filter_types(predictions, types)
-    # TODO filter by adhesion type option
     y_list = []
     roc_true = {}
     roc_pred = {}
@@ -97,8 +100,13 @@ def picai_eval(
         annotation = annotations[series_id]
         y_list_case = evaluate_case(prediction, annotation, iou_threshold)
 
-        roc_true[series_id] = np.max([a[0] for a in y_list_case])
-        roc_pred[series_id] = np.max([a[1] for a in y_list_case])
+        # If no predictions and labels, pred is zero confidence
+        if len(y_list_case) == 0:
+            roc_true[series_id] = 0
+            roc_pred[series_id] = 0
+        else:
+            roc_true[series_id] = np.max([a[0] for a in y_list_case])
+            roc_pred[series_id] = np.max([a[1] for a in y_list_case])
         y_list += y_list_case
         subject_list.append(series_id)
 
