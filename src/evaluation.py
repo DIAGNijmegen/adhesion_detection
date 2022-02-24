@@ -6,6 +6,7 @@ from prostatemr_evaluation.eval import (
     ap_from_lesion_evaluations,
 )
 from sklearn.metrics import roc_curve, auc
+from .adhesions import AdhesionType
 
 
 def evaluate_case(prediction_list, annotation_list, iou_threshold=0.1):
@@ -68,7 +69,24 @@ def evaluate_case(prediction_list, annotation_list, iou_threshold=0.1):
     return y_list
 
 
-def picai_eval(predictions, annotations, iou_threshold=0.001, flat=False):
+def filter_types(adhesion_dict, types):
+    for series_id in adhesion_dict:
+        for entry in adhesion_dict[series_id]:
+            if entry[0].type not in types:
+                adhesion_dict[series_id].remove(entry)
+
+    return adhesion_dict
+
+
+def picai_eval(
+    predictions,
+    annotations,
+    iou_threshold=0.001,
+    flat=False,
+    types=[AdhesionType.anteriorWall, AdhesionType.pelvis, AdhesionType.inside],
+):
+    annotations = filter_types(annotations, types)
+    predictions = filter_types(predictions, types)
     # TODO filter by adhesion type option
     y_list = []
     roc_true = {}
