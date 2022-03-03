@@ -128,6 +128,7 @@ class Evaluation(Enum):
 def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     """
     Extracts the subset of abdominal cavity contour where adhesions can be located
+
     Parameters
     ----------
     x, y : list of int
@@ -154,9 +155,7 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
         AbdominalContourPart.posterior_wall
     )
     posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
-    posterior_wall_coords = posterior_wall_coords[
-        : int(0.9 * len(posterior_wall_coords))
-    ]
+    posterior_wall_coords = posterior_wall_coords[: int(1 * len(posterior_wall_coords))]
     prior_coords = [
         coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()
     ]
@@ -175,11 +174,30 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     )
     anterior_wall_coords = np.column_stack((x_anterior_wall, y_anterior_wall)).tolist()
     if evaluation != Evaluation.pelvis:
+        top_cut = 3 / 8
+        bottom_cut = 1 / 16
         # If anterior wall is included into evaluation, remove only its top half
-        y_anterior_wall_cutoff = sorted(y_anterior_wall)[int(len(y_anterior_wall) / 4)]
-        anterior_wall_coords = [
-            coord for coord in anterior_wall_coords if coord[1] < y_anterior_wall_cutoff
+        y_anterior_wall_top_cutoff = sorted(y_anterior_wall)[
+            int(top_cut * len(y_anterior_wall))
         ]
+        y_anterior_wall_bottom_cutoff = sorted(y_anterior_wall)[
+            int((1 - bottom_cut) * len(y_anterior_wall))
+        ]
+        anterior_wall_coords = [
+            coord
+            for coord in anterior_wall_coords
+            if (
+                coord[1] < y_anterior_wall_top_cutoff
+                or coord[1] > y_anterior_wall_bottom_cutoff
+            )
+        ]
+        # If anterior wall is included into evaluation, remove also bottom bit
+        # y_anterior_wall_cutoff = sorted(y_anterior_wall)[
+        #     int(4 / 8 * len(y_anterior_wall))
+        # ]
+        # anterior_wall_coords = [
+        #     coord for coord in anterior_wall_coords if coord[1] > y_anterior_wall_cutoff
+        # ]
     prior_coords = np.array(
         [coord for coord in prior_coords if coord not in anterior_wall_coords]
     )
