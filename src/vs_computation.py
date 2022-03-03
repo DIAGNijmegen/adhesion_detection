@@ -4,8 +4,11 @@ from cinemri.registration import Registrator
 from cinemri.contour import Contour, get_anterior_wall_data, mask_to_contour
 from cinemri.utils import numpy_2d_to_ants, average_by_vicinity
 from cinemri.visualisation import plot_vs_on_frame
+from scipy.signal import fftconvolve
 from enum import Enum, unique
 import pickle
+import matplotlib.pyplot as plt
+from tqdm import tqdm
 
 
 @unique
@@ -15,6 +18,9 @@ class VSNormType(Enum):
     average_anterior_wall = 1
     # normalize by average motion in the vicinity of each point
     contour_vicinity = 2
+
+    # Normalize by motion map
+    motion_map = 3
 
 
 @unique
@@ -31,6 +37,20 @@ class VSWarpingField(Enum):
     rest = 0
     # use deformation filed between abdominal cavity contours
     contours = 1
+
+
+def calculate_motion_map(df_list):
+    """Calculate a mean displacement map by taking the norm of the
+    displacement vectors at each x,y coordinate. This map is averaged
+    over all dfs by a simple mean"""
+    motion_map = np.zeros(df_list[0].shape[:2])
+    for df in df_list:
+        norm_df = np.linalg.norm(df, axis=2)
+        motion_map += norm_df / len(df_list)
+
+    # kernel = np.ones((30, 30))
+    # motion_map = fftconvolve(motion_map, kernel, mode="same")
+    return motion_map
 
 
 class VisceralSlideDetector:
@@ -74,6 +94,7 @@ class VisceralSlideDetector:
         outer_slide[coords_equal_inds] = 0
 
         visceral_slide = inner_slide - outer_slide
+        # return inner_slide
         return visceral_slide
 
     @staticmethod
@@ -104,6 +125,15 @@ class VisceralSlideDetector:
         zero_placeholder = np.min([value for value in motion if value > 0])
         motion = [value if value > 0 else zero_placeholder for value in motion]
         return np.array(motion)
+
+    @staticmethod
+    def get_motion_map(deformation_field):
+        """Calculate a mean displacement map by taking the norm of the
+        displacement vectors at each x,y coordinate."""
+        motion_map = np.zeros(deformation_field.shape[:2])
+        motion_map = np.linalg.norm(deformation_field, axis=2)
+
+        return motion_map
 
     def normalize_vs_by_motion(
         self,
@@ -154,6 +184,12 @@ class VisceralSlideDetector:
             )
             contour_motion_averaged = average_by_vicinity(contour_motion, norm_vicinity)
             visceral_slide = visceral_slide / contour_motion_averaged
+        elif normalization_type == VSNormType.motion_map:
+            motion_map = self.get_motion_map(normalization_df)
+            # for i in range(len(contour.x)):
+            #     motion = motion_map[int(contour.y[i]), int(contour.x[i])]
+            #     visceral_slide[i] = visceral_slide[i] / motion
+            visceral_slide = visceral_slide / np.mean(motion_map)
 
         return visceral_slide
 
@@ -208,7 +244,17 @@ class VisceralSlideDetectorDF(VisceralSlideDetector):
 
 class VisceralSlideDetectorReg(VisceralSlideDetector):
     def __init__(self):
-        self.registrator = Registrator()
+        self.registrator = Registrator(
+            type_of_transform="SyNOnly",
+            syn_metric="CC",
+            syn_sampling=8,
+            reg_iterations=(40, 20, 0),
+            total_sigma=0,
+            initial_transform="identity",
+            verbose=False,
+            outprefix="/tmp/ants",
+        )
+        # self.registrator = Registrator()
 
     def get_visceral_slide(
         self,
@@ -682,3 +728,170 @@ class CumulativeVisceralSlideDetectorReg(CumulativeVisceralSlideDetector):
         moving_contour = mask_to_contour(moving_mask, contour_value)
 
         return self.registrator.register(fixed_contour, moving_contour)
+
+
+class FirstToAllVisceralSlideDetector:
+    """Calculate average visceral slide by registering the first (moving)
+    frame to all other frames (fixed). The final visceral slide is then
+    a simple sum of all visceral slide values and does not need extra
+    transformations like CumulativeVisceralSlideDetector.
+    """
+
+    def compute_cumulative_visceral_slide(self, visceral_slides):
+        """
+        Computes cumulative visceral slide by adding visceral slides.
+
+        Parameters
+        ----------
+        visceral_slides : list of tuple
+           List of (x, y, visceral_slide) tuples.
+
+        Returns
+        -------
+        total_x, total_y, total_vs : ndarray
+           Coordinates and values of cumulative visceral slide
+        """
+
+        total_x = total_y = None
+        total_vs = None
+        vs_array = np.zeros((len(visceral_slides), len(visceral_slides[0][2])))
+
+        plt.figure()
+
+        for i, (x, y, vs) in enumerate(visceral_slides):
+            # At the first step, the visceral slide between first two frames is total
+            if total_vs is None:
+                total_x, total_y = x, y
+                total_vs = vs
+            else:
+                total_vs += vs
+
+            vs_array[i] = vs
+
+        mean_vs = np.mean(vs_array, axis=0)
+        max_vs = np.max(vs_array, axis=0)
+        min_vs = np.min(vs_array, axis=0)
+        median_vs = np.median(vs_array, axis=0)
+        plt.plot(mean_vs / np.max(mean_vs))
+        plt.plot(max_vs / np.max(max_vs))
+        plt.plot(min_vs / np.max(min_vs))
+        plt.plot(median_vs / np.max(median_vs))
+
+        max_idx = np.argmax(np.mean(vs_array, axis=1))
+        max_mean_vs = vs_array[max_idx]
+        # plt.show()
+
+        # Take the average of total visceral slide
+        total_vs /= len(visceral_slides)
+
+        return total_x, total_y, mean_vs
+        return total_x, total_y, total_vs
+
+
+class FirstToAllVisceralSlideDetectorReg(FirstToAllVisceralSlideDetector):
+    def __init__(self):
+        self.vs_detector = VisceralSlideDetectorReg()
+        self.registrator = Registrator()
+
+    def get_visceral_slide(
+        self,
+        series,
+        masks,
+        warping_field=VSWarpingField.contours,
+        normalization_type=VSNormType.none,
+        normalization_field=VSNormField.rest,
+        norm_vicinity=15,
+        plot=False,
+        vs_computation_input_path=None,
+    ):
+        """
+        Computes the average visceral slide across the series in a slice.
+
+        Parameters
+        ----------
+        series : ndarray
+           A cine-MRI slice to compute the cumulative visceral slide
+        masks : ndarray
+           An abdominal cavity segmentation corresponding to the cine-MRI slice
+        warping_field : VSWarpingField, default=VSWarpingField.contours
+           Specifies which deformation filed to use for visceral slide warping during addition
+        normalization_type : VSNormType, default = VSNormType.none
+           A type of visceral slide normalization to apply
+        normalization_field : VSNormField, default=VSNormField.rest
+           Specifies which deformation filed to use for visceral slide normalization
+        norm_vicinity : int
+           A vicinity to use for VSNormType.contour_vicinity normalization type
+        plot: bool
+           A boolean flag indicating whether to visualise computation by plotting a current visceral slide,
+           a warped cumulative visceral slide and new cumulative visceral slide at each step
+
+        Returns
+        -------
+        total_x, total_y, total_vs : ndarray
+           Coordinates and values of cumulative visceral slide
+        """
+
+        # First, compute and save visceral slide for each subsequent pair of frames and contours transformation
+        visceral_slides = []
+        moving_masks = []
+        cavity_dfs = []
+        rest_dfs = []
+        normalization_dfs = []
+        for i in tqdm(
+            range(1, len(series)), desc="Registering first frame to all frames"
+        ):
+            # Taking current frame and previous one as moving/fixed
+            moving = series[0].astype(np.uint32)
+            moving_mask = masks[0].astype(np.uint32)
+            moving_masks.append(moving_mask.copy())
+
+            fixed = series[i].astype(np.uint32)
+            fixed_mask = masks[i].astype(np.uint32)
+
+            # Get visceral slide
+            x, y, visceral_slide = self.vs_detector.get_visceral_slide(
+                moving,
+                moving_mask,
+                fixed,
+                fixed_mask,
+                normalization_type,
+                normalization_field,
+                norm_vicinity,
+            )
+
+            visceral_slides.append((x, y, visceral_slide))
+
+            cavity_dfs.append(self.vs_detector.cavity_field.copy())
+            rest_dfs.append(self.vs_detector.rest_field.copy())
+            normalization_dfs.append(self.vs_detector.normalization_df.copy())
+
+        if vs_computation_input_path is not None:
+            self._pickle_vs_computation_input(
+                vs_computation_input_path,
+                moving_masks,
+                cavity_dfs,
+                rest_dfs,
+                normalization_dfs,
+            )
+
+        total_x, total_y, total_vs = self.compute_cumulative_visceral_slide(
+            visceral_slides
+        )
+        return total_x, total_y, total_vs
+
+    def _pickle_vs_computation_input(
+        self,
+        filepath,
+        moving_masks,
+        cavity_dfs,
+        rest_dfs,
+        normalization_dfs,
+    ):
+        vs_computation_input = {}
+        vs_computation_input["moving_masks"] = moving_masks
+        vs_computation_input["cavity_dfs"] = cavity_dfs
+        vs_computation_input["rest_dfs"] = rest_dfs
+        vs_computation_input["normalization_dfs"] = normalization_dfs
+        with open(filepath, "w+b") as pkl_file:
+            pickle.dump(vs_computation_input, pkl_file)
+        print(f"Pickled vs computation input to {filepath}")
