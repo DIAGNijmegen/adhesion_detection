@@ -10,6 +10,9 @@ from src.vs_computation import (
     VSNormField,
     CumulativeVisceralSlideDetectorReg,
     CumulativeVisceralSlideDetectorDF,
+    FirstToAllVisceralSlideDetectorReg,
+    FirstToAllVisceralSlideDetectorDF,
+    calculate_motion_map,
 )
 from src.utils import load_visceral_slides
 from src.detection_pipeline import (
@@ -30,6 +33,10 @@ import datetime
 import gc
 from tqdm import tqdm
 import matplotlib.pyplot as plt
+from sklearn.model_selection import GroupKFold
+from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
+from sklearn.preprocessing import StandardScaler
 
 
 def get_dataset_with_boxes():
@@ -96,7 +103,8 @@ if __name__ == "__main__":
     # Registration + visceral slide computation
     if False:
         detector = CumulativeVisceralSlideDetectorReg()
-        for idx, sample in enumerate(dataset):
+        # detector = FirstToAllVisceralSlideDetectorReg()
+        for idx, sample in tqdm(enumerate(dataset), total=len(dataset)):
             input_image_np = sample["numpy"]
             mask_path = (
                 segmentation_result_dir
@@ -117,10 +125,10 @@ if __name__ == "__main__":
                 / "vs_computation_input.pkl"
             )
             vs_computation_input_path.parent.mkdir(exist_ok=True, parents=True)
-            if vs_computation_input_path.is_file():
-                print(f"Skipping {vs_computation_input_path}")
-                print(f"{(idx+1)/len(dataset)}")
-                continue
+            # if vs_computation_input_path.is_file():
+            #     print(f"Skipping {vs_computation_input_path}")
+            #     print(f"{(idx+1)/len(dataset)}")
+            #     continue
             x, y, values = detector.get_visceral_slide(
                 input_image_np.astype(np.float32),
                 mask_np,
@@ -142,14 +150,16 @@ if __name__ == "__main__":
             with open(pickle_path, "w+b") as file:
                 pickle.dump(slide_dict, file)
 
-            gc.collect()
-
     # Separate VS calculation
     if False:
+        visceral_slide_dir = Path(
+            "/home/bram/data/registration_method/visceral_slide_first_to_all"
+        )
         visceral_slide_dir_recompute = Path(
-            "/home/bram/data/registration_method/visceral_slide_normalized"
+            "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
         )
         detector = CumulativeVisceralSlideDetectorDF()
+        detector = FirstToAllVisceralSlideDetectorDF()
         for sample in tqdm(dataset, desc="Calculating visceral slide"):
             # Check pickling process
             input_image_np = sample["numpy"]
@@ -165,10 +175,12 @@ if __name__ == "__main__":
             with open(vs_computation_input_path, "r+b") as pkl_file:
                 vs_computation_input = pickle.load(pkl_file)
 
+            if "warping_dfs" not in vs_computation_input:
+                vs_computation_input["warping_dfs"] = []
             # Compute slide with separate method
             x, y, values = detector.get_visceral_slide(
                 **vs_computation_input,
-                normalization_type=VSNormType.average_anterior_wall,
+                normalization_type=VSNormType.none,
             )
 
             # Save visceral slide
@@ -184,10 +196,163 @@ if __name__ == "__main__":
             with open(pickle_path, "w+b") as file:
                 pickle.dump(slide_dict, file)
 
+    # Generate pixel dataset
+    if True:
+        # For all series
+        # For all pixels in contour
+        #
+        # Determine label by overlap with box
+        # Label be multiclass:
+        # 0: background
+        # 1: anterior wall
+        # 2: pelvis
+        # 3: interior
+        #
+        # Save the following features to disk
+        #
+        # first to all mean visceral slide
+        # anterior/top/pelvis/posterior
+        # x/y position in index coordinates
+        # clockwise portion of contour part (0-1)
+        #
+        # optional for future:
+        #
+        # curvature
+        # contrast difference left and right of contour
+        # motion values, e.g. mean motion map, local motion estimate
+        # min and max visceral slide over all registrations
+        #
+        visceral_slide_dir_recompute = Path(
+            "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
+        )
+        visceral_slides = load_visceral_slides(visceral_slide_dir_recompute)
+        annotations = load_predictions(extended_annotations_path)
+
+        features = {}
+        series_ids = []
+        patient_ids = []
+        for visceral_slide in tqdm(
+            visceral_slides, desc="Assembling classifier features"
+        ):
+            patient_id, study_id, series_id = visceral_slide.full_id.split("_")
+            series_ids.append(series_id)
+            patient_ids.append(patient_id)
+            sample = dataset[series_id]
+            annotation = annotations[visceral_slide.full_id]
+
+            # Determine label
+            x_label = visceral_slide.x
+            y_label = visceral_slide.y
+            label = np.zeros_like(visceral_slide.x)
+            for adhesion, _ in annotation:
+                for idx, (x, y) in enumerate(zip(x_label, y_label)):
+                    if adhesion.contains_point(x, y):
+                        if adhesion.type == AdhesionType.anteriorWall:
+                            label[idx] = 1
+                        if adhesion.type == AdhesionType.pelvis:
+                            label[idx] = 2
+                        if adhesion.type == AdhesionType.inside:
+                            label[idx] = 3
+
+            # Aggregate features
+            features[series_id] = {}
+            features[series_id]["slide"] = list(visceral_slide.values)
+            features[series_id]["x"] = list(visceral_slide.x)
+            features[series_id]["y"] = list(visceral_slide.y)
+            features[series_id]["label"] = list(label > 0)
+
+        # TODO make one long list of all cases
+
+        # TODO save features to disk
+
+        # Plot sample with box and label
+        # boxes = []
+        # for box in sample["box"]:
+        #     boxes.append({"box": box, "color": "green"})
+        # fig, ax = plt.subplots()
+        # plot_frame(ax, sample["numpy"][0], boxes=boxes)
+        # vs_scatter = ax.scatter(
+        #     x_label, y_label, vmin=0, vmax=3, s=5, c=label, cmap="jet"
+        # )
+        # plt.show()
+
+    # Train and val classifier
+    if True:
+
+        def assemble_features(features, series_ids):
+            """Go from dict series_id->feature->list to sklearn format
+            vectors"""
+            included_features = ["slide", "x", "y"]
+            assembled = {}
+            label = []
+            for feature_label in included_features:
+                assembled[feature_label] = []
+
+            for series_id in series_ids:
+                for feature_label in included_features:
+                    assembled[feature_label] += features[series_id][feature_label]
+                label += features[series_id]["label"]
+
+            feature_array = np.zeros((len(label), len(included_features)))
+            for idx, feature_label in enumerate(included_features):
+                feature_array[:, idx] = assembled[feature_label]
+
+            return feature_array, np.array(label)
+
+        def get_normalizer(train_features):
+            return StandardScaler().fit(train_features)
+
+        cv = GroupKFold()
+        for train_index, test_index in cv.split(series_ids, groups=patient_ids):
+            train_series, test_series = (
+                np.array(series_ids)[train_index],
+                np.array(series_ids)[test_index],
+            )
+            train_features, train_labels = assemble_features(features, train_series)
+            test_features, test_labels = assemble_features(features, test_series)
+            normalizer = get_normalizer(train_features)
+
+            # Fit Logistic regression classifier
+            # clf = LogisticRegression().fit(train_features, train_labels)
+            print("Training classifier")
+            clf = MLPClassifier().fit(
+                normalizer.transform(train_features), train_labels
+            )
+            print("Done!")
+            # print("Train acc")
+            # print(clf.score(train_features, train_labels))
+            # print("Val acc")
+            # print(clf.score(test_features, test_labels))
+
+            # Predict all pixels on validation set
+            for series_id in test_series:
+                test_features, test_labels = assemble_features(features, [series_id])
+                test_features = normalizer.transform(test_features)
+                prediction = clf.predict_proba(test_features)[:, 1]
+
+                # Plot predictions and determine how to make boxes from them
+                sample = dataset[str(series_id)]
+                boxes = []
+                for box in sample["box"]:
+                    boxes.append({"box": box, "color": "green"})
+                fig, ax = plt.subplots()
+                plot_frame(ax, sample["numpy"][0], boxes=boxes)
+                vs_scatter = ax.scatter(
+                    features[series_id]["x"],
+                    features[series_id]["y"],
+                    vmin=0,
+                    vmax=1,
+                    s=5,
+                    c=prediction,
+                    cmap="jet",
+                )
+                plt.title(np.max(prediction))
+                plt.show()
+
     # Detection
     if True:
         visceral_slide_dir_recompute = Path(
-            "/home/bram/data/registration_method/visceral_slide_normalized"
+            "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
         )
         visceral_slides = load_visceral_slides(visceral_slide_dir_recompute)
         predictions = {}
@@ -209,7 +374,7 @@ if __name__ == "__main__":
             prediction = bb_with_threshold(
                 visceral_slide,
                 (15, 15),
-                (30, 30),
+                (20, 20),
                 (0, np.inf),
                 pred_func=predict_consecutive_minima,
                 apply_contour_prior=True,
@@ -222,15 +387,16 @@ if __name__ == "__main__":
                 box = [p.origin_x, p.origin_y, p.width, p.height]
                 conf = float(conf)
 
-                p.assign_type_from_mask(mask_np)
-                if p.type == AdhesionType.unset:
-                    box_type = "unset"
-                if p.type == AdhesionType.pelvis:
-                    box_type = "pelvis"
-                if p.type == AdhesionType.anteriorWall:
-                    box_type = "anterior"
-                if p.type == AdhesionType.inside:
-                    box_type = "inside"
+                # p.assign_type_from_mask(mask_np)
+                # if p.type == AdhesionType.unset:
+                #     box_type = "unset"
+                # if p.type == AdhesionType.pelvis:
+                #     box_type = "pelvis"
+                # if p.type == AdhesionType.anteriorWall:
+                #     box_type = "anterior"
+                # if p.type == AdhesionType.inside:
+                #     box_type = "inside"
+                box_type = "anterior"
                 prediction_list.append((box, conf, box_type))
 
             if patient_id not in predictions:
@@ -292,8 +458,8 @@ if __name__ == "__main__":
             json.dump(predictions, file)
 
     # Metrics
-    if True:
-        predictions_path = predictions_path.parent / "predictions_unnormalized.json"
+    if False:
+        predictions_path = predictions_path.parent / "predictions.json"
         # Load predictions
         predictions = load_predictions(predictions_path)
 
