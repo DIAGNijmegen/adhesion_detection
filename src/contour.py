@@ -125,7 +125,7 @@ class Evaluation(Enum):
     pelvis = 2
 
 
-def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
+def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint, return_mask=False):
     """
     Extracts the subset of abdominal cavity contour where adhesions can be located
 
@@ -135,6 +135,8 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
        The coordinates of a contour
     evaluation : Evaluation, default = Evaluation.joint
        The type of evaluation of adhesion detection algorithm
+    return_mask : bool
+        If true, the function only returns a boolean mask on x,y
 
     Returns
     -------
@@ -144,11 +146,14 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
 
     prior_coords = np.column_stack((x, y))
     contour = Contour(x, y)
+    mask = np.ones(len(x)).astype(bool)
 
     # Remove top coordinates
     x_top, y_top = contour.get_abdominal_contour_part(AbdominalContourPart.top)
-    top_coords = np.column_stack((x_top, y_top)).tolist()
-    prior_coords = [coord for coord in prior_coords.tolist() if coord not in top_coords]
+    top_coords = np.column_stack((x_top, y_top))
+    for idx, coord in enumerate(prior_coords):
+        if mask[idx]:
+            mask[idx] = coord.tolist() not in top_coords.tolist()
 
     # Remove posterior wall coordinates
     x_posterior_wall, y_posterior_wall = contour.get_abdominal_contour_part(
@@ -156,19 +161,22 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     )
     posterior_wall_coords = np.column_stack((x_posterior_wall, y_posterior_wall))
     posterior_wall_coords = posterior_wall_coords[: int(1 * len(posterior_wall_coords))]
-    prior_coords = [
-        coord for coord in prior_coords if coord not in posterior_wall_coords.tolist()
-    ]
+    for idx, coord in enumerate(prior_coords):
+        if mask[idx]:
+            mask[idx] = coord.tolist() not in posterior_wall_coords.tolist()
 
+    # Remove pelvis if evaluating anterior wall
     if evaluation == Evaluation.anterior_wall:
-        # remove pelvis
         x_bottom, y_bottom = contour.get_abdominal_contour_part(
             AbdominalContourPart.bottom
         )
-        pelvis_coords = np.column_stack((x_bottom, y_bottom)).tolist()
-        prior_coords = [coord for coord in prior_coords if coord not in pelvis_coords]
+        pelvis_coords = np.column_stack((x_bottom, y_bottom))
+        for idx, coord in enumerate(prior_coords):
+            if mask[idx]:
+                mask[idx] = coord.tolist() not in pelvis_coords.tolist()
 
-    # We remove top 1/2 of anterior wall coordinates
+    # Remove anterior wall if evaluating pelvis, otherwise crop anterior
+    # wall
     x_anterior_wall, y_anterior_wall = contour.get_abdominal_contour_part(
         AbdominalContourPart.anterior_wall
     )
@@ -176,7 +184,6 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
     if evaluation != Evaluation.pelvis:
         top_cut = 3 / 8
         bottom_cut = 1 / 16
-        # If anterior wall is included into evaluation, remove only its top half
         y_anterior_wall_top_cutoff = sorted(y_anterior_wall)[
             int(top_cut * len(y_anterior_wall))
         ]
@@ -191,16 +198,18 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint):
                 or coord[1] > y_anterior_wall_bottom_cutoff
             )
         ]
-        # If anterior wall is included into evaluation, remove also bottom bit
-        # y_anterior_wall_cutoff = sorted(y_anterior_wall)[
-        #     int(4 / 8 * len(y_anterior_wall))
-        # ]
-        # anterior_wall_coords = [
-        #     coord for coord in anterior_wall_coords if coord[1] > y_anterior_wall_cutoff
-        # ]
-    prior_coords = np.array(
-        [coord for coord in prior_coords if coord not in anterior_wall_coords]
-    )
+        for idx, coord in enumerate(prior_coords):
+            if mask[idx]:
+                mask[idx] = coord.tolist() not in anterior_wall_coords
+    else:
+        for idx, coord in enumerate(prior_coords):
+            if mask[idx]:
+                mask[idx] = coord.tolist() not in anterior_wall_coords
+
+    if return_mask:
+        return mask
+
+    prior_coords = prior_coords[mask]
 
     return prior_coords[:, 0], prior_coords[:, 1]
 
