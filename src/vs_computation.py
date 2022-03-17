@@ -72,6 +72,37 @@ class VisceralSlideDetector:
            Visceral slide along the specified contour given the specified deformation field
 
         """
+        plt.figure()
+        plt.quiver(deformation_field[:, :, 0], deformation_field[:, :, 1], scale=10)
+        plt.gca().invert_yaxis()
+        plt.scatter(contour.x, contour.y)
+        plt.show()
+        ### DEBUG CODE: new way of calculating 'visceral slide'
+        vs_list = []
+        for i in range(len(contour.x)):
+            x, y = contour.x[i], contour.y[i]
+            u, v = contour.u[i], contour.v[i]
+
+            # Make meshgrids for x and y coordinates
+            n_points = 10
+            kernel_size = 2 * n_points + 1
+            d = np.linspace(-n_points, n_points, kernel_size, dtype=int)
+            x_grid, y_grid = np.meshgrid(x + d, y + d)
+
+            # Vectorize u, v
+            uv = np.ones((kernel_size, kernel_size, 2))
+            uv[:, :, 0] = u
+            uv[:, :, 1] = v
+
+            # Get df in kernel
+            df_grid = deformation_field[y_grid, x_grid]
+
+            # Dot product and sum
+            vs = (df_grid * uv).sum()
+            vs_list.append(vs)
+
+        return np.array(vs_list)
+        ### END DEBUG CODE
 
         # Get contour and normal neighbours
         uv = np.column_stack((contour.u, contour.v))
@@ -756,8 +787,6 @@ class FirstToAllVisceralSlideDetector:
         total_vs = None
         vs_array = np.zeros((len(visceral_slides), len(visceral_slides[0][2])))
 
-        plt.figure()
-
         for i, (x, y, vs) in enumerate(visceral_slides):
             # At the first step, the visceral slide between first two frames is total
             if total_vs is None:
@@ -772,19 +801,89 @@ class FirstToAllVisceralSlideDetector:
         max_vs = np.max(vs_array, axis=0)
         min_vs = np.min(vs_array, axis=0)
         median_vs = np.median(vs_array, axis=0)
-        plt.plot(mean_vs / np.max(mean_vs))
-        plt.plot(max_vs / np.max(max_vs))
-        plt.plot(min_vs / np.max(min_vs))
-        plt.plot(median_vs / np.max(median_vs))
+
+        # plt.figure()
+        # plt.plot(mean_vs / np.max(mean_vs))
+        # plt.plot(max_vs / np.max(max_vs))
+        # plt.plot(min_vs / np.max(min_vs))
+        # plt.plot(median_vs / np.max(median_vs))
 
         max_idx = np.argmax(np.mean(vs_array, axis=1))
         max_mean_vs = vs_array[max_idx]
-        # plt.show()
 
         # Take the average of total visceral slide
         total_vs /= len(visceral_slides)
 
         return total_x, total_y, mean_vs
+        # return total_x, total_y, min_vs
+
+
+class FirstToAllVisceralSlideDetectorDF(FirstToAllVisceralSlideDetector):
+    def __init__(self):
+        self.vs_detector = VisceralSlideDetectorDF()
+
+    def get_visceral_slide(
+        self,
+        moving_masks,
+        cavity_dfs,
+        rest_dfs,
+        warping_dfs,
+        normalization_dfs,
+        normalization_type=VSNormType.none,
+        norm_vicinity=15,
+        plot=False,
+    ):
+        """
+        Computes cumulative visceral slide based on the specified deformation fields, moving masks
+        and normalization parameters
+        Parameters
+        ----------
+        moving_masks : list of ndarray
+           An ordered list of abdominal cavity segmentation masks on moving frame
+           for each frames pair of cine-MRI series
+        cavity_dfs : list of ndarray
+           An ordered list of masked abdominal cavity deformation fields
+        rest_dfs : list of ndarray
+           An ordered list of masked abdominal cavity surroundings deformation fields
+        warping_dfs : list of ndarray
+           An ordered list of deformation fields to use for warping of cumulative visceral slide during summation
+        normalization_dfs : list of ndarray
+           An ordered list of deformation fields to use for visceral slide normalization
+        normalization_type : VSNormType, default=VSNormType.none
+           A type of visceral slide normalization to apply
+        norm_vicinity : int, default=15
+           A vicinity to use for VSNormType.contour_vicinity normalization type
+        plot : bool, default=False
+           A boolean flag indicating whether to visualise computation by plotting a current visceral slide,
+           a warped cumulative visceral slide and new cumulative visceral slide at each step
+
+        Returns
+        -------
+        total_x, total_y, total_vs : ndarray
+           Coordinates and values of cumulative visceral slide
+        """
+
+        visceral_slides = []
+
+        for i in range(len(moving_masks)):
+            moving_mask = moving_masks[i]
+            cavity_df = cavity_dfs[i]
+            rest_df = rest_dfs[i]
+            normalization_df = normalization_dfs[i]
+            x, y, visceral_slide = self.vs_detector.get_visceral_slide(
+                cavity_df,
+                rest_df,
+                normalization_df,
+                moving_mask,
+                normalization_type,
+                norm_vicinity,
+            )
+
+            visceral_slides.append((x, y, visceral_slide))
+
+        total_x, total_y, total_vs = self.compute_cumulative_visceral_slide(
+            visceral_slides
+        )
         return total_x, total_y, total_vs
 
 

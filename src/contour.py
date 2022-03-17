@@ -184,11 +184,13 @@ def get_adhesions_prior_coords(x, y, evaluation=Evaluation.joint, return_mask=Fa
     if evaluation != Evaluation.pelvis:
         top_cut = 3 / 8
         bottom_cut = 1 / 16
+        top_cut = 0
+        bottom_cut = 0
         y_anterior_wall_top_cutoff = sorted(y_anterior_wall)[
             int(top_cut * len(y_anterior_wall))
         ]
         y_anterior_wall_bottom_cutoff = sorted(y_anterior_wall)[
-            int((1 - bottom_cut) * len(y_anterior_wall))
+            int((1 - bottom_cut) * len(y_anterior_wall)) - 1
         ]
         anterior_wall_coords = [
             coord

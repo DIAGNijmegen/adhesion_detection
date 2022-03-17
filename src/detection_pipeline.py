@@ -14,6 +14,7 @@ from .contour import (
     get_connected_regions,
     filter_out_prior_vs_subset,
     filter_out_high_curvature,
+    Evaluation,
 )
 from .froc.deploy_FROC import y_to_FROC
 from scipy import stats
@@ -200,7 +201,7 @@ def adhesions_with_region_growing(
             max_region_slide_value = (
                 np.sqrt(min_slide_value)
                 if min_slide_value < 1
-                else min_slide_value ** 2
+                else min_slide_value**2
             )
         else:
             max_region_slide_value = (
@@ -334,7 +335,7 @@ def predict_consecutive_minima(
         origin_y = region_of_prediction.y[vs_value_min_ind] - height // 2
         box = Adhesion([origin_x, origin_y, width, height])
         if len(region_of_prediction) >= min_region_len:
-            bounding_boxes.append((box, 10 - min_slide_value))
+            bounding_boxes.append((box, -min_slide_value))
 
         # Get indices that are inside predicted box, with double size
         # to avoid overlapping boxes
@@ -408,7 +409,9 @@ def bb_with_threshold(
         y = contour_subset[:, 1]
         slide_value = contour_subset[:, 2]
     if apply_contour_prior:
-        contour_subset = filter_out_prior_vs_subset(x, y, slide_value)
+        contour_subset = filter_out_prior_vs_subset(
+            x, y, slide_value, evaluation=Evaluation.anterior_wall
+        )
         x = contour_subset[:, 0]
         y = contour_subset[:, 1]
         slide_value = contour_subset[:, 2]
@@ -417,6 +420,9 @@ def bb_with_threshold(
         contour_subset[:, 0] = x
         contour_subset[:, 1] = y
         contour_subset[:, 2] = slide_value
+
+    # Normalize on contour
+    # contour_subset[:, 2] = contour_subset[:, 2] / np.max(contour_subset[:, 2])
 
     # Remove the outliers
     contour_subset = np.array(
@@ -511,6 +517,25 @@ def predict(
     return predictions
 
 
+def froc_wrapper(predictions, annotations_dict, iou_threshold=0.01):
+    tps, fps, fns = get_prediction_outcome(annotations_dict, predictions, iou_threshold)
+    negative_slices_ids = [
+        full_id for full_id in predictions.keys() if full_id not in annotations_dict
+    ]
+    outcomes, outcomes_negative = get_confidence_outcome(
+        tps, fps, fns, negative_slices_ids
+    )
+
+    # FROC
+    slices_num = len(predictions)
+    negative_slices_num = len(negative_slices_ids)
+    fp_per_image, fp_per_negative_image, sensitivity, thresholds = y_to_FROC(
+        outcomes, outcomes_negative, slices_num, negative_slices_num
+    )
+    froc = fp_per_image, fp_per_negative_image, sensitivity
+    return froc
+
+
 def evaluate(predictions, annotations_dict, output_path, iou_threshold=0.01):
     """
     Evaluates the predicted adhesions
@@ -527,50 +552,37 @@ def evaluate(predictions, annotations_dict, output_path, iou_threshold=0.01):
     """
     output_path.mkdir(exist_ok=True, parents=True)
 
-    tps, fps, fns = get_prediction_outcome(annotations_dict, predictions, iou_threshold)
-    negative_slices_ids = [
-        full_id for full_id in predictions.keys() if full_id not in annotations_dict
-    ]
-    outcomes, outcomes_negative = get_confidence_outcome(
-        tps, fps, fns, negative_slices_ids
-    )
-
-    # FROC
-    slices_num = len(predictions)
-    negative_slices_num = len(negative_slices_ids)
-    fp_per_image, fp_per_negative_image, sensitivity, thresholds = y_to_FROC(
-        outcomes, outcomes_negative, slices_num, negative_slices_num
-    )
-    froc = fp_per_image, fp_per_negative_image, sensitivity
-
-    # Precision/Recall
-    precision, recall, thresholds = compute_pr_curves(outcomes)
-    ap, precision1, recall1 = compute_ap(recall, precision)
-    pr_curves = precision, recall, thresholds
-    print("Average precision {}".format(ap))
+    froc = froc_wrapper(predictions, annotations_dict, iou_threshold)
 
     # Slice level data
     slice_roc = compute_slice_level_ROC(predictions, annotations_dict)
     print("Slice level AUC {}".format(slice_roc[2]))
 
-    # Confidence statistics
-    tp_conf = [tp[2] for tp in tps]
-    mean_tp_conf = np.mean(tp_conf)
-    print("Mean TP conf {}".format(mean_tp_conf))
+    # # Precision/Recall
+    # precision, recall, thresholds = compute_pr_curves(outcomes)
+    # ap, precision1, recall1 = compute_ap(recall, precision)
+    # pr_curves = precision, recall, thresholds
+    # print("Average precision {}".format(ap))
 
-    fp_conf = [fp[2] for fp in fps]
-    mean_fp_conf = np.mean(fp_conf)
-    print("Mean FP conf {}".format(mean_fp_conf))
+    # # Confidence statistics
+    # tp_conf = [tp[2] for tp in tps]
+    # mean_tp_conf = np.mean(tp_conf)
+    # print("Mean TP conf {}".format(mean_tp_conf))
 
-    t_test = stats.ttest_ind(tp_conf, fp_conf, equal_var=False)
-    print("T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
+    # fp_conf = [fp[2] for fp in fps]
+    # mean_fp_conf = np.mean(fp_conf)
+    # print("Mean FP conf {}".format(mean_fp_conf))
 
-    conf_stat = mean_tp_conf, mean_fp_conf, t_test.pvalue
+    # t_test = stats.ttest_ind(tp_conf, fp_conf, equal_var=False)
+    # print("T-stat {}, p-value {}".format(t_test.statistic, t_test.pvalue))
 
-    # Save metrics
-    save_evaluation_metrics(froc, pr_curves, ap, slice_roc, conf_stat, output_path)
+    # conf_stat = mean_tp_conf, mean_fp_conf, t_test.pvalue
+
+    # # Save metrics
+    # save_evaluation_metrics(froc, pr_curves, ap, slice_roc, conf_stat, output_path)
 
     # Plot metrics
+    pr_curves = None
     plot_evaluation_metrics(froc, pr_curves, slice_roc, output_path)
 
 
@@ -662,20 +674,12 @@ def get_prediction_outcome(annotations_dict, predictions, iou_threshold=0.1):
     fns = []
 
     for slice_id, prediction in predictions.items():
-        if (
-            slice_id
-            == "CM0173_1.2.752.24.7.621449243.4290058_1.3.12.2.1107.5.2.30.26380.2018112713410524086741904.0.0.0"
-        ):
-            print("WATCH IT")
-        else:
-            print("ignore")
         if slice_id in annotations_dict:
             annotation = annotations_dict[slice_id]
             # Tracks which predictions has been assigned to a TP
             hit_predictions_inds = []
             # Loop over TPs
             for adhesion in annotation.adhesions:
-                print(adhesion)
                 max_iou = 0
                 max_iou_ind = -1
                 # For simplicity for now one predicted bb can correspond to only one TP
@@ -739,7 +743,7 @@ def get_confidence_outcome(tps, fps, fns, negative_ids):
             outcomes_negative.append((0, confidence))
 
     for _ in fns:
-        outcomes.append((1, 0))
+        outcomes.append((1, -np.inf))
 
     return outcomes, outcomes_negative
 
@@ -839,7 +843,7 @@ def plot_ROCs(rocs_data, output_path=None, legends=None, colors=None):
     """
     Plots a slice-level ROC
     """
-    plt.figure()
+    fig = plt.figure()
     if legends is not None:
         if colors is not None:
             for roc_data, legend, color in zip(rocs_data, legends, colors):
@@ -873,12 +877,12 @@ def plot_ROCs(rocs_data, output_path=None, legends=None, colors=None):
         plt.legend(loc="lower right")
     if output_path is not None:
         plt.savefig(output_path / "Slice_ROC.png", bbox_inches="tight", pad_inches=0)
-    plt.show()
+    return fig
 
 
-def plot_FROCs(frocs, output_path, title, legends=None, colors=None):
+def plot_FROCs(frocs, output_path=None, title=None, legends=None, colors=None):
 
-    plt.figure()
+    fig = plt.figure()
     if legends is not None:
         if colors is not None:
             for froc, legend, color in zip(frocs, legends, colors):
@@ -896,8 +900,12 @@ def plot_FROCs(frocs, output_path, title, legends=None, colors=None):
     plt.xscale("log")
     if legends is not None:
         plt.legend(loc="upper left")
-    plt.savefig(output_path / "{}.png".format(title), bbox_inches="tight", pad_inches=0)
-    plt.show()
+    if output_path is not None and title is not None:
+        plt.savefig(
+            output_path / "{}.png".format(title), bbox_inches="tight", pad_inches=0
+        )
+
+    return fig
 
 
 def plot_precisions_recalls(

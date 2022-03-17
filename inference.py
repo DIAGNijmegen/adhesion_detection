@@ -5,6 +5,7 @@ from cinemri.definitions import CineMRISlice
 from cinemri.visualisation import plot_frame
 from src.datasets import dev_dataset
 from src.segmentation import run_full_inference
+from src.classification import get_boxes_from_raw
 from src.vs_computation import (
     VSNormType,
     VSNormField,
@@ -21,6 +22,11 @@ from src.detection_pipeline import (
     evaluate,
 )
 from src.adhesions import AdhesionType, Adhesion, load_annotations, load_predictions
+from src.contour import (
+    get_adhesions_prior_coords,
+    Evaluation,
+    filter_out_prior_vs_subset,
+)
 from src.evaluation import picai_eval
 from pathlib import Path
 import shutil
@@ -36,7 +42,9 @@ import matplotlib.pyplot as plt
 from sklearn.model_selection import GroupKFold
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
+from sklearn.svm import SVC
 from sklearn.preprocessing import StandardScaler
+from report_guided_annotation.extract_lesion_candidates import preprocess_softmax
 
 
 def get_dataset_with_boxes():
@@ -277,7 +285,9 @@ if __name__ == "__main__":
         # plt.show()
 
     # Train and val classifier
-    if True:
+    if False:
+        evaluation = Evaluation.anterior_wall
+        # evaluation = Evaluation.pelvis
 
         def assemble_features(features, series_ids):
             """Go from dict series_id->feature->list to sklearn format
@@ -285,6 +295,7 @@ if __name__ == "__main__":
             included_features = ["slide", "x", "y"]
             assembled = {}
             label = []
+            mask = []
             for feature_label in included_features:
                 assembled[feature_label] = []
 
@@ -293,16 +304,25 @@ if __name__ == "__main__":
                     assembled[feature_label] += features[series_id][feature_label]
                 label += features[series_id]["label"]
 
+                # Get contour part masks
+                x = features[series_id]["x"]
+                y = features[series_id]["y"]
+                case_mask = get_adhesions_prior_coords(
+                    x, y, evaluation=evaluation, return_mask=True
+                )
+                mask += list(case_mask)
+
             feature_array = np.zeros((len(label), len(included_features)))
             for idx, feature_label in enumerate(included_features):
                 feature_array[:, idx] = assembled[feature_label]
 
-            return feature_array, np.array(label)
+            return feature_array[mask], np.array(label)[mask]
 
         def get_normalizer(train_features):
             return StandardScaler().fit(train_features)
 
         cv = GroupKFold()
+        predictions_dict = {}
         for train_index, test_index in cv.split(series_ids, groups=patient_ids):
             train_series, test_series = (
                 np.array(series_ids)[train_index],
@@ -315,8 +335,9 @@ if __name__ == "__main__":
             # Fit Logistic regression classifier
             # clf = LogisticRegression().fit(train_features, train_labels)
             print("Training classifier")
-            clf = MLPClassifier().fit(
-                normalizer.transform(train_features), train_labels
+            clf = SVC(class_weight="balanced", probability=True, max_iter=-1).fit(
+                normalizer.transform(train_features),
+                train_labels,
             )
             print("Done!")
             # print("Train acc")
@@ -326,31 +347,177 @@ if __name__ == "__main__":
 
             # Predict all pixels on validation set
             for series_id in test_series:
-                test_features, test_labels = assemble_features(features, [series_id])
-                test_features = normalizer.transform(test_features)
+                test_features_unnorm, test_labels = assemble_features(
+                    features, [series_id]
+                )
+                test_features = normalizer.transform(test_features_unnorm)
                 prediction = clf.predict_proba(test_features)[:, 1]
 
-                # Plot predictions and determine how to make boxes from them
-                sample = dataset[str(series_id)]
-                boxes = []
-                for box in sample["box"]:
-                    boxes.append({"box": box, "color": "green"})
-                fig, ax = plt.subplots()
-                plot_frame(ax, sample["numpy"][0], boxes=boxes)
-                vs_scatter = ax.scatter(
-                    features[series_id]["x"],
-                    features[series_id]["y"],
-                    vmin=0,
-                    vmax=1,
-                    s=5,
-                    c=prediction,
-                    cmap="jet",
+                # Convert to connected predictions
+                # TODO get x,y somehow nicer from features
+                pred_boxes = get_boxes_from_raw(
+                    prediction, test_features_unnorm[:, 1], test_features_unnorm[:, 2]
                 )
-                plt.title(np.max(prediction))
-                plt.show()
 
-    # Detection
+                # Get patient id and study id
+                sample = dataset[str(series_id)]
+                patient_id = sample["PatientID"]
+                study_id = sample["StudyInstanceUID"]
+
+                # Save in predictions_dict
+                prediction_list = []
+                for p, conf in pred_boxes:
+                    box = [p.origin_x, p.origin_y, p.width, p.height]
+                    conf = float(conf)
+
+                    # p.assign_type_from_mask(mask_np)
+                    # if p.type == AdhesionType.unset:
+                    #     box_type = "unset"
+                    # if p.type == AdhesionType.pelvis:
+                    #     box_type = "pelvis"
+                    # if p.type == AdhesionType.anteriorWall:
+                    #     box_type = "anterior"
+                    # if p.type == AdhesionType.inside:
+                    #     box_type = "inside"
+                    #
+                    box_type = "anterior"
+                    prediction_list.append((box, conf, box_type))
+                if patient_id not in predictions_dict:
+                    predictions_dict[patient_id] = {}
+                if study_id not in predictions_dict[patient_id]:
+                    predictions_dict[patient_id][study_id] = {}
+                predictions_dict[patient_id][study_id][str(series_id)] = prediction_list
+
+                # Plot predictions and determine how to make boxes from them
+                # sample = dataset[str(series_id)]
+                # boxes = []
+                # for box in sample["box"]:
+                #     boxes.append({"box": box, "color": "green"})
+                # for p, conf in pred_boxes:
+                #     color = "red"
+                #     box = [p.origin_x, p.origin_y, p.width, p.height]
+                #     boxes.append({"box": box, "color": color, "label": f"{conf:.2f}"})
+
+                # fig = plt.figure()
+                # ax_raw = plt.subplot(121)
+                # plot_frame(ax_raw, sample["numpy"][0], boxes=boxes)
+                # x, y = get_adhesions_prior_coords(
+                #     features[series_id]["x"],
+                #     features[series_id]["y"],
+                #     evaluation=evaluation,
+                # )
+                # vs_scatter = ax_raw.scatter(
+                #     x,
+                #     y,
+                #     vmin=0,
+                #     vmax=1,
+                #     s=5,
+                #     c=prediction,
+                #     cmap="jet",
+                # )
+                # plt.title(np.max(prediction))
+                # ax_processed = plt.subplot(122)
+                # plot_frame(ax_processed, sample["numpy"][0], boxes=boxes)
+                # x, y = get_adhesions_prior_coords(
+                #     features[series_id]["x"],
+                #     features[series_id]["y"],
+                #     evaluation=evaluation,
+                # )
+                # vs_scatter = ax_processed.scatter(
+                #     x,
+                #     y,
+                #     s=5,
+                #     c=prediction,
+                #     cmap="jet",
+                # )
+                # plt.title(np.max(prediction))
+                # plt.show()
+        with open(predictions_path, "w") as file:
+            json.dump(predictions_dict, file)
+
+    # Write plots for pipeline visualization
     if True:
+        image_dir = Path("/tmp/visceral_slide_pipeline")
+
+        # Load image, segmentation, visceral slide
+        series_id = series_ids[0]
+        sample = dataset[series_id]
+        mask_path = (
+            segmentation_result_dir
+            / "merged_masks"
+            / sample["PatientID"]
+            / sample["StudyInstanceUID"]
+            / (sample["SeriesInstanceUID"] + ".mha")
+        )
+        mask_sitk = sitk.ReadImage(str(mask_path))
+        mask_np = sitk.GetArrayFromImage(mask_sitk)
+        sample_np = sample["numpy"]
+
+        # Vanilla plot
+        fig, ax = plt.subplots()
+        plot_frame(ax, sample_np[0])
+        fig.savefig(image_dir / "0-first-frame.png", bbox_inches="tight", pad_inches=0)
+
+        # Plot with cavity segmentation
+        fig, ax = plt.subplots()
+        plot_frame(ax, sample_np[0])
+        ax.imshow(mask_np[0], alpha=mask_np[0] * 0.5)
+        fig.savefig(
+            image_dir / "1-cavity-segmentation.png", bbox_inches="tight", pad_inches=0
+        )
+
+        # Cavity and surroundings plot
+        fig, ax = plt.subplots()
+        plot_frame(ax, sample_np[0] * mask_np[0])
+        fig.savefig(image_dir / "2-cavity.png", bbox_inches="tight", pad_inches=0)
+        fig, ax = plt.subplots()
+        plot_frame(ax, sample_np[0] * (1 - mask_np[0]))
+        fig.savefig(image_dir / "2-rest.png", bbox_inches="tight", pad_inches=0)
+
+        # Visceral slide plot
+        vs = visceral_slides[0]
+        vs = filter_out_prior_vs_subset(vs.x, vs.y, vs.values)
+        fig, ax = plt.subplots()
+        plot_frame(ax, sample_np[0])
+        ax.scatter(
+            vs[:, 0],
+            vs[:, 1],
+            s=5,
+            c=vs[:, 2],
+            cmap="jet",
+        )
+        fig.savefig(
+            image_dir / "3-visceral_slide.png", bbox_inches="tight", pad_inches=0
+        )
+
+        # Plot with bounding boxes
+        predictions = load_predictions(predictions_path)
+        for full_id in predictions:
+            _, _, series = full_id.split("_")
+            if series == series_id:
+                prediction = predictions[full_id]
+
+        prediction_list = []
+        for entry in prediction:
+            p = entry[0]
+            conf = entry[1]
+            box = [p.origin_x, p.origin_y, p.width, p.height]
+            conf = float(conf)
+            type = p.type
+
+            prediction_list.append((box, conf, type))
+        boxes = []
+        for box in prediction_list:
+            color = "red"
+            boxes.append({"box": box[0], "color": color, "label": ""})
+        fig, ax = plt.subplots()
+        plot_frame(ax, sample_np[0], boxes=boxes)
+        fig.savefig(
+            image_dir / "4-bounding-boxes.png", bbox_inches="tight", pad_inches=0
+        )
+        # plt.show()
+    # Detection
+    if False:
         visceral_slide_dir_recompute = Path(
             "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
         )
