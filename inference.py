@@ -21,7 +21,7 @@ model_dir = Path("/home/bram/data/registration_method/models")
 
 dataset = dev_dataset()
 features = load_pixel_features()
-evaluation = Evaluation.anterior_wall
+evaluation = Evaluation.pelvis
 
 
 cv = GroupKFold()
@@ -38,20 +38,26 @@ for fold_idx in tqdm(range(5), desc="Classifier inference"):
 
     # Predict all pixels on validation set
     for series_id in val_series:
-        test_features_unnorm, test_labels = get_feature_array(features, [series_id])
-        test_features = normalizer.transform(test_features_unnorm)
+        test_features, test_labels = get_feature_array(
+            features, [series_id], evaluation=evaluation
+        )
+        test_features = normalizer.transform(test_features)
         prediction = clf.predict_proba(test_features)[:, 1]
 
-        # Convert to connected predictions
-        # TODO get x,y somehow nicer from features
-        pred_boxes = get_boxes_from_raw(
-            prediction, test_features_unnorm[:, 1], test_features_unnorm[:, 2]
+        # Get x, y coordinates
+        x_y, _ = get_feature_array(
+            features, [series_id], evaluation=evaluation, included_features=["x", "y"]
         )
+
+        # Convert to connected predictions
+        pred_boxes = get_boxes_from_raw(prediction, x_y[:, 0], x_y[:, 1])
 
         # Get patient id and study id
         sample = dataset[str(series_id)]
         patient_id = sample["PatientID"]
         study_id = sample["StudyInstanceUID"]
+
+        # TODO also save raw variable `prediction`
 
         # Save in predictions_dict
         prediction_list = []
@@ -69,7 +75,7 @@ for fold_idx in tqdm(range(5), desc="Classifier inference"):
             # if p.type == AdhesionType.inside:
             #     box_type = "inside"
             #
-            box_type = "anterior"
+            box_type = "pelvis"
             prediction_list.append((box, conf, box_type))
         if patient_id not in predictions_dict:
             predictions_dict[patient_id] = {}
