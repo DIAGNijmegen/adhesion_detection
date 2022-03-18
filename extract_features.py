@@ -1,11 +1,18 @@
-"""Run nnu-net inference on all cases in datamodule"""
-from cinemri.datamodules import CineMRIDataModule
+"""This script extracts features for each pixel along the contour for
+all patients in the dataset.
+
+Currently the feature list is:
+    - visceral slide
+    - x (image coordinates)
+    - y (image coordinates)
+
+Features are created by first segmenting with nnu-net, then calculating
+visceral slide with registration.
+"""
 from cinemri.config import ARCHIVE_PATH
-from cinemri.definitions import CineMRISlice
 from cinemri.visualisation import plot_frame
 from src.datasets import dev_dataset
 from src.segmentation import run_full_inference
-from src.classification import get_boxes_from_raw
 from src.vs_computation import (
     VSNormType,
     VSNormField,
@@ -16,18 +23,10 @@ from src.vs_computation import (
     calculate_motion_map,
 )
 from src.utils import load_visceral_slides
-from src.detection_pipeline import (
-    bb_with_threshold,
-    predict_consecutive_minima,
-    evaluate,
-)
-from src.adhesions import AdhesionType, Adhesion, load_annotations, load_predictions
+from src.adhesions import AdhesionType, Adhesion, load_predictions
 from src.contour import (
-    get_adhesions_prior_coords,
-    Evaluation,
     filter_out_prior_vs_subset,
 )
-from src.evaluation import picai_eval
 from pathlib import Path
 import shutil
 import SimpleITK as sitk
@@ -36,15 +35,8 @@ import pickle
 import json
 import os
 import datetime
-import gc
 from tqdm import tqdm
 import matplotlib.pyplot as plt
-from sklearn.model_selection import GroupKFold
-from sklearn.linear_model import LogisticRegression
-from sklearn.neural_network import MLPClassifier
-from sklearn.svm import SVC
-from sklearn.preprocessing import StandardScaler
-from report_guided_annotation.extract_lesion_candidates import preprocess_softmax
 
 
 def copy_dataset_to_dir(dataset, dest_dir):
