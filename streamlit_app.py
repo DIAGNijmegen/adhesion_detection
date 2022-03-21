@@ -265,19 +265,19 @@ for adhesion_type in adhesion_types_select:
         adhesion_types.append(AdhesionType.inside)
 
 # Get metrics
-# frocs = []
-# slice_rocs = []
-# metrics_legend = []
-# for prediction_label in prediction_subset:
-#     metrics = picai_eval(
-#         predictions_dict[prediction_label],
-#         annotations,
-#         flat=True,
-#         types=adhesion_types,
-#     )
-#     frocs.append((metrics["FP_per_case"], metrics["sensitivity"]))
-#     slice_rocs.append((metrics["fpr"], metrics["tpr"], metrics["auroc"]))
-#     metrics_legend.append(prediction_label)
+frocs = []
+slice_rocs = []
+metrics_legend = []
+for prediction_label in prediction_subset:
+    metrics = picai_eval(
+        predictions_dict[prediction_label],
+        annotations,
+        flat=True,
+        types=adhesion_types,
+    )
+    frocs.append((metrics["FP_per_case"], metrics["sensitivity"]))
+    slice_rocs.append((metrics["fpr"], metrics["tpr"], metrics["auroc"]))
+    metrics_legend.append(prediction_label)
 
 # Plot motion map
 # motion_map = load_motion_map(sample)
@@ -326,8 +326,6 @@ with col2:
             # motion_map=None,
         )
     )
-    # st.pyplot(motion_fig)
-    # TODO plot motion map
     # st.pyplot(
     #     plot_vs_flat(
     #         series_id,
@@ -337,5 +335,5 @@ with col2:
     #         motion_map=motion_map,
     #     )
     # )
-    # st.pyplot(plot_ROCs(slice_rocs, legends=metrics_legend))
-    # st.pyplot(plot_FROCs(frocs, legends=metrics_legend))
+    st.pyplot(plot_ROCs(slice_rocs, legends=metrics_legend))
+    st.pyplot(plot_FROCs(frocs, legends=metrics_legend))
