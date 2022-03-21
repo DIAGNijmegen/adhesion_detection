@@ -8,7 +8,7 @@ import json
 
 # Parameters
 raw_predictions_path = Path(
-    "/home/bram/data/registration_method/predictions/raw_predictions.json"
+    "/home/bram/data/registration_method/predictions_raw/raw_predictions.json"
 )
 predictions_path = Path(
     "/home/bram/data/registration_method/predictions/predictions.json"
