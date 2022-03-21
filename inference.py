@@ -35,7 +35,7 @@ for region in evaluation:
         # Predict all pixels on validation set
         for series_id in val_series:
             test_features, test_labels = get_feature_array(
-                features, [series_id], evaluation=evaluation
+                features, [series_id], evaluation=evaluation[region]
             )
             prediction = clf.predict(test_features)
 
@@ -43,7 +43,7 @@ for region in evaluation:
             x_y, _ = get_feature_array(
                 features,
                 [series_id],
-                evaluation=evaluation,
+                evaluation=evaluation[region],
                 included_features=["x", "y"],
             )
 
