@@ -4,6 +4,7 @@ from src.adhesions import Adhesion
 from src.contour import Evaluation, get_adhesions_prior_coords
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
+from sklearn.neural_network import MLPClassifier
 import numpy as np
 from pathlib import Path
 import pickle
@@ -60,7 +61,10 @@ def get_boxes_from_raw(prediction, x, y, min_size=15):
     y = np.array(y)
 
     all_hard_blobs, confidences, indexed_pred = preprocess_softmax(
-        prediction, threshold="dynamic", min_voxels_detection=5
+        prediction,
+        threshold="dynamic",
+        min_voxels_detection=2,
+        dynamic_threshold_factor=1.1,
     )
     bounding_boxes = []
     for idx, confidence in confidences:
@@ -113,4 +117,10 @@ class BaseClassifier:
 class LogisticRegressionClassifier(BaseClassifier):
     def __init__(self):
         super().__init__()
-        self.classifier = LogisticRegression(class_weight="balanced")
+        self.classifier = LogisticRegression(class_weight="balanced", verbose=1)
+
+
+class MLP(BaseClassifier):
+    def __init__(self):
+        super().__init__()
+        self.classifier = MLPClassifier(max_iter=2000, early_stopping=True)
