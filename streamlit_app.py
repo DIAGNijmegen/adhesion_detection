@@ -28,6 +28,11 @@ st.set_page_config(layout="wide")
 inference_dir = Path("/home/bram/data/registration_method")
 predictions_path = inference_dir / "predictions"
 annotations_path = Path("/home/bram/data/registration_method/extended_annotations.json")
+raw_predictions_path = Path(
+    "/home/bram/data/registration_method/predictions_raw/raw_predictions.json"
+)
+with open(raw_predictions_path) as json_file:
+    raw_predictions = json.load(json_file)
 
 
 def get_series_ids(dataset):
@@ -60,17 +65,35 @@ def normalize_vs_by_motion(x, y, vs, motion_map):
 
 
 # @st.cache
-def load_vs(series_id):
-    input_path = None
-    for path in (inference_dir / "visceral_slide_first_to_all_mean").rglob(series_id):
-        input_path = path / "visceral_slide.pkl"
+def load_vs(input_series_id, adhesion_types):
+    for patient_id in raw_predictions:
+        for study_id in raw_predictions[patient_id]:
+            for series_id, trial_pred_dict in raw_predictions[patient_id][
+                study_id
+            ].items():
+                if series_id == input_series_id:
+                    pred_dict = trial_pred_dict
 
-    if input_path is None:
-        return 0, 0, 0
+    types = []
+    for adhesion_type in adhesion_types:
+        if adhesion_type == AdhesionType.anteriorWall:
+            types.append("anterior")
+        if adhesion_type == AdhesionType.pelvis:
+            types.append("pelvis")
 
-    with open(input_path, "r+b") as input_file:
-        vs_dict = pickle.load(input_file)
-        return vs_dict["x"], vs_dict["y"], vs_dict["slide"]
+    x = []
+    y = []
+    values = []
+    for region in types:
+        x += pred_dict[region]["x"]
+        y += pred_dict[region]["y"]
+        values += pred_dict[region]["prediction"]
+
+    return (
+        x,
+        y,
+        values,
+    )
 
 
 def load_prediction(predictions, series_id):
@@ -107,69 +130,63 @@ def plot_vs(
     prediction,
     annotation,
     adhesion_types,
-    plot_boxes,
-    filter_prior,
-    filter_high_curvature,
-    normalize_by_motion,
-    motion_map,
+    plot_label_boxes,
+    plot_predicted_boxes,
+    # filter_prior,
+    # filter_high_curvature,
+    # normalize_by_motion,
+    # motion_map,
 ):
     sample = dataset[series_id]
 
     # Assemble ground truth boxes
     boxes = []
-    if plot_boxes:
+    if plot_label_boxes:
         for box in annotation:
             if box[2] not in adhesion_types:
                 continue
             boxes.append({"box": box[0], "color": "green"})
     # Assemble prediction boxes
-    for box in prediction:
-        if box[2] not in adhesion_types:
-            continue
-        # if box[2] == AdhesionType.unset:
-        #     color = "black"
-        # if box[2] == AdhesionType.anteriorWall:
-        #     color = "red"
-        # if box[2] == AdhesionType.pelvis:
-        #     color = "blue"
-        # if box[2] == AdhesionType.inside:
-        #     color = "orange"
-        color = "red"
-        boxes.append({"box": box[0], "color": color, "label": f"{box[1]:.2f}"})
+    if plot_predicted_boxes:
+        for box in prediction:
+            if box[2] not in adhesion_types:
+                continue
+            color = "red"
+            boxes.append({"box": box[0], "color": color, "label": f"{box[1]:.2f}"})
     image = sample["numpy"][0]
     fig, ax = plt.subplots()
     plot_frame(ax, image, boxes=boxes)
 
-    # Load vs
-    x, y, values = load_vs(series_id)
+    # Load raw prediction
+    x, y, values = load_vs(series_id, adhesion_types)
 
     # Filter out prior
-    if filter_prior:
-        contour_subset = filter_out_prior_vs_subset(
-            x, y, values, evaluation=Evaluation.anterior_wall
-        )
-        x = contour_subset[:, 0]
-        y = contour_subset[:, 1]
-        values = contour_subset[:, 2]
+    # if filter_prior:
+    #     contour_subset = filter_out_prior_vs_subset(
+    #         x, y, values, evaluation=Evaluation.anterior_wall
+    #     )
+    #     x = contour_subset[:, 0]
+    #     y = contour_subset[:, 1]
+    #     values = contour_subset[:, 2]
 
     # Filter out high curvature
-    if filter_high_curvature:
-        contour_subset = filter_out_high_curvature(x, y, values)
-        x = contour_subset[:, 0]
-        y = contour_subset[:, 1]
-        values = contour_subset[:, 2]
+    # if filter_high_curvature:
+    #     contour_subset = filter_out_high_curvature(x, y, values)
+    #     x = contour_subset[:, 0]
+    #     y = contour_subset[:, 1]
+    #     values = contour_subset[:, 2]
 
-    if normalize_by_motion:
-        values = normalize_vs_by_motion(x, y, values, motion_map)
+    # if normalize_by_motion:
+    #     values = normalize_vs_by_motion(x, y, values, motion_map)
 
     # Plot visceral slide
-    vs_scatter = ax.scatter(x, y, s=5, c=values, cmap="jet")
+    vs_scatter = ax.scatter(x, y, s=5, vmin=0, vmax=1, c=values, cmap="jet")
     cbar = fig.colorbar(mappable=vs_scatter)
-    range = np.max(values) - np.min(values)
-    min = np.min(values) + 0.05 * range
-    max = np.max(values) - 0.05 * range
-    cbar.set_ticks([min, max])
-    cbar.set_ticklabels(["Low", "High"])
+    # range = np.max(values) - np.min(values)
+    # min = np.min(values) + 0.05 * range
+    # max = np.max(values) - 0.05 * range
+    cbar.set_ticks([0, 1])
+    # cbar.set_ticklabels(["Low", "High"])
     return fig
 
 
@@ -248,42 +265,43 @@ for adhesion_type in adhesion_types_select:
         adhesion_types.append(AdhesionType.inside)
 
 # Get metrics
-frocs = []
-slice_rocs = []
-metrics_legend = []
-for prediction_label in prediction_subset:
-    metrics = picai_eval(
-        predictions_dict[prediction_label],
-        annotations,
-        flat=True,
-        types=adhesion_types,
-    )
-    frocs.append((metrics["FP_per_case"], metrics["sensitivity"]))
-    slice_rocs.append((metrics["fpr"], metrics["tpr"], metrics["auroc"]))
-    metrics_legend.append(prediction_label)
+# frocs = []
+# slice_rocs = []
+# metrics_legend = []
+# for prediction_label in prediction_subset:
+#     metrics = picai_eval(
+#         predictions_dict[prediction_label],
+#         annotations,
+#         flat=True,
+#         types=adhesion_types,
+#     )
+#     frocs.append((metrics["FP_per_case"], metrics["sensitivity"]))
+#     slice_rocs.append((metrics["fpr"], metrics["tpr"], metrics["auroc"]))
+#     metrics_legend.append(prediction_label)
 
 # Plot motion map
-motion_map = load_motion_map(sample)
-motion_fig = plt.figure()
-motion_fig, ax = plt.subplots()
-plot_frame(ax, sample["numpy"][0])
-plt.imshow(motion_map, alpha=1)
+# motion_map = load_motion_map(sample)
+# motion_fig = plt.figure()
+# motion_fig, ax = plt.subplots()
+# plot_frame(ax, sample["numpy"][0])
+# plt.imshow(motion_map, alpha=1)
 
 # Load specific prediction
 prediction = load_prediction(predictions, series_id)
 annotation = load_prediction(annotations, series_id)
 
 # Toggle bounding boxes
-boxes_toggle = st.sidebar.checkbox("Display boxes", value=True)
+label_boxes_toggle = st.sidebar.checkbox("Display ground truth boxes", value=True)
+predicted_boxes_toggle = st.sidebar.checkbox("Display predicted boxes", value=True)
 
 # Toggle filtering high curvature
-curvature_toggle = st.sidebar.checkbox("Filter high curvature", value=False)
+# curvature_toggle = st.sidebar.checkbox("Filter high curvature", value=False)
 
 # Toggle filtering prior
-prior_toggle = st.sidebar.checkbox("Filter contour prior", value=False)
+# prior_toggle = st.sidebar.checkbox("Filter contour prior", value=False)
 
 # Toggle normalization by motion
-normalize_toggle = st.sidebar.checkbox("Normalize by motion", value=False)
+# normalize_toggle = st.sidebar.checkbox("Normalize by motion", value=False)
 
 # Layout
 col1, col2 = st.columns(2)
@@ -300,23 +318,24 @@ with col2:
             prediction,
             annotation,
             adhesion_types,
-            plot_boxes=boxes_toggle,
-            filter_prior=prior_toggle,
-            filter_high_curvature=curvature_toggle,
-            normalize_by_motion=normalize_toggle,
-            motion_map=motion_map,
+            plot_label_boxes=label_boxes_toggle,
+            plot_predicted_boxes=predicted_boxes_toggle,
+            # filter_prior=prior_toggle,
+            # filter_high_curvature=curvature_toggle,
+            # normalize_by_motion=normalize_toggle,
+            # motion_map=None,
         )
     )
-    st.pyplot(motion_fig)
+    # st.pyplot(motion_fig)
     # TODO plot motion map
-    st.pyplot(
-        plot_vs_flat(
-            series_id,
-            filter_prior=prior_toggle,
-            filter_high_curvature=curvature_toggle,
-            normalize_by_motion=normalize_toggle,
-            motion_map=motion_map,
-        )
-    )
-    st.pyplot(plot_ROCs(slice_rocs, legends=metrics_legend))
-    st.pyplot(plot_FROCs(frocs, legends=metrics_legend))
+    # st.pyplot(
+    #     plot_vs_flat(
+    #         series_id,
+    #         filter_prior=prior_toggle,
+    #         filter_high_curvature=curvature_toggle,
+    #         normalize_by_motion=normalize_toggle,
+    #         motion_map=motion_map,
+    #     )
+    # )
+    # st.pyplot(plot_ROCs(slice_rocs, legends=metrics_legend))
+    # st.pyplot(plot_FROCs(frocs, legends=metrics_legend))
