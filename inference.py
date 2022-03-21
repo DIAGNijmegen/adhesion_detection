@@ -14,8 +14,8 @@ from joblib import load
 from tqdm import tqdm
 
 # Parameters
-predictions_path = Path(
-    "/home/bram/data/registration_method/predictions/predictions.json"
+raw_predictions_path = Path(
+    "/home/bram/data/registration_method/predictions/raw_predictions.json"
 )
 model_dir = Path("/home/bram/data/registration_method/models")
 
@@ -57,31 +57,18 @@ for fold_idx in tqdm(range(5), desc="Classifier inference"):
         patient_id = sample["PatientID"]
         study_id = sample["StudyInstanceUID"]
 
-        # TODO also save raw variable `prediction`
-
-        # Save in predictions_dict
-        prediction_list = []
-        for p, conf in pred_boxes:
-            box = [p.origin_x, p.origin_y, p.width, p.height]
-            conf = float(conf)
-
-            # p.assign_type_from_mask(mask_np)
-            # if p.type == AdhesionType.unset:
-            #     box_type = "unset"
-            # if p.type == AdhesionType.pelvis:
-            #     box_type = "pelvis"
-            # if p.type == AdhesionType.anteriorWall:
-            #     box_type = "anterior"
-            # if p.type == AdhesionType.inside:
-            #     box_type = "inside"
-            #
-            box_type = "pelvis"
-            prediction_list.append((box, conf, box_type))
         if patient_id not in predictions_dict:
             predictions_dict[patient_id] = {}
         if study_id not in predictions_dict[patient_id]:
             predictions_dict[patient_id][study_id] = {}
-        predictions_dict[patient_id][study_id][str(series_id)] = prediction_list
+        if series_id not in predictions_dict[patient_id][study_id]:
+            predictions_dict[patient_id][study_id][str(series_id)] = {}
 
-with open(predictions_path, "w") as file:
+        predictions_dict[patient_id][study_id][str(series_id)]["prediction"] = list(
+            prediction
+        )
+        predictions_dict[patient_id][study_id][str(series_id)]["x"] = list(x_y[:, 0])
+        predictions_dict[patient_id][study_id][str(series_id)]["y"] = list(x_y[:, 1])
+
+with open(raw_predictions_path, "w") as file:
     json.dump(predictions_dict, file)
