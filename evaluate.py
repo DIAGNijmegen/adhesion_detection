@@ -26,6 +26,7 @@ prediction_dict = {}
 for patient_id in raw_predictions:
     for study_id in raw_predictions[patient_id]:
         for series_id in raw_predictions[patient_id][study_id]:
+            prediction_list = []
             for region, pred_dict in raw_predictions[patient_id][study_id][
                 series_id
             ].items():
@@ -33,14 +34,20 @@ for patient_id in raw_predictions:
                     pred_dict["prediction"], pred_dict["x"], pred_dict["y"]
                 )
 
-                # Save in predictions_dict
-                prediction_list = []
                 for p, conf in pred_boxes:
                     box = [p.origin_x, p.origin_y, p.width, p.height]
                     conf = float(conf)
                     box_type = region
                     prediction_list.append((box, conf, box_type))
 
+            if patient_id not in prediction_dict:
+                prediction_dict[patient_id] = {}
+            if study_id not in prediction_dict[patient_id]:
+                prediction_dict[patient_id][study_id] = {}
+            prediction_dict[patient_id][study_id][series_id] = prediction_list
+
+        with open(predictions_path, "w") as file:
+            json.dump(prediction_dict, file)
 
 # Load predictions
 predictions = load_predictions(predictions_path)
@@ -48,7 +55,12 @@ predictions = load_predictions(predictions_path)
 # Load annotations
 annotations = load_predictions(extended_annotations_path)
 
-metrics = picai_eval(predictions, annotations, flat=True, types=[AdhesionType.pelvis])
+metrics = picai_eval(
+    predictions,
+    annotations,
+    flat=True,
+    types=[AdhesionType.anteriorWall, AdhesionType.pelvis],
+)
 
 # Plot FROC
 plt.figure()
