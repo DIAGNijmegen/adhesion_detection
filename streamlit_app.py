@@ -23,6 +23,8 @@ from src.detection_pipeline import (
 from src.vs_computation import calculate_motion_map
 from src.evaluation import picai_eval
 
+st.set_page_config(layout="wide")
+
 inference_dir = Path("/home/bram/data/registration_method")
 predictions_path = inference_dir / "predictions"
 annotations_path = Path("/home/bram/data/registration_method/extended_annotations.json")
