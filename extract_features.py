@@ -11,7 +11,9 @@ visceral slide with registration.
 """
 from cinemri.config import ARCHIVE_PATH
 from cinemri.visualisation import plot_frame
+from cinemri.contour import Contour
 from src.datasets import dev_dataset
+from src.features import get_location_percentage, get_registration_based_features
 from src.segmentation import run_full_inference
 from src.vs_computation import (
     VSNormType,
@@ -215,6 +217,9 @@ if __name__ == "__main__":
         # motion values, e.g. mean motion map, local motion estimate
         # min and max visceral slide over all registrations
         #
+        visceral_slide_dir = Path(
+            "/home/bram/data/registration_method/visceral_slide_first_to_all"
+        )
         visceral_slide_dir_recompute = Path(
             "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
         )
@@ -247,11 +252,41 @@ if __name__ == "__main__":
                         if adhesion.type == AdhesionType.inside:
                             label[idx] = 3
 
+            # Calculate registration-based features
+            vs_computation_input_path = (
+                visceral_slide_dir
+                / sample["PatientID"]
+                / sample["StudyInstanceUID"]
+                / sample["SeriesInstanceUID"]
+                / "vs_computation_input.pkl"
+            )
+            with open(vs_computation_input_path, "r+b") as pkl_file:
+                vs_computation_input = pickle.load(pkl_file)
+            average_motion, max_motion, local_motion = get_registration_based_features(
+                vs_computation_input, Contour(visceral_slide.x, visceral_slide.y)
+            )
+
             # Aggregate features
             features[series_id] = {}
+
+            # Registration-based
             features[series_id]["slide"] = visceral_slide.values
+            features[series_id]["local_motion"] = local_motion
+            features[series_id]["average_motion"] = (
+                np.ones_like(visceral_slide.x) * average_motion
+            )
+            features[series_id]["max_motion"] = (
+                np.ones_like(visceral_slide.x) * max_motion
+            )
+
+            # Contour-based
             features[series_id]["x"] = visceral_slide.x
             features[series_id]["y"] = visceral_slide.y
+            features[series_id]["percentage"] = get_location_percentage(
+                visceral_slide.x
+            )
+
+            # Other
             features[series_id]["label"] = label
 
         # Save features to disk
