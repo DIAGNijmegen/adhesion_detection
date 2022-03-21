@@ -3,9 +3,11 @@ from report_guided_annotation.extract_lesion_candidates import preprocess_softma
 from src.adhesions import Adhesion
 from src.contour import Evaluation, get_adhesions_prior_coords
 from sklearn.preprocessing import StandardScaler
+from sklearn.linear_model import LogisticRegression
 import numpy as np
 from pathlib import Path
 import pickle
+from joblib import dump, load
 
 
 def load_pixel_features():
@@ -50,12 +52,13 @@ def get_feature_array(
     return feature_array[mask], np.array(label)[mask]
 
 
-def get_normalizer(train_features):
-    return StandardScaler().fit(train_features)
-
-
 def get_boxes_from_raw(prediction, x, y, min_size=15):
     """Convert raw prediction to bounding boxes"""
+    # Convert to np arrays
+    prediction = np.array(prediction)
+    x = np.array(x)
+    y = np.array(y)
+
     all_hard_blobs, confidences, indexed_pred = preprocess_softmax(
         prediction, threshold="dynamic", min_voxels_detection=5
     )
@@ -79,3 +82,35 @@ def get_boxes_from_raw(prediction, x, y, min_size=15):
         adhesion = Adhesion([x_box, y_box, w_box, h_box])
         bounding_boxes.append((adhesion, confidence))
     return bounding_boxes
+
+
+def load_model(file_path):
+    return load(file_path)
+
+
+class BaseClassifier:
+    def __init__(self):
+        """Base class for a classifier that includes z-score
+        normalization. self.classifier should be overwritten with a
+        sklearn classifier.
+        """
+        self.normalizer = StandardScaler()
+        self.classifier = None
+
+    def fit(self, x, y):
+        self.normalizer.fit(x)
+        x_norm = self.normalizer.transform(x)
+        self.classifier.fit(x_norm, y)
+
+    def predict(self, x):
+        x_norm = self.normalizer.transform(x)
+        return self.classifier.predict_proba(x_norm)[:, 1]
+
+    def save(self, file_path):
+        dump(self, file_path)
+
+
+class LogisticRegressionClassifier(BaseClassifier):
+    def __init__(self):
+        super().__init__()
+        self.classifier = LogisticRegression(class_weight="balanced")
