@@ -20,8 +20,20 @@ def load_pixel_features():
     return features
 
 
+def load_deep_features():
+    """Load deep features for all series from disk"""
+    feature_dataset_path = Path(
+        "/home/bram/data/registration_method/resnet_features.pkl"
+    )
+    with open(feature_dataset_path, "r+b") as pkl_file:
+        features = pickle.load(pkl_file)
+
+    return features
+
+
 def get_feature_array(
     features,
+    deep_features,
     series_ids,
     included_features=["slide", "x", "y"],
     evaluation=Evaluation.anterior_wall,
@@ -31,11 +43,19 @@ def get_feature_array(
     label = []
     mask = []
     for feature_label in included_features:
-        assembled[feature_label] = []
+        if feature_label == "deep":
+            for idx in range(deep_features[series_ids[0]].shape[1]):
+                assembled[f"deep-{idx}"] = []
+        else:
+            assembled[feature_label] = []
 
     for series_id in series_ids:
         for feature_label in included_features:
-            assembled[feature_label] += list(features[series_id][feature_label])
+            if feature_label == "deep":
+                for idx in range(deep_features[series_id].shape[1]):
+                    assembled[f"deep-{idx}"] += list(deep_features[series_id][:, idx])
+            else:
+                assembled[feature_label] += list(features[series_id][feature_label])
         label += list(features[series_id]["label"])
 
         # Get contour part masks
@@ -46,8 +66,8 @@ def get_feature_array(
         )
         mask += list(case_mask)
 
-    feature_array = np.zeros((len(label), len(included_features)))
-    for idx, feature_label in enumerate(included_features):
+    feature_array = np.zeros((len(label), len(assembled)))
+    for idx, feature_label in enumerate(assembled):
         feature_array[:, idx] = assembled[feature_label]
 
     return feature_array[mask], np.array(label)[mask]

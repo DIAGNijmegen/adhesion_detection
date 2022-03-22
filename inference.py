@@ -3,6 +3,7 @@ from src.contour import Evaluation
 from src.datasets import dev_dataset, folds
 from src.classification import (
     load_pixel_features,
+    load_deep_features,
     get_feature_array,
     load_model,
 )
@@ -12,6 +13,8 @@ import json
 from tqdm import tqdm
 
 # Parameters
+# included_features = ["slide", "percentage", "average_motion"]
+included_features = ["slide", "average_motion", "max_motion", "local_motion", "deep"]
 raw_predictions_path = Path(
     "/home/bram/data/registration_method/predictions_raw/raw_predictions.json"
 )
@@ -19,6 +22,7 @@ model_dir = Path("/home/bram/data/registration_method/models")
 
 dataset = dev_dataset()
 features = load_pixel_features()
+deep_features = load_deep_features()
 evaluation = {"anterior": Evaluation.anterior_wall, "pelvis": Evaluation.pelvis}
 
 
@@ -28,20 +32,24 @@ for region in evaluation:
     print(f"{region} region")
     for fold_idx in tqdm(range(5), desc="Classifier inference"):
         val_series = folds[str(fold_idx)]["val"]
-        val_features, val_labels = get_feature_array(features, val_series)
 
         clf = load_model(model_dir / f"{region}-model-{fold_idx}.joblib")
 
         # Predict all pixels on validation set
         for series_id in val_series:
             test_features, test_labels = get_feature_array(
-                features, [series_id], evaluation=evaluation[region]
+                features,
+                deep_features,
+                [series_id],
+                evaluation=evaluation[region],
+                included_features=included_features,
             )
             prediction = clf.predict(test_features)
 
             # Get x, y coordinates
             x_y, _ = get_feature_array(
                 features,
+                deep_features,
                 [series_id],
                 evaluation=evaluation[region],
                 included_features=["x", "y"],
