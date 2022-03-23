@@ -44,3 +44,10 @@ def get_registration_based_features(vs_computation_input, contour):
         vs_computation_input["cavity_dfs"], vs_computation_input["rest_dfs"], contour
     )
     return average_motion, max_motion, local_motion
+
+
+def get_contour_based_features(contour):
+    """Get features based on contour"""
+    location_percentage = get_location_percentage(contour.x)
+    curvature = contour.curvature
+    return location_percentage, curvature

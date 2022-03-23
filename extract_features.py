@@ -13,7 +13,7 @@ from cinemri.config import ARCHIVE_PATH
 from cinemri.visualisation import plot_frame
 from cinemri.contour import Contour
 from src.datasets import dev_dataset
-from src.features import get_location_percentage, get_registration_based_features
+from src.features import get_contour_based_features, get_registration_based_features
 from src.segmentation import run_full_inference
 from src.vs_computation import (
     VSNormType,
@@ -265,6 +265,9 @@ if __name__ == "__main__":
             average_motion, max_motion, local_motion = get_registration_based_features(
                 vs_computation_input, Contour(visceral_slide.x, visceral_slide.y)
             )
+            location_percentage, curvature = get_contour_based_features(
+                Contour(visceral_slide.x, visceral_slide.y)
+            )
 
             # Aggregate features
             features[series_id] = {}
@@ -282,9 +285,8 @@ if __name__ == "__main__":
             # Contour-based
             features[series_id]["x"] = visceral_slide.x
             features[series_id]["y"] = visceral_slide.y
-            features[series_id]["percentage"] = get_location_percentage(
-                visceral_slide.x
-            )
+            features[series_id]["percentage"] = location_percentage
+            features[series_id]["curvature"] = curvature
 
             # Other
             features[series_id]["label"] = label
