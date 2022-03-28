@@ -5,6 +5,7 @@ from src.contour import Evaluation, get_adhesions_prior_coords
 from sklearn.preprocessing import StandardScaler
 from sklearn.linear_model import LogisticRegression
 from sklearn.neural_network import MLPClassifier
+from sklearn.ensemble import RandomForestClassifier
 import numpy as np
 from pathlib import Path
 import pickle
@@ -137,10 +138,20 @@ class BaseClassifier:
 class LogisticRegressionClassifier(BaseClassifier):
     def __init__(self):
         super().__init__()
-        self.classifier = LogisticRegression(class_weight="balanced", verbose=1)
+        self.classifier = LogisticRegression(
+            class_weight="balanced", verbose=1, max_iter=1000
+        )
 
 
 class MLP(BaseClassifier):
     def __init__(self):
         super().__init__()
-        self.classifier = MLPClassifier(max_iter=2000, early_stopping=True)
+        self.classifier = MLPClassifier(
+            max_iter=2000, early_stopping=True, verbose=True
+        )
+
+
+class RandomForest(BaseClassifier):
+    def __init__(self):
+        super().__init__()
+        self.classifier = RandomForestClassifier(class_weight="balanced", verbose=True)
