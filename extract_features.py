@@ -2,9 +2,14 @@
 all patients in the dataset.
 
 Currently the feature list is:
-    - visceral slide
-    - x (image coordinates)
-    - y (image coordinates)
+    - slide : visceral slide
+    - local_motion: motion estimate at every pixel
+    - average_motion: average motion of patient
+    - max_motion: max motion of patient
+    - x: image coordinates
+    - y: image coordinates
+    - percentage: TODO should be changed to clock
+    - curvature: curvature at every pixel
 
 Features are created by first segmenting with nnu-net, then calculating
 visceral slide with registration.
@@ -97,8 +102,7 @@ if __name__ == "__main__":
 
     # Registration + visceral slide computation
     if False:
-        detector = CumulativeVisceralSlideDetectorReg()
-        # detector = FirstToAllVisceralSlideDetectorReg()
+        detector = FirstToAllVisceralSlideDetectorReg()
         for idx, sample in tqdm(enumerate(dataset), total=len(dataset)):
             input_image_np = sample["numpy"]
             mask_path = (
@@ -127,8 +131,8 @@ if __name__ == "__main__":
             x, y, values = detector.get_visceral_slide(
                 input_image_np.astype(np.float32),
                 mask_np,
-                normalization_type=VSNormType.average_anterior_wall,
-                normalization_field=VSNormField.complete,
+                normalization_type=VSNormType.none,
+                normalization_field=VSNormField.rest,
                 vs_computation_input_path=vs_computation_input_path,
             )
 
@@ -147,9 +151,9 @@ if __name__ == "__main__":
 
     # Separate VS calculation
     if False:
-        visceral_slide_dir = Path(
-            "/home/bram/data/registration_method/visceral_slide_first_to_all"
-        )
+        # visceral_slide_dir = Path(
+        #     "/home/bram/data/registration_method/visceral_slide_first_to_all"
+        # )
         visceral_slide_dir_recompute = Path(
             "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
         )
@@ -217,9 +221,9 @@ if __name__ == "__main__":
         # motion values, e.g. mean motion map, local motion estimate
         # min and max visceral slide over all registrations
         #
-        visceral_slide_dir = Path(
-            "/home/bram/data/registration_method/visceral_slide_first_to_all"
-        )
+        # visceral_slide_dir = Path(
+        #     "/home/bram/data/registration_method/visceral_slide_first_to_all"
+        # )
         visceral_slide_dir_recompute = Path(
             "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
         )
