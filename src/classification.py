@@ -45,7 +45,7 @@ def get_feature_array(
     mask = []
     for feature_label in included_features:
         if feature_label == "deep":
-            for idx in range(deep_features[series_ids[0]].shape[1]):
+            for idx in range(deep_features[series_ids[0]]["avgpool"].shape[1]):
                 assembled[f"deep-{idx}"] = []
         else:
             assembled[feature_label] = []
@@ -55,6 +55,8 @@ def get_feature_array(
             if feature_label == "deep":
                 for idx in range(deep_features[series_id].shape[1]):
                     assembled[f"deep-{idx}"] += list(deep_features[series_id][:, idx])
+            elif feature_label == "deep_output":
+                assembled[feature_label] += list(deep_features[series_id]["output"])
             else:
                 assembled[feature_label] += list(features[series_id][feature_label])
         label += list(features[series_id]["label"])
