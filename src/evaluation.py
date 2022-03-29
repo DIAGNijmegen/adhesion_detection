@@ -1,7 +1,7 @@
 """A wrapper around the prediction/annotation format of this repository
 and picai_eval's froc routine"""
 import numpy as np
-from prostatemr_evaluation.eval import evaluate
+from picai_eval.eval import evaluate
 from .adhesions import AdhesionType
 from copy import deepcopy
 
@@ -15,10 +15,16 @@ def box_list_to_image(box_list):
     prediction_list: list of (Adhesion, confidence)
     """
     image = np.zeros((256, 192))
-    for adhesion, confidence in box_list:
+    confidences = [b[1] for b in box_list]
+    for idx in np.argsort(confidences):
+        adhesion, confidence = box_list[idx]
         x, y = int(adhesion.origin_x), int(adhesion.origin_y)
         w, h = int(adhesion.width), int(adhesion.height)
+
+        # First add border of zero confidence to separate predictions
+        image[y - 1 : y + h + 1, x - 1 : x + w + 1] = 0
         image[y : y + h, x : x + w] = confidence
+
     return image[None, ...]
 
 
