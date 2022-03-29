@@ -1,10 +1,22 @@
 """Several functions for feature engineering"""
 import numpy as np
+import matplotlib.pyplot as plt
+import math
 
 
 def get_location_percentage(x):
     """For e.g. the x locations, get the percentage along the curve"""
     return np.arange(len(x)) / len(x)
+
+
+def get_clock(x, y):
+    center_x = np.mean(x)
+    center_y = np.mean(y)
+    clock = []
+    for idx in range(len(x)):
+        angle = math.atan2(x[idx] - center_x, y[idx] - center_y)
+        clock.append(angle)
+    return clock
 
 
 def get_motion_map(cavity_dfs, rest_dfs):
@@ -48,6 +60,7 @@ def get_registration_based_features(vs_computation_input, contour):
 
 def get_contour_based_features(contour):
     """Get features based on contour"""
-    location_percentage = get_location_percentage(contour.x)
+    # location_percentage = get_location_percentage(contour.x)
     curvature = contour.curvature
-    return location_percentage, curvature
+    clock = get_clock(contour.x, contour.y)
+    return curvature, clock
