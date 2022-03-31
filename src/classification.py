@@ -76,6 +76,32 @@ def get_feature_array(
     return feature_array[mask], np.array(label)[mask]
 
 
+def order_by_contour(prediction, x_array, y_array):
+    """Order the prediction and x, y arrays by contour. Sometimes it
+    is possible that x and y are not in a logical order, going over the
+    contour border in the middle of the arrays."""
+    start_idx = 0
+    for i in range(len(x_array) - 1):
+        x, y = x_array[i], y_array[i]
+        x_next, y_next = x_array[i + 1], y_array[i + 1]
+
+        distance = np.sqrt((x - x_next) ** 2 + (y - y_next) ** 2)
+
+        if distance > 1.5:
+            start_idx = i + 1
+            break
+
+    if start_idx == 0:
+        return prediction, x_array, y_array
+
+    x_ordered = np.concatenate([x_array[start_idx:], x_array[:start_idx]])
+    y_ordered = np.concatenate([y_array[start_idx:], y_array[:start_idx]])
+    prediction_ordered = np.concatenate(
+        [prediction[start_idx:], prediction[:start_idx]]
+    )
+    return prediction_ordered, x_ordered, y_ordered
+
+
 def get_boxes_from_raw(prediction, x, y, min_size=15):
     """Convert raw prediction to bounding boxes"""
     # Convert to np arrays
@@ -83,16 +109,18 @@ def get_boxes_from_raw(prediction, x, y, min_size=15):
     x = np.array(x)
     y = np.array(y)
 
+    prediction_ordered, x_ordered, y_ordered = order_by_contour(prediction, x, y)
+
     all_hard_blobs, confidences, indexed_pred = preprocess_softmax(
-        prediction,
+        prediction_ordered,
         threshold="dynamic",
         min_voxels_detection=2,
-        dynamic_threshold_factor=1.1,
+        dynamic_threshold_factor=2.5,
     )
     bounding_boxes = []
     for idx, confidence in confidences:
-        x_lesion = x[indexed_pred == idx]
-        y_lesion = y[indexed_pred == idx]
+        x_lesion = x_ordered[indexed_pred == idx]
+        y_lesion = y_ordered[indexed_pred == idx]
         x_box = np.min(x_lesion)
         y_box = np.min(y_lesion)
         w_box = np.max(x_lesion) - x_box
@@ -108,6 +136,7 @@ def get_boxes_from_raw(prediction, x, y, min_size=15):
 
         adhesion = Adhesion([x_box, y_box, w_box, h_box])
         bounding_boxes.append((adhesion, confidence))
+
     return bounding_boxes
 
 
