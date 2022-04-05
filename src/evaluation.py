@@ -15,14 +15,21 @@ def box_list_to_image(box_list):
     prediction_list: list of (Adhesion, confidence)
     """
     image = np.zeros((256, 192))
+
     confidences = [b[1] for b in box_list]
     for idx in np.argsort(confidences):
         adhesion, confidence = box_list[idx]
+
         x, y = int(adhesion.origin_x), int(adhesion.origin_y)
         w, h = int(adhesion.width), int(adhesion.height)
 
         # First add border of zero confidence to separate predictions
-        image[y - 1 : y + h + 1, x - 1 : x + w + 1] = 0
+        n_pad = 2
+        if x < n_pad:
+            x = n_pad
+        if y < n_pad:
+            y = n_pad
+        image[y - n_pad : y + h + n_pad, x - n_pad : x + w + n_pad] = 0
         image[y : y + h, x : x + w] = confidence
 
     return image[None, ...]
@@ -43,7 +50,7 @@ def filter_types(adhesion_dict, types):
 def picai_eval(
     predictions,
     annotations,
-    iou_threshold=0.001,
+    iou_threshold=0.1,
     flat=False,
     types=[AdhesionType.anteriorWall, AdhesionType.pelvis, AdhesionType.inside],
 ):
@@ -54,7 +61,7 @@ def picai_eval(
     subject_list = []
     predictions_list = []
     annotations_list = []
-    for idx, series_id in enumerate(annotations):
+    for idx, series_id in enumerate(predictions):
         prediction = predictions[series_id]
         annotation = annotations[series_id]
         prediction_image = box_list_to_image(prediction)
