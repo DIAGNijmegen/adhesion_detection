@@ -14,10 +14,10 @@ Currently the feature list is:
 Features are created by first segmenting with nnu-net, then calculating
 visceral slide with registration.
 """
-from cinemri.config import ARCHIVE_PATH
+from cinemri.config import ARCHIVE_PATH, META_PATH
 from cinemri.visualisation import plot_frame
 from cinemri.contour import Contour
-from src.datasets import dev_dataset
+from src.datasets import dev_dataset, test_dataset, frank_500_dataset
 from src.features import get_contour_based_features, get_registration_based_features
 from src.segmentation import run_full_inference
 from src.vs_computation import (
@@ -67,7 +67,9 @@ def modification_date(filename):
 
 
 if __name__ == "__main__":
-    dataset = dev_dataset()
+    # dataset = dev_dataset()
+    # dataset = test_dataset()
+    dataset = frank_500_dataset()
 
     # Output paths
     segmentation_result_dir = Path("/home/bram/data/registration_method/segmentations")
@@ -75,8 +77,8 @@ if __name__ == "__main__":
     predictions_path = Path(
         "/home/bram/data/registration_method/predictions/predictions.json"
     )
-    extended_annotations_path = Path(
-        "/home/bram/data/registration_method/extended_annotations.json"
+    extended_annotations_path = (
+        META_PATH / "bounding_boxes" / "first_frame_with_region.json"
     )
     feature_dataset_path = Path("/home/bram/data/registration_method/features.pkl")
     annotations_path = (
@@ -91,7 +93,7 @@ if __name__ == "__main__":
     nnunet_model_dir = Path(
         "/home/bram/repos/abdomenmrus-cinemri-vs-algorithm/nnunet/results"
     )
-    if False:
+    if True:
         copy_dataset_to_dir(dataset, nnunet_input_dir)
         run_full_inference(
             nnunet_input_dir,
@@ -101,7 +103,7 @@ if __name__ == "__main__":
         )
 
     # Registration + visceral slide computation
-    if False:
+    if True:
         detector = FirstToAllVisceralSlideDetectorReg()
         for idx, sample in tqdm(enumerate(dataset), total=len(dataset)):
             input_image_np = sample["numpy"]
@@ -196,7 +198,7 @@ if __name__ == "__main__":
                 pickle.dump(slide_dict, file)
 
     # Generate pixel dataset
-    if True:
+    if False:
         # For all series
         # For all pixels in contour
         #
@@ -224,9 +226,9 @@ if __name__ == "__main__":
         # visceral_slide_dir = Path(
         #     "/home/bram/data/registration_method/visceral_slide_first_to_all"
         # )
-        visceral_slide_dir_recompute = Path(
-            "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
-        )
+        # visceral_slide_dir_recompute = Path(
+        #     "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
+        # )
         visceral_slides = load_visceral_slides(visceral_slide_dir_recompute)
         annotations = load_predictions(extended_annotations_path)
 
