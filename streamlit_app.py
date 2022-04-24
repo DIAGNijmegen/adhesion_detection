@@ -4,7 +4,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import json
 from cinemri.visualisation import plot_frame, get_interactive_plotly_movie
-from cinemri.config import ARCHIVE_PATH
+from cinemri.config import ARCHIVE_PATH, META_PATH
 import numpy as np
 import pickle
 from src.contour import (
@@ -12,7 +12,7 @@ from src.contour import (
     filter_out_prior_vs_subset,
     Evaluation,
 )
-from src.datasets import dev_dataset
+from src.datasets import dev_dataset, frank_500_dataset
 from src.adhesions import load_annotations, load_predictions, AdhesionType
 from src.detection_pipeline import (
     plot_FROCs,
@@ -24,6 +24,7 @@ from src.vs_computation import calculate_motion_map
 from src.evaluation import picai_eval
 from src.classification import (
     load_pixel_features,
+    load_deep_features,
     get_feature_array,
 )
 
@@ -31,10 +32,11 @@ st.set_page_config(layout="wide")
 
 inference_dir = Path("/home/bram/data/registration_method")
 predictions_path = inference_dir / "predictions"
-annotations_path = Path("/home/bram/data/registration_method/extended_annotations.json")
+annotations_path = META_PATH / "bounding_boxes" / "first_frame_with_region.json"
 raw_predictions_path = Path(
     "/home/bram/data/registration_method/predictions_raw/raw_predictions.json"
 )
+resnet_image_inference_dir = Path("/home/bram/data/registration_method/image_inference")
 with open(raw_predictions_path) as json_file:
     raw_predictions = json.load(json_file)
 
@@ -46,16 +48,40 @@ def get_series_ids(dataset):
     return numbered_series_ids
 
 
-def load_feature(features, series_id, feature_label, evaluation):
+def load_resnet_image_inference(series_id):
+    for path in resnet_image_inference_dir.rglob(series_id + ".npy"):
+        return np.load(path)
+
+
+def load_feature(features, deep_features, series_id, feature_label, evaluation):
     """Load a 1D feature map for a series_id"""
     features, labels = get_feature_array(
         features,
-        None,
+        deep_features,
         [series_id],
         evaluation=evaluation,
         included_features=[feature_label],
     )
     return features[:, 0]
+
+
+def load_raw_prediction(input_series_id, types):
+    for patient_id in raw_predictions:
+        for study_id in raw_predictions[patient_id]:
+            for series_id, trial_pred_dict in raw_predictions[patient_id][
+                study_id
+            ].items():
+                if series_id == input_series_id:
+                    pred_dict = trial_pred_dict
+
+    values = []
+    x = []
+    y = []
+    for region in ["pelvis", "anterior"]:
+        values += pred_dict[region]["prediction"]
+        x += pred_dict[region]["x"]
+        y += pred_dict[region]["y"]
+    return values, x, y
 
 
 def get_feature_labels(features):
@@ -92,7 +118,17 @@ def load_all_predictions():
     return predictions_dict
 
 
-def plot_feature(sample, feature, x, y, plot_label_boxes):
+def plot_feature(
+    sample,
+    feature,
+    x,
+    y,
+    plot_label_boxes,
+    plot_predicted_boxes,
+    prediction,
+    title,
+    limits=None,
+):
     image = sample["numpy"][0]
     # Assemble ground truth boxes
     boxes = []
@@ -103,16 +139,54 @@ def plot_feature(sample, feature, x, y, plot_label_boxes):
             boxes.append({"box": box[0], "color": "green"})
 
     # Assemble prediction boxes
-    # if plot_predicted_boxes:
-    #     for box in prediction:
-    #         if box[2] not in adhesion_types:
-    #             continue
-    #         color = "red"
-    #         boxes.append({"box": box[0], "color": color, "label": f"{box[1]:.2f}"})
+    if plot_predicted_boxes:
+        for box in prediction:
+            if box[2] not in adhesion_types:
+                continue
+            color = "red"
+            boxes.append({"box": box[0], "color": color, "label": f"{box[1]:.2f}"})
 
     fig, ax = plt.subplots()
     plot_frame(ax, image, boxes=boxes)
-    ax.scatter(x, y, s=5, c=feature, cmap="jet")
+    if limits is None:
+        sc = ax.scatter(x, y, s=5, c=feature, cmap="jet")
+    else:
+        sc = ax.scatter(
+            x, y, s=5, c=feature, cmap="jet", vmin=limits[0], vmax=limits[1]
+        )
+    plt.colorbar(sc)
+
+    plt.title(title)
+    return fig
+
+
+def plot_image_prediction(
+    sample,
+    prediction,
+    plot_label_boxes,
+    title,
+    limits=None,
+):
+    image = sample["numpy"][0]
+    # Assemble ground truth boxes
+    boxes = []
+    if plot_label_boxes:
+        for box in annotation:
+            if box[2] not in adhesion_types:
+                continue
+            boxes.append({"box": box[0], "color": "green"})
+
+    fig, ax = plt.subplots()
+    plot_frame(ax, image, boxes=boxes)
+    if limits is None:
+        sc = ax.imshow(prediction, cmap="jet", alpha=0.3)
+    else:
+        sc = ax.imshow(
+            prediction, cmap="jet", alpha=0.3, vmin=limits[0], vmax=limits[1]
+        )
+    plt.colorbar(sc)
+
+    plt.title(title)
     return fig
 
 
@@ -122,7 +196,10 @@ series_ids = get_series_ids(dataset)
 
 # Load features
 features = load_pixel_features()
+deep_features = load_deep_features()
 feature_labels = get_feature_labels(features)
+feature_labels += ["combined"]
+feature_labels += ["deep_output"]
 
 # Load predictions and annotations
 predictions_dict = load_all_predictions()
@@ -170,9 +247,20 @@ else:
 
 # Load sample and features
 sample = dataset[series_id]
-feature_map = load_feature(features, series_id, feature_label, evaluation)
-x = load_feature(features, series_id, "x", evaluation)
-y = load_feature(features, series_id, "y", evaluation)
+if feature_label == "combined":
+    slide = load_feature(features, deep_features, series_id, "slide", evaluation)
+    motion = load_feature(
+        features, deep_features, series_id, "local_motion", evaluation
+    )
+    feature_map = slide / motion
+else:
+    feature_map = load_feature(
+        features, deep_features, series_id, feature_label, evaluation
+    )
+x = load_feature(features, deep_features, series_id, "x", evaluation)
+y = load_feature(features, deep_features, series_id, "y", evaluation)
+raw_prediction, x_raw, y_raw = load_raw_prediction(series_id, adhesion_types_select)
+image_prediction = load_resnet_image_inference(series_id)
 
 # Get metrics
 frocs = []
@@ -188,6 +276,7 @@ for prediction_label in prediction_subset:
     frocs.append((metrics["FP_per_case"], metrics["sensitivity"]))
     slice_rocs.append((metrics["fpr"], metrics["tpr"], metrics["auroc"]))
     metrics_legend.append(prediction_label)
+    pass
 
 
 # Load specific prediction
@@ -208,7 +297,38 @@ with col1:
 
 with col2:
     st.pyplot(
-        plot_feature(sample, feature_map, x, y, plot_label_boxes=label_boxes_toggle)
+        plot_feature(
+            sample,
+            raw_prediction,
+            x_raw,
+            y_raw,
+            plot_label_boxes=label_boxes_toggle,
+            plot_predicted_boxes=predicted_boxes_toggle,
+            prediction=prediction,
+            title="Raw prediction",
+            limits=[0, 1],
+        )
+    )
+    st.pyplot(
+        plot_image_prediction(
+            sample,
+            image_prediction,
+            plot_label_boxes=label_boxes_toggle,
+            title="Full image prediction",
+            limits=[0, 1],
+        )
+    )
+    st.pyplot(
+        plot_feature(
+            sample,
+            feature_map,
+            x,
+            y,
+            plot_label_boxes=label_boxes_toggle,
+            plot_predicted_boxes=False,
+            prediction=prediction,
+            title=feature_label,
+        )
     )
     st.pyplot(plot_ROCs(slice_rocs, legends=metrics_legend))
     st.pyplot(plot_FROCs(frocs, legends=metrics_legend))
