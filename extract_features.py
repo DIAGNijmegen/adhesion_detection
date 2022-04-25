@@ -93,7 +93,7 @@ if __name__ == "__main__":
     nnunet_model_dir = Path(
         "/home/bram/repos/abdomenmrus-cinemri-vs-algorithm/nnunet/results"
     )
-    if True:
+    if False:
         copy_dataset_to_dir(dataset, nnunet_input_dir)
         run_full_inference(
             nnunet_input_dir,
@@ -103,7 +103,7 @@ if __name__ == "__main__":
         )
 
     # Registration + visceral slide computation
-    if True:
+    if False:
         detector = FirstToAllVisceralSlideDetectorReg()
         for idx, sample in tqdm(enumerate(dataset), total=len(dataset)):
             input_image_np = sample["numpy"]
@@ -159,7 +159,6 @@ if __name__ == "__main__":
         visceral_slide_dir_recompute = Path(
             "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
         )
-        detector = CumulativeVisceralSlideDetectorDF()
         detector = FirstToAllVisceralSlideDetectorDF()
         for sample in tqdm(dataset, desc="Calculating visceral slide"):
             # Check pickling process
@@ -184,6 +183,9 @@ if __name__ == "__main__":
                 normalization_type=VSNormType.none,
             )
 
+            # Compensate for voxel spacing
+            values = values * sample["Spacing"]
+
             # Save visceral slide
             pickle_path = (
                 visceral_slide_dir_recompute
@@ -198,7 +200,7 @@ if __name__ == "__main__":
                 pickle.dump(slide_dict, file)
 
     # Generate pixel dataset
-    if False:
+    if True:
         # For all series
         # For all pixels in contour
         #
@@ -229,34 +231,51 @@ if __name__ == "__main__":
         # visceral_slide_dir_recompute = Path(
         #     "/home/bram/data/registration_method/visceral_slide_first_to_all_mean"
         # )
-        visceral_slides = load_visceral_slides(visceral_slide_dir_recompute)
+        visceral_slides = load_visceral_slides(visceral_slide_dir)
         annotations = load_predictions(extended_annotations_path)
 
         features = {}
         series_ids = []
         patient_ids = []
-        for visceral_slide in tqdm(
-            visceral_slides, desc="Assembling classifier features"
+        # for visceral_slide in tqdm(
+        #     visceral_slides, desc="Assembling classifier features"
+        # ):
+        for idx, sample in tqdm(
+            enumerate(dataset),
+            total=len(dataset),
+            desc="Assembling classifier features",
         ):
-            patient_id, study_id, series_id = visceral_slide.full_id.split("_")
+            patient_id = sample["PatientID"]
+            study_id = sample["StudyInstanceUID"]
+            series_id = sample["SeriesInstanceUID"]
+
+            # Find visceral slide
+            for visceral_slide in visceral_slides:
+                _, _, candidate_series_id = visceral_slide.full_id.split("_")
+                if series_id == candidate_series_id:
+                    break
+
             series_ids.append(series_id)
             patient_ids.append(patient_id)
-            sample = dataset[series_id]
-            annotation = annotations[visceral_slide.full_id]
+            # annotation = annotations[visceral_slide.full_id]
 
             # Determine label
             x_label = visceral_slide.x
             y_label = visceral_slide.y
             label = np.zeros_like(visceral_slide.x)
-            for adhesion, _ in annotation:
-                for idx, (x, y) in enumerate(zip(x_label, y_label)):
-                    if adhesion.contains_point(x, y):
-                        if adhesion.type == AdhesionType.anteriorWall:
-                            label[idx] = 1
-                        if adhesion.type == AdhesionType.pelvis:
-                            label[idx] = 2
-                        if adhesion.type == AdhesionType.inside:
-                            label[idx] = 3
+            # for adhesion, _ in annotation:
+            #     for idx, (x, y) in enumerate(zip(x_label, y_label)):
+            #         if adhesion.contains_point(x, y):
+            #             if adhesion.type == AdhesionType.anteriorWall:
+            #                 label[idx] = 1
+            #             if adhesion.type == AdhesionType.pelvis:
+            #                 label[idx] = 2
+            #             if adhesion.type == AdhesionType.inside:
+            #                 label[idx] = 3
+            #
+            # Determine label based on segmentatino
+            for idx, (x, y) in enumerate(zip(x_label, y_label)):
+                label[idx] = sample["adhesion_segmentation"]["numpy"][0, y, x]
 
             # Calculate registration-based features
             vs_computation_input_path = (
