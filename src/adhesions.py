@@ -1,4 +1,5 @@
 import json
+import pickle
 import subprocess
 from enum import Enum, unique
 from pathlib import Path
@@ -1281,6 +1282,38 @@ def load_predictions(predictions_path):
                         adhesion.type = AdhesionType.inside
 
                 annotations[slice.full_id] = bounding_boxes
+
+    return annotations
+
+
+def load_segmentation_predictions(predictions_path):
+    with open(predictions_path, "r+b") as file:
+        predictions_dict = pickle.load(file)
+
+    predictions = {}
+    for patient_id, studies_dict in predictions_dict.items():
+        for study_id, slices_dict in studies_dict.items():
+            for slice_id, prediction_map in slices_dict.items():
+                slice = CineMRISlice(slice_id, patient_id, study_id)
+
+                predictions[slice.full_id] = prediction_map
+
+    return predictions
+
+
+def load_segmentation_annotations(dataset):
+    annotations = {}
+    for sample in dataset:
+        patient_id = sample["PatientID"]
+        study_id = sample["StudyInstanceUID"]
+        series_id = sample["SeriesInstanceUID"]
+        slice = CineMRISlice(series_id, patient_id, study_id)
+
+        annotation = {}
+        annotation["anterior"] = sample["adhesion_segmentation"]["numpy"][0] == 1
+        annotation["pelvis"] = sample["adhesion_segmentation"]["numpy"][0] == 2
+        annotation["inside"] = sample["adhesion_segmentation"]["numpy"][0] == 3
+        annotations[slice.full_id] = annotation
 
     return annotations
 

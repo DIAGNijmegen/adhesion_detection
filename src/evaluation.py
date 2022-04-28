@@ -47,7 +47,7 @@ def filter_types(adhesion_dict, types):
     return adhesion_dict_filtered
 
 
-def picai_eval(
+def picai_eval_boxes(
     predictions,
     annotations,
     iou_threshold=0.1,
@@ -68,6 +68,50 @@ def picai_eval(
         annotation_image = box_list_to_image(annotation)
         predictions_list.append(prediction_image)
         annotations_list.append(annotation_image)
+        subject_list.append(series_id)
+
+    metrics = evaluate(
+        predictions_list,
+        annotations_list,
+        min_overlap=iou_threshold,
+        subject_list=subject_list,
+    )
+    return metrics
+
+
+def filter_segmentation_types(segmentations, types):
+    filtered_segmentations = {}
+    for series_id, segmentation in segmentations.items():
+        filtered_segmentation = np.zeros_like(segmentation["anterior"])
+        if AdhesionType.anteriorWall in types:
+            filtered_segmentation += segmentation["anterior"]
+        if AdhesionType.pelvis in types:
+            filtered_segmentation += segmentation["pelvis"]
+        if AdhesionType.inside in types:
+            filtered_segmentation += segmentation["inside"]
+        filtered_segmentations[series_id] = filtered_segmentation
+
+    return filtered_segmentations
+
+
+def picai_eval_segmentations(
+    predictions,
+    annotations,
+    iou_threshold=0.1,
+    flat=False,
+    types=[AdhesionType.anteriorWall, AdhesionType.pelvis, AdhesionType.inside],
+):
+    annotations = filter_segmentation_types(annotations, types)
+    predictions = filter_segmentation_types(predictions, types)
+    subject_list = []
+    predictions_list = []
+    annotations_list = []
+    for idx, series_id in enumerate(predictions):
+        # Add dummy 3rd dimension
+        prediction = predictions[series_id][None, ...]
+        annotation = annotations[series_id][None, ...]
+        predictions_list.append(prediction)
+        annotations_list.append(annotation)
         subject_list.append(series_id)
 
     metrics = evaluate(

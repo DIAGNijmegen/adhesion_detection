@@ -10,6 +10,9 @@ import numpy as np
 from pathlib import Path
 import pickle
 from joblib import dump, load
+from scipy.signal import savgol_filter
+from scipy.ndimage import binary_dilation
+import matplotlib.pyplot as plt
 
 
 def load_pixel_features():
@@ -24,7 +27,7 @@ def load_pixel_features():
 def load_deep_features():
     """Load deep features for all series from disk"""
     feature_dataset_path = Path(
-        "/home/bram/data/registration_method/resnet_features.pkl"
+        "/home/bram/data/registration_method/resnet_features_49.pkl"
     )
     with open(feature_dataset_path, "r+b") as pkl_file:
         features = pickle.load(pkl_file)
@@ -102,6 +105,13 @@ def order_by_contour(prediction, x_array, y_array):
     return prediction_ordered, x_ordered, y_ordered
 
 
+def smooth_1d(prediction):
+    window_size = 10
+    if len(prediction) < window_size:
+        window_size = len(prediction) - 5
+    return savgol_filter(prediction, window_size, 3)
+
+
 def get_boxes_from_raw(prediction, x, y, min_size=15):
     """Convert raw prediction to bounding boxes"""
     # Convert to np arrays
@@ -109,13 +119,17 @@ def get_boxes_from_raw(prediction, x, y, min_size=15):
     x = np.array(x)
     y = np.array(y)
 
+    # Smooth prediction
+    prediction = smooth_1d(prediction)
+
     prediction_ordered, x_ordered, y_ordered = order_by_contour(prediction, x, y)
 
     all_hard_blobs, confidences, indexed_pred = preprocess_softmax(
         prediction_ordered,
         threshold="dynamic",
         min_voxels_detection=2,
-        dynamic_threshold_factor=2.5,
+        dynamic_threshold_factor=1.1,
+        num_lesions_to_extract=5,
     )
     bounding_boxes = []
     for idx, confidence in confidences:
@@ -138,6 +152,40 @@ def get_boxes_from_raw(prediction, x, y, min_size=15):
         bounding_boxes.append((adhesion, confidence))
 
     return bounding_boxes
+
+
+def get_segmentation_from_raw(prediction, x, y, image_size, min_size=15):
+    """Convert raw prediction to line segmentations. These are detection
+    maps as defined in picai_eval"""
+    segmentation = np.zeros(image_size)
+
+    # Convert to np arrays
+    prediction = np.array(prediction)
+    x = np.array(x)
+    y = np.array(y)
+
+    # Smooth prediction
+    prediction = smooth_1d(prediction)
+
+    prediction_ordered, x_ordered, y_ordered = order_by_contour(prediction, x, y)
+
+    # Fill in prediction in segmentation
+    for idx in range(len(prediction)):
+        segmentation[int(y[idx]), int(x[idx])] = prediction[idx]
+
+    segmentation = segmentation[..., None]
+
+    # segmentation = binary_dilation(segmentation, structure=np.ones((3, 3)))
+
+    all_hard_blobs, confidences, indexed_pred = preprocess_softmax(
+        segmentation,
+        threshold="dynamic",
+        min_voxels_detection=2,
+        dynamic_threshold_factor=1.1,
+        num_lesions_to_extract=5,
+    )
+
+    return all_hard_blobs[:, :, 0]
 
 
 def load_model(file_path):

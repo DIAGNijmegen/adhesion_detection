@@ -79,10 +79,17 @@ def frank_500_dataset():
     """Dataset containing all annotated series the new frank_500 set,
     excluding series that were used for nnunet training"""
     # Get general archive wrapper dataset
-    dataset = CineMRIDataset()
+    dataset = CineMRIDataset(load_adhesion_segmentations=True)
     # Remove series not in dev list
     for series_instance_uid in dataset.series_instance_uids.copy():
         if series_instance_uid not in final_series_ids:
             dataset._remove_image(series_instance_uid)
 
     return dataset
+
+
+frank_500_folds_path = "/home/bram/repos/adhesion_detection/src/folds_20220426.json"
+
+# Get folds from json
+with open(frank_500_folds_path) as json_file:
+    frank_500_folds = json.load(json_file)
